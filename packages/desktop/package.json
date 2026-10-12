@@ -11,7 +11,11 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dev:bridge": "tsx src/dev-bridge.ts",
-    "smoke": "electron-vite build && LTW_SMOKE_TEST=1 electron ."
+    "smoke": "electron-vite build && LTW_SMOKE_TEST=1 electron .",
+    "predev": "node ensure-electron.mjs",
+    "prebuild": "node ensure-electron.mjs",
+    "presmoke": "node ensure-electron.mjs",
+    "prestart": "node ensure-electron.mjs"
   },
   "dependencies": {
     "@ltw/domain": "workspace:*",

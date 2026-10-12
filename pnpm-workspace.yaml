@@ -1,2 +1,7 @@
 packages:
   - packages/*
+
+# Packages allowed to run install scripts (Electron downloads its program file this way).
+onlyBuiltDependencies:
+  - electron
+  - esbuild
