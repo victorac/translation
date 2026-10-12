@@ -1,31 +1,70 @@
 import { useEffect, useState } from "react";
+import { normalizeGlossary } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
-import { Setup, initialSetup, type SetupState } from "./Setup";
+import { Setup, initialSetup, newModel, type SetupState } from "./Setup";
 import { Workspace } from "./Workspace";
 import { countCells, summarize } from "./status";
 import { useProvider } from "./useProvider";
 import { useWorkspace } from "./useWorkspace";
 
+const STORAGE_KEY = "ltw.setup.v1";
+
+/** Remembers languages, models, glossary and your own styles between launches (not the text). Failure is harmless. */
+function loadSetup(): SetupState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const s = JSON.parse(raw) as Partial<SetupState>;
+      return {
+        ...initialSetup,
+        ...(typeof s.sourceLanguage === "string" ? { sourceLanguage: s.sourceLanguage } : {}),
+        ...(typeof s.targetLanguage === "string" ? { targetLanguage: s.targetLanguage } : {}),
+        ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
+        ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
+        ...(Array.isArray(s.glossary) ? { glossary: s.glossary } : {}),
+        ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
+      };
+    }
+  } catch {
+    /* no saved setup */
+  }
+  return initialSetup;
+}
+
+function saveSetup(setup: SetupState): void {
+  try {
+    const { text: _text, demo: _demo, ...rest } = setup;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+  } catch {
+    /* storage unavailable: fine */
+  }
+}
+
 export function App() {
   const { snapshot, error, clearError, send } = useWorkspace();
   const provider = useProvider();
-  const [setup, setSetup] = useState<SetupState>(initialSetup);
+  const [setup, setSetup] = useState<SetupState>(loadSetup);
   const [exporting, setExporting] = useState(false);
 
+  useEffect(() => saveSetup(setup), [setup]);
+
+  const glossaryProblem = normalizeGlossary(setup.glossary).problems[0] ?? null;
   const hasRevision = !!snapshot?.revision;
   const project = snapshot?.project;
   const dirty = project?.dirty ?? false;
   const busy = snapshot?.busy ?? false;
-  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !(setup.backend === "provider" && provider.view?.problem);
+  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !glossaryProblem && !(setup.backend === "provider" && provider.view?.problem);
   const disabledReason = hasRevision
     ? null
     : setup.text.trim() === ""
       ? "Paste some text to translate first."
       : setup.models.length === 0
         ? "Add at least one model."
-        : setup.backend === "provider" && provider.view?.problem
-          ? "The server address cannot be used yet (see step 3)."
-          : null;
+        : glossaryProblem
+          ? "Fix the glossary first (step 5)."
+          : setup.backend === "provider" && provider.view?.problem
+            ? "The server address cannot be used yet (see step 3)."
+            : null;
 
   const run = () => {
     if (!canRun) return;
@@ -35,6 +74,8 @@ export function App() {
       targetLanguage: setup.targetLanguage,
       backend: setup.backend,
       models: setup.models,
+      glossary: setup.glossary,
+      prompts: setup.prompts,
       demo: setup.demo,
     });
   };

@@ -53,7 +53,7 @@ export function Workspace({ snap, send }: { snap: WorkspaceSnapshot; send: Send 
               <div className="grid-head" key={run.id}>
                 <h2>{run.label}</h2>
                 <p className="muted">
-                  {revision.targetLanguage} · {runStateText(run.state)} · {c.done}/{c.total} done
+                  {revision.targetLanguage} · style: {run.promptName} · {runStateText(run.state)} · {c.done}/{c.total} done
                   {c.failed > 0 && ` · ${c.failed} failed`}
                   {c.canceled > 0 && ` · ${c.canceled} canceled`}
                 </p>

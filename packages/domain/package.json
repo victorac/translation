@@ -11,5 +11,9 @@
   "sideEffects": false,
   "dependencies": {
     "zod": "^4.6.7"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./pure": "./src/pure.ts"
   }
 }

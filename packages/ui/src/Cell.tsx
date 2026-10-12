@@ -62,7 +62,21 @@ export function Cell({ cell, actions, runLabel, blockNumber }: { cell: BlockCell
       </div>
 
       {cell.state === "needs_review" && (
-        <p className="note">The model stopped early or declined, so this may be incomplete. Check it, edit it, or accept it as is.</p>
+        <div className="note">
+          {cell.reviewNotes.length > 0 ? (
+            <>
+              <p>Worth a look before you rely on this:</p>
+              <ul className="plain">
+                {cell.reviewNotes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+              <p className="muted">These checks are hints and can be wrong. Edit the text, retry, or accept it as is.</p>
+            </>
+          ) : (
+            <p>The model stopped early or declined, so this may be incomplete. Check it, edit it, or accept it as is.</p>
+          )}
+        </div>
       )}
       {cell.state === "stale" && (
         <p className="note">The text before this block changed after it was translated. It may no longer fit; retranslate it if it matters.</p>
