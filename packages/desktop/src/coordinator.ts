@@ -205,6 +205,13 @@ export class Coordinator {
     return run;
   }
 
+  /** Puts a model run that was loaded from a saved project back into the runner. */
+  restoreRun(run: ModelRun): void {
+    this.revision(run.revisionId);
+    this.runs.set(run.id, structuredClone(run));
+    this.runtime.set(run.id, { cancelRequested: false, skipRequested: false });
+  }
+
   /** A copy, safe to read or compare in tests and UI code. */
   snapshotRun(runId: string): ModelRun {
     return structuredClone(this.run(runId));

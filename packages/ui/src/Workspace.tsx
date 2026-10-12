@@ -65,7 +65,7 @@ export function Workspace({ snap, send }: { snap: WorkspaceSnapshot; send: Send 
                   )}
                   {!snap.busy && unfinished && (
                     <button onClick={() => void send("run.retryUnfinished", { runId: run.id })} aria-label={`Retry unfinished blocks of ${run.label}`}>
-                      Retry unfinished
+                      {run.state === "interrupted" ? "Resume unfinished" : "Retry unfinished"}
                     </button>
                   )}
                   {!snap.busy && c.stale > 0 && (
@@ -130,7 +130,7 @@ function runStateText(state: string): string {
     case "canceled":
       return "canceled";
     case "interrupted":
-      return "stopped";
+      return "stopped (can be resumed)";
     default:
       return state;
   }

@@ -2,25 +2,41 @@
  * Development only: lets the app's window run in a normal browser tab (so it can be tried and checked
  * without Electron). It serves the same commands as the real app, on this computer only.
  */
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { createHandler } from "./handlers.js";
 import { createThrottle } from "./notifier.js";
 import { ProviderService } from "./provider-service.js";
-import { WorkspaceService } from "./service.js";
+import { ProjectService } from "./project-service.js";
 import { FileSettingsStore, MemoryCredentialStore } from "./storage.js";
 
 const PORT = Number(process.env["LTW_BRIDGE_PORT"] ?? 5174);
 // Dev mode keeps the address in a local file but API keys only in memory (they are forgotten when this stops).
 const provider = new ProviderService(new FileSettingsStore(new URL("../.dev-data/settings.json", import.meta.url).pathname), new MemoryCredentialStore());
-const service = new WorkspaceService({ provider });
-const handle = createHandler(service, provider);
+// Dev mode has no native dialogs: projects are saved to, and opened from, one fixed folder.
+const devData = new URL("../.dev-data/", import.meta.url).pathname;
+const projects = new ProjectService({
+  provider,
+  recoveryPath: `${devData}recovery/unsaved-project.ltw.json`,
+  dialogs: {
+    chooseSavePath: async (name) => `${devData}projects/${name}`,
+    chooseOpenPath: async () => {
+      const dir = `${devData}projects`;
+      const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ltw.json")) : [];
+      files.sort((a, b) => statSync(`${dir}/${b}`).mtimeMs - statSync(`${dir}/${a}`).mtimeMs);
+      return files[0] ? `${dir}/${files[0]}` : undefined;
+    },
+  },
+});
+const service = projects.workspace;
+const handle = createHandler(service, provider, projects);
 const streams = new Set<ServerResponse>();
 let seq = 0;
 const notify = createThrottle(() => {
   const data = `data: ${JSON.stringify({ eventVersion: 1, seq: ++seq, type: "changed" })}\n\n`;
   for (const s of streams) s.write(data);
 });
-service.onChange(notify);
+projects.onChange(notify);
 
 const server = createServer((req, res) => {
   const host = req.headers.host ?? "";

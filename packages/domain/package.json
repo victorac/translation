@@ -8,5 +8,8 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p ."
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
 }

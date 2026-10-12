@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { CommandName, CommandResultMap, IpcResult } from "@ltw/domain";
 import { UserError } from "./errors.js";
+import type { ProjectService } from "./project-service.js";
 import type { ProviderService } from "./provider-service.js";
 import type { WorkspaceService } from "./service.js";
 
@@ -13,6 +14,12 @@ const schemas: Record<CommandName, z.ZodType> = {
   "workspace.snapshot": z.undefined(),
   "workspace.reset": z.undefined(),
   "demo.loadModel": z.undefined(),
+  "project.save": z.object({ saveAs: z.boolean() }),
+  "project.open": z.object({ useBackup: z.boolean() }),
+  "project.new": z.undefined(),
+  "project.restoreRecovery": z.undefined(),
+  "project.discardRecovery": z.undefined(),
+  "project.dismissProblem": z.undefined(),
   "provider.get": z.undefined(),
   "provider.test": z.undefined(),
   "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
@@ -57,15 +64,25 @@ const schemas: Record<CommandName, z.ZodType> = {
  * Turns "command + data from the window" into a result. The window is not trusted: every message
  * is checked against a schema first, and failures come back as plain messages, never as crashes.
  */
-export function createHandler(service: WorkspaceService, provider?: ProviderService) {
+export function createHandler(service: WorkspaceService, provider?: ProviderService, project?: ProjectService) {
   type Run = (p: any) => unknown | Promise<unknown>;
   const needProvider = (): ProviderService => {
     if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
     return provider;
   };
+  const needProject = (): ProjectService => {
+    if (!project) throw new UserError("no_project", "Projects are not available here.");
+    return project;
+  };
   const run_: Record<CommandName, Run> = {
     "workspace.snapshot": () => service.snapshot(),
-    "workspace.reset": () => service.reset(),
+    "workspace.reset": () => (project ? (project.newProject(), service.snapshot()) : service.reset()),
+    "project.save": async (p) => (await needProject().save(p.saveAs), service.snapshot()),
+    "project.open": async (p) => (await needProject().open(p.useBackup), service.snapshot()),
+    "project.new": () => (needProject().newProject(), service.snapshot()),
+    "project.restoreRecovery": () => (needProject().restoreRecovery(), service.snapshot()),
+    "project.discardRecovery": () => (needProject().discardRecovery(), service.snapshot()),
+    "project.dismissProblem": () => (needProject().dismissProblem(), service.snapshot()),
     "demo.loadModel": () => service.loadDemoModel(),
     "job.start": (p) => service.start(p),
     "job.cancel": (p) => service.cancel(p),

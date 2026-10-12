@@ -10,6 +10,9 @@ import {
   type Backend,
   type CancelInput,
   type DemoOptions,
+  type ModelRun,
+  type ProjectFile,
+  type ProjectView,
   type SourceRevision,
   type StartJobInput,
   type WorkspaceSnapshot,
@@ -29,7 +32,15 @@ export interface ServiceOptions {
   speedMs?: number;
   /** The saved connection to a real model server. Without it only the practice translator is available. */
   provider?: ProviderService;
+  /** Called after every finished request, before the next is sent. If it throws, translating stops. */
+  checkpoint?: () => Promise<void>;
+  /** Describes the open project for the window. */
+  projectView?: () => ProjectView;
 }
+
+export type ChangeKind = "state" | "delta";
+
+const NO_PROJECT: ProjectView = { title: "Untitled", path: null, dirty: false, lastSavedAt: null, recovery: null, openProblem: null, notice: null };
 
 /**
  * The background side of the app for one open workspace: it owns the job runner and, for now, the
@@ -45,11 +56,15 @@ export class WorkspaceService {
   private demoModelUnloaded = false;
   private firstModel = "";
   private backend: Backend | null = null;
-  private listeners = new Set<() => void>();
+  private listeners = new Set<(kind: ChangeKind) => void>();
 
   constructor(private readonly options: ServiceOptions = {}) {}
 
-  onChange(listener: () => void): () => void {
+  get hasRevision(): boolean {
+    return this.revision !== null;
+  }
+
+  onChange(listener: (kind: ChangeKind) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -105,20 +120,7 @@ export class WorkspaceService {
     this.demoModelUnloaded = input.backend === "practice" && input.demo.firstModelUnloaded;
     this.waitingInfo.clear();
     this.queuedJobIds = [];
-    const registry = new ProviderRegistry();
-    let providerConfig: () => ProviderConfig;
-    if (input.backend === "provider") {
-      this.provider = null;
-      registry.register(provider!.adapter());
-      providerConfig = () => provider!.config();
-    } else {
-      this.provider = this.makeProvider(revision, input.demo);
-      registry.register(this.provider);
-      providerConfig = () => ({ id: "practice", kind: "fake", baseUrl: "http://localhost:1234/v1" });
-    }
-    const coordinator = new Coordinator({ registry, providerConfig });
-    coordinator.addRevision(revision);
-    coordinator.onEvent((e) => this.onCoordinatorEvent(e));
+    const coordinator = this.buildCoordinator(input.backend, revision, input.demo);
     this.coordinator = coordinator;
     this.runIds = settings.map(
       (m) =>
@@ -134,6 +136,52 @@ export class WorkspaceService {
     return this.snapshot();
   }
 
+  /** Creates the job runner for a translator backend (the real server connection or the practice translator). */
+  private buildCoordinator(backend: Backend, revision: SourceRevision, demo: DemoOptions): Coordinator {
+    const provider = this.options.provider;
+    const registry = new ProviderRegistry();
+    let providerConfig: () => ProviderConfig;
+    if (backend === "provider") {
+      if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
+      this.provider = null;
+      registry.register(provider.adapter());
+      providerConfig = () => provider.config();
+    } else {
+      this.provider = this.makeProvider(revision, demo);
+      registry.register(this.provider);
+      providerConfig = () => ({ id: "practice", kind: "fake", baseUrl: "http://localhost:1234/v1" });
+    }
+    const coordinator = new Coordinator({ registry, providerConfig, ...(this.options.checkpoint ? { checkpoint: this.options.checkpoint } : {}) });
+    coordinator.addRevision(revision);
+    coordinator.onEvent((e) => this.onCoordinatorEvent(e));
+    return coordinator;
+  }
+
+  /** Everything a project file needs. */
+  exportState(): { revision: SourceRevision; runs: ModelRun[]; backend: Backend } {
+    if (!this.revision || !this.coordinator || !this.backend) throw new UserError("nothing_to_save", "There is nothing to save yet.");
+    return { revision: this.revision, runs: this.runIds.map((id) => this.coordinator!.snapshotRun(id)), backend: this.backend };
+  }
+
+  /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
+  restore(file: ProjectFile, runs: ModelRun[]): void {
+    if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
+    if (file.backend === "provider" && !this.options.provider) throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
+    this.revision = file.source;
+    this.backend = file.backend;
+    this.demoModelUnloaded = false;
+    this.waitingInfo.clear();
+    this.queuedJobIds = [];
+    this.jobId = null;
+    const demo: DemoOptions = { speed: "normal", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false };
+    const coordinator = this.buildCoordinator(file.backend, file.source, demo);
+    this.coordinator = coordinator;
+    for (const run of runs) coordinator.restoreRun(run);
+    this.runIds = runs.map((r) => r.id);
+    this.firstModel = runs[0]?.modelId ?? "";
+    this.notify("state");
+  }
+
   reset(): WorkspaceSnapshot {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation before editing the source.");
     this.coordinator = null;
@@ -144,7 +192,7 @@ export class WorkspaceService {
     this.jobId = null;
     this.queuedJobIds = [];
     this.waitingInfo.clear();
-    this.notify();
+    this.notify("state");
     return this.snapshot();
   }
 
@@ -200,7 +248,7 @@ export class WorkspaceService {
   loadDemoModel(): WorkspaceSnapshot {
     this.provider?.setUnavailable(this.firstModel, false);
     this.demoModelUnloaded = false;
-    this.notify();
+    this.notify("state");
     return this.snapshot();
   }
 
@@ -208,7 +256,7 @@ export class WorkspaceService {
     const c = this.coordinator;
     const revision = this.revision;
     if (!c || !revision) {
-      return { revision: null, runs: [], job: null, backend: null, busy: false, waiting: null, demoModelUnloaded: false };
+      return { revision: null, runs: [], job: null, backend: null, busy: false, waiting: null, demoModelUnloaded: false, project: this.options.projectView?.() ?? NO_PROJECT };
     }
     const runs = this.runIds.map((id) => c.snapshotRun(id));
     const job = this.jobId ? c.snapshotJob(this.jobId) : null;
@@ -240,6 +288,7 @@ export class WorkspaceService {
       busy,
       waiting: waitingRun ? { runId: waitingRun.id, label: waitingRun.label, code: info?.code ?? "waiting", message: info?.message ?? "Waiting for the model." } : null,
       demoModelUnloaded: this.demoModelUnloaded,
+      project: this.options.projectView?.() ?? NO_PROJECT,
     };
   }
 
@@ -268,11 +317,11 @@ export class WorkspaceService {
     if (e.type === "waiting" && e.runId) {
       this.waitingInfo.set(e.runId, { code: String(e.payload.code ?? "waiting"), message: String(e.payload.message ?? "") });
     }
-    this.notify();
+    this.notify(e.type === "delta" ? "delta" : "state");
   }
 
-  private notify(): void {
-    for (const l of this.listeners) l();
+  private notify(kind: ChangeKind = "state"): void {
+    for (const l of this.listeners) l(kind);
   }
 
   private makeProvider(revision: SourceRevision, demo: DemoOptions): FakeProvider {

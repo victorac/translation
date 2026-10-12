@@ -3,12 +3,12 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHandler } from "../handlers.js";
 import { createThrottle } from "../notifier.js";
+import { ProjectService } from "../project-service.js";
 import { ProviderService } from "../provider-service.js";
-import { WorkspaceService } from "../service.js";
 import { EncryptedFileCredentialStore, FileSettingsStore } from "../storage.js";
 
 // Created once the app is ready, because the settings folder and secure storage are not available before that.
-let service!: WorkspaceService;
+let projects!: ProjectService;
 let handle!: ReturnType<typeof createHandler>;
 const devUrl = process.env["ELECTRON_RENDERER_URL"];
 let mainWindow: BrowserWindow | null = null;
@@ -41,18 +41,48 @@ function createWindow(): void {
     if (!devUrl || !url.startsWith(devUrl)) event.preventDefault();
   });
 
+  let closing = false;
   win.on("close", (event) => {
-    if (!service.snapshot().busy) return;
-    const choice = dialog.showMessageBoxSync(win, {
-      type: "question",
-      buttons: ["Keep working", "Cancel translation and quit"],
-      defaultId: 0,
-      cancelId: 0,
-      title: "A translation is still running",
-      message: "A translation is still running.",
-      detail: "Quitting now cancels it. Finished blocks are not saved yet in this early version.",
-    });
-    if (choice === 0) event.preventDefault();
+    if (closing) return;
+    const busy = projects.workspace.snapshot().busy;
+    if (!busy && !projects.isDirty()) return;
+    event.preventDefault();
+    void (async () => {
+      const unsaved = projects.isDirty();
+      const r = await dialog.showMessageBox(win, {
+        type: "question",
+        buttons: unsaved ? ["Save", "Discard", "Cancel"] : ["Quit", "Keep working"],
+        defaultId: 0,
+        cancelId: unsaved ? 2 : 1,
+        title: busy ? "A translation is still running" : "Unsaved changes",
+        message: busy ? "A translation is still running." : "This project has unsaved changes.",
+        detail: busy
+          ? unsaved
+            ? "Quitting cancels it. Save first to keep the finished blocks."
+            : "Quitting cancels it."
+          : "Save them, or discard them and quit.",
+      });
+      if (unsaved) {
+        if (r.response === 2) return;
+        if (r.response === 0) {
+          try {
+            if (busy) projects.workspace.cancel({ kind: "job" });
+            await projects.save(false);
+          } catch (e) {
+            dialog.showErrorBox("Could not save", e instanceof Error ? e.message : "Unknown error");
+            return;
+          }
+          if (projects.isDirty()) return; // the save dialog was cancelled
+        } else {
+          projects.discardRecoveryFile();
+        }
+      } else if (r.response === 1) {
+        return;
+      }
+      closing = true;
+      projects.dispose();
+      win.close();
+    })();
   });
   win.on("closed", () => {
     if (mainWindow === win) mainWindow = null;
@@ -67,7 +97,7 @@ function createWindow(): void {
         const prov = await window.ltw.invoke('provider.get');
         return {
           preloadBridge: typeof window.ltw?.invoke === 'function',
-          snapshotOk: snap.ok === true,
+          snapshotOk: snap.ok === true && snap.value.project.title === 'Untitled' && snap.value.project.dirty === false,
           unknownCommandRefused: bad.ok === false,
           providerSettingsOk: prov.ok === true && prov.value.baseUrl === 'http://localhost:1234/v1' && prov.value.hasApiKey === false,
           pageHasNoNode: typeof require === 'undefined' && typeof process === 'undefined',
@@ -97,9 +127,31 @@ app.whenReady().then(() => {
       decrypt: (data) => safeStorage.decryptString(data),
     }),
   );
-  service = new WorkspaceService({ provider });
-  handle = createHandler(service, provider);
-  service.onChange(notifyWindow);
+  projects = new ProjectService({
+    provider,
+    recoveryPath: join(dataDir, "recovery", "unsaved-project.ltw.json"),
+    dialogs: {
+      async chooseSavePath(defaultName) {
+        const r = await dialog.showSaveDialog(mainWindow!, {
+          title: "Save project",
+          defaultPath: join(app.getPath("documents"), defaultName),
+          filters: [{ name: "Translation project", extensions: ["json"] }],
+        });
+        return r.canceled ? undefined : r.filePath;
+      },
+      async chooseOpenPath() {
+        const r = await dialog.showOpenDialog(mainWindow!, {
+          title: "Open project",
+          defaultPath: app.getPath("documents"),
+          properties: ["openFile"],
+          filters: [{ name: "Translation project", extensions: ["json"] }],
+        });
+        return r.canceled ? undefined : r.filePaths[0];
+      },
+    },
+  });
+  handle = createHandler(projects.workspace, provider, projects);
+  projects.onChange(notifyWindow);
 
   // No camera, microphone, notifications or anything else the page might ask for.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));

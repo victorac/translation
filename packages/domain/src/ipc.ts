@@ -86,6 +86,12 @@ export interface CommandMap {
   "run.retranslateDownstream": { runId: string };
   "run.resolveWaiting": { runId: string; resolution: "retry" | "skip" };
   "demo.loadModel": undefined;
+  "project.save": { saveAs: boolean };
+  "project.open": { useBackup: boolean };
+  "project.new": undefined;
+  "project.restoreRecovery": undefined;
+  "project.discardRecovery": undefined;
+  "project.dismissProblem": undefined;
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -113,10 +119,33 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "run.retranslateDownstream",
   "run.resolveWaiting",
   "demo.loadModel",
+  "project.save",
+  "project.open",
+  "project.new",
+  "project.restoreRecovery",
+  "project.discardRecovery",
+  "project.dismissProblem",
   "provider.get",
   "provider.save",
   "provider.test",
 ];
+
+/** The open project, as the window needs to show it. */
+export interface ProjectView {
+  /** File name without the extension, or "Untitled". */
+  title: string;
+  /** Where it is saved, or null if it has never been saved. */
+  path: string | null;
+  /** There are changes that are not in the saved file. */
+  dirty: boolean;
+  lastSavedAt: string | null;
+  /** Unsaved work from an earlier session, waiting for the user to restore or discard it. */
+  recovery: { updatedAt: string; blocks: number; models: number } | null;
+  /** The last file the user tried to open could not be opened. */
+  openProblem: { message: string; canOpenBackup: boolean } | null;
+  /** Something worth knowing (for example the project used a different server address). */
+  notice: string | null;
+}
 
 export interface IpcEvent {
   eventVersion: 1;
@@ -164,4 +193,5 @@ export interface WorkspaceSnapshot {
   busy: boolean;
   waiting: { runId: string; label: string; code: string; message: string } | null;
   demoModelUnloaded: boolean;
+  project: ProjectView;
 }

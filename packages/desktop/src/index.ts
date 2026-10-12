@@ -4,3 +4,4 @@ export * from "./service.js";
 export * from "./handlers.js";
 export * from "./provider-service.js";
 export * from "./storage.js";
+export * from "./project-service.js";
