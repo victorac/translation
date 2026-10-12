@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ExportDialog } from "./ExportDialog";
 import { Setup, initialSetup, type SetupState } from "./Setup";
 import { Workspace } from "./Workspace";
 import { countCells, summarize } from "./status";
@@ -9,6 +10,7 @@ export function App() {
   const { snapshot, error, clearError, send } = useWorkspace();
   const provider = useProvider();
   const [setup, setSetup] = useState<SetupState>(initialSetup);
+  const [exporting, setExporting] = useState(false);
 
   const hasRevision = !!snapshot?.revision;
   const project = snapshot?.project;
@@ -90,6 +92,7 @@ export function App() {
               <button onClick={() => void send("project.save", { saveAs: true })} title="Ctrl/Cmd + Shift + S">
                 Save As…
               </button>
+              <button onClick={() => setExporting(true)}>Export…</button>
             </>
           )}
           {!hasRevision && (
@@ -155,6 +158,8 @@ export function App() {
           </button>
         </div>
       )}
+
+      {exporting && snapshot?.revision && <ExportDialog snap={snapshot} onClose={() => setExporting(false)} />}
 
       <main>
         {!snapshot ? (

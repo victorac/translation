@@ -1,4 +1,5 @@
 import {
+  buildExport,
   buildProjectFile,
   MAX_PROJECT_BYTES,
   newId as defaultNewId,
@@ -6,6 +7,9 @@ import {
   PROJECT_EXTENSION,
   serializeProject,
   settleLoadedRun,
+  type ExportInput,
+  type ExportPreview,
+  type ExportWriteResult,
   type ProjectFile,
   type ProjectView,
 } from "@ltw/domain";
@@ -19,6 +23,8 @@ import { WorkspaceService, type ChangeKind, type ServiceOptions } from "./servic
 export interface FileDialogs {
   chooseSavePath(defaultName: string): Promise<string | undefined>;
   chooseOpenPath(): Promise<string | undefined>;
+  /** `extension` includes the dot, for example ".csv". */
+  chooseExportPath(defaultName: string, extension: string): Promise<string | undefined>;
 }
 
 export interface ProjectServiceOptions {
@@ -210,6 +216,43 @@ export class ProjectService {
     this.cancelTimer();
     this.removeRecovery();
     this.emit();
+  }
+
+  /** What an export would contain, without writing anything. Never starts any translation. */
+  exportPreview(input: ExportInput): ExportPreview {
+    return this.runExport(input).preview;
+  }
+
+  /** Writes the export file where the user chooses. Cancelling the dialog does nothing. */
+  async exportFile(input: ExportInput): Promise<ExportWriteResult> {
+    const { preview, content } = this.runExport(input);
+    if (preview.problem) throw new UserError("export_problem", preview.problem);
+    if (content === null) {
+      throw new UserError("partial_not_allowed", 'Some blocks have no translation yet. Tick "Export partial" to include them, marked as missing.');
+    }
+    const chosen = await this.options.dialogs.chooseExportPath(preview.fileName, preview.extension);
+    if (!chosen) return { path: null, bytes: 0 };
+    const path = chosen.toLowerCase().endsWith(preview.extension) ? chosen : `${chosen}${preview.extension}`;
+    try {
+      writeFileDurably(path, content);
+    } catch (e) {
+      throw new UserError("export_failed", `Could not write ${path}: ${e instanceof Error ? e.message : "unknown error"}. Try another folder.`);
+    }
+    return { path, bytes: preview.bytes };
+  }
+
+  private runExport(input: ExportInput) {
+    if (!this.workspace.hasRevision) throw new UserError("nothing_to_export", "There is nothing to export yet.");
+    const state = this.workspace.exportState();
+    return buildExport(state.revision, state.runs, {
+      format: input.format,
+      runIds: input.runIds,
+      textVersion: input.textVersion,
+      allowPartial: input.allowPartial,
+      formulaSafe: input.formulaSafe,
+      title: this.view().title,
+      now: this.now(),
+    });
   }
 
   restoreRecovery(): void {

@@ -47,3 +47,4 @@ export {
 export { newId, sha256Hex } from "./platform.js";
 export * from "./ipc.js";
 export * from "./project.js";
+export * from "./export.js";

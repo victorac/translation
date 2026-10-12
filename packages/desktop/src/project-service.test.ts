@@ -25,10 +25,11 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
 
 function env(opts: { speedMs?: number; recoveryPath?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ltw-proj-"));
-  const answers: { save?: string | undefined; open?: string | undefined } = {};
+  const answers: { save?: string | undefined; open?: string | undefined; export?: string | undefined } = {};
   const dialogs: FileDialogs = {
     chooseSavePath: async () => answers.save,
     chooseOpenPath: async () => answers.open,
+    chooseExportPath: async () => answers.export,
   };
   const recoveryPath = opts.recoveryPath ?? join(dir, "recovery", "unsaved.ltw.json");
   const make = (over: { recoveryPath?: string; speedMs?: number } = {}) => {
@@ -418,5 +419,120 @@ describe("other rules", () => {
     answers.open = join(dir, "via-handler.ltw.json");
     expect(await h("5", "project.open", { useBackup: false })).toMatchObject({ ok: true, value: { project: { title: "via-handler" } } });
     expect(await createHandler(a.workspace)("6", "project.new", undefined)).toMatchObject({ ok: false, error: { code: "no_project" } });
+  });
+});
+
+describe("exporting", () => {
+  const exp = (runIds: string[], over: Partial<import("@ltw/domain").ExportInput> = {}): import("@ltw/domain").ExportInput => ({
+    format: "text",
+    runIds,
+    textVersion: "current",
+    allowPartial: false,
+    formulaSafe: true,
+    ...over,
+  });
+
+  it("writes a plain-text file, adds the extension, and the file is exactly what the preview promised", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    const runId = a.workspace.snapshot().runs[0]!.id;
+    const preview = a.exportPreview(exp([runId]));
+    expect(preview).toMatchObject({ complete: true, extension: ".txt", problem: null });
+    answers.export = join(dir, "chapter-one");
+    const r = await a.exportFile(exp([runId]));
+    const path = join(dir, "chapter-one.txt");
+    expect(r).toEqual({ path, bytes: preview.bytes });
+    const text = readFileSync(path, "utf8");
+    expect(text.startsWith("[practice translation by alpha]")).toBe(true);
+    expect(Buffer.byteLength(text)).toBe(preview.bytes);
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+  });
+
+  it("writes a comparison CSV with a byte-order mark so Excel reads Japanese correctly", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a);
+    const ids = a.workspace.snapshot().runs.map((r) => r.id);
+    answers.export = join(dir, "compare.csv");
+    await a.exportFile(exp(ids, { format: "csv" }));
+    const bytes = readFileSync(join(dir, "compare.csv"));
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const text = bytes.toString("utf8");
+    expect(text).toContain("alpha status");
+    expect(text).toContain("beta status");
+    expect(text).toContain("最初の段落");
+  });
+
+  it("refuses an incomplete export until it is explicitly allowed, then marks the gaps", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")], demo: { speed: "fast", smallBlocks: true, failBlockOnce: 2, firstModelUnloaded: false } }));
+    const runId = a.workspace.snapshot().runs[0]!.id;
+    const preview = a.exportPreview(exp([runId]));
+    expect(preview.complete).toBe(false);
+    expect(preview.gaps).toEqual([expect.objectContaining({ blockNumber: 2, status: "Failed" })]);
+    answers.export = join(dir, "partial.txt");
+    await expect(a.exportFile(exp([runId]))).rejects.toMatchObject({ code: "partial_not_allowed", message: expect.stringContaining("Export partial") });
+    expect(existsSync(join(dir, "partial.txt"))).toBe(false);
+    await a.exportFile(exp([runId], { allowPartial: true }));
+    expect(readFileSync(join(dir, "partial.txt"), "utf8")).toContain("[Block 2 missing: Failed]");
+  });
+
+  it("cancelling the save dialog writes nothing", async () => {
+    const { answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    answers.export = undefined;
+    expect(await a.exportFile(exp([a.workspace.snapshot().runs[0]!.id]))).toEqual({ path: null, bytes: 0 });
+  });
+
+  it("reports an unwritable location in plain words and keeps everything intact", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    writeFileSync(join(dir, "afile"), "x");
+    answers.export = join(dir, "afile", "out.txt");
+    await expect(a.exportFile(exp([a.workspace.snapshot().runs[0]!.id]))).rejects.toMatchObject({ code: "export_failed", message: expect.stringContaining("another folder") });
+  });
+
+  it("never changes the project and never starts any translation", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    const before = a.workspace.snapshot();
+    const dirtyBefore = a.view().dirty;
+    answers.export = join(dir, "x.md");
+    await a.exportFile(exp(before.runs.map((r) => r.id), { format: "markdown" }));
+    a.exportPreview(exp(before.runs.map((r) => r.id), { format: "csv" }));
+    const after = a.workspace.snapshot();
+    expect(after.runs).toEqual(before.runs);
+    expect(after.busy).toBe(false);
+    expect(after.job).toEqual(before.job);
+    expect(a.view().dirty).toBe(dirtyBefore);
+  });
+
+  it("explains when there is nothing to export or the choice is invalid", async () => {
+    const { make } = env();
+    expect(() => make().exportPreview(exp(["x"]))).toThrow(/nothing to export/i);
+    const a = make();
+    await runWholeJob(a);
+    const ids = a.workspace.snapshot().runs.map((r) => r.id);
+    await expect(a.exportFile(exp(ids))).rejects.toMatchObject({ code: "export_problem", message: expect.stringContaining("one model at a time") });
+  });
+
+  it("works through the window's commands", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    const h = createHandler(a.workspace, undefined, a);
+    await h("1", "job.start", job({ models: [model("alpha")] }));
+    await a.workspace.whenIdle();
+    const runId = a.workspace.snapshot().runs[0]!.id;
+    const body = { format: "markdown", runIds: [runId], textVersion: "current", allowPartial: false, formulaSafe: true };
+    expect(await h("2", "export.preview", body)).toMatchObject({ ok: true, value: { complete: true, extension: ".md" } });
+    answers.export = join(dir, "via.md");
+    expect(await h("3", "export.write", body)).toMatchObject({ ok: true, value: { path: join(dir, "via.md") } });
+    expect(await h("4", "export.write", { ...body, format: "pdf" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    expect(await createHandler(a.workspace)("5", "export.write", body)).toMatchObject({ ok: false, error: { code: "no_project" } });
   });
 });

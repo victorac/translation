@@ -139,6 +139,14 @@ app.whenReady().then(() => {
         });
         return r.canceled ? undefined : r.filePath;
       },
+      async chooseExportPath(defaultName, extension) {
+        const r = await dialog.showSaveDialog(mainWindow!, {
+          title: "Export",
+          defaultPath: join(app.getPath("documents"), defaultName),
+          filters: [{ name: extension === ".csv" ? "CSV spreadsheet" : extension === ".md" ? "Markdown" : "Text", extensions: [extension.slice(1)] }],
+        });
+        return r.canceled ? undefined : r.filePath;
+      },
       async chooseOpenPath() {
         const r = await dialog.showOpenDialog(mainWindow!, {
           title: "Open project",

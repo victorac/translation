@@ -134,3 +134,14 @@ label.check { flex-direction: row; align-items: flex-start; gap: 0.5rem; }
 .save-state { font-weight: 400; color: var(--muted); }
 .save-state.unsaved { color: var(--warn); }
 .info-box { background: var(--stale-bg); }
+
+.export-dialog { width: min(42rem, 94vw); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+.export-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+.export-dialog fieldset { margin: 0 0 0.9rem; }
+.export-dialog legend { font-weight: 600; padding: 0; margin-bottom: 0.3rem; }
+.export-dialog h3 { font-size: 0.95rem; margin: 0.5rem 0; }
+.export-preview { border-top: 1px solid var(--border); padding-top: 0.5rem; }
+.plain { margin: 0.3rem 0; padding-left: 1.2rem; }
+.excerpt { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; max-height: 10rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+.dialog-actions { justify-content: flex-end; margin-top: 1rem; }
+.dialog-actions button { font-size: 1rem; padding: 0.4rem 1rem; }

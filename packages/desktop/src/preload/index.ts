@@ -25,6 +25,8 @@ const COMMANDS = new Set([
   "project.restoreRecovery",
   "project.discardRecovery",
   "project.dismissProblem",
+  "export.preview",
+  "export.write",
   "provider.get",
   "provider.save",
   "provider.test",

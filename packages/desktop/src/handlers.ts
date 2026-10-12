@@ -10,6 +10,14 @@ const run = z.object({ runId: id });
 const block = z.object({ runId: id, blockId: id });
 const MAX_TEXT = 4_000_000; // characters; the real limit (1 MiB of UTF-8) is enforced by the service
 
+const exportInput = z.object({
+  format: z.enum(["text", "markdown", "csv"]),
+  runIds: z.array(id).max(8),
+  textVersion: z.enum(["current", "original"]),
+  allowPartial: z.boolean(),
+  formulaSafe: z.boolean(),
+});
+
 const schemas: Record<CommandName, z.ZodType> = {
   "workspace.snapshot": z.undefined(),
   "workspace.reset": z.undefined(),
@@ -20,6 +28,8 @@ const schemas: Record<CommandName, z.ZodType> = {
   "project.restoreRecovery": z.undefined(),
   "project.discardRecovery": z.undefined(),
   "project.dismissProblem": z.undefined(),
+  "export.preview": exportInput,
+  "export.write": exportInput,
   "provider.get": z.undefined(),
   "provider.test": z.undefined(),
   "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
@@ -94,6 +104,8 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "run.retryUnfinished": (p) => service.retryUnfinished(p.runId),
     "run.retranslateDownstream": (p) => service.retranslateDownstream(p.runId),
     "run.resolveWaiting": (p) => service.resolveWaiting(p.runId, p.resolution),
+    "export.preview": (p) => needProject().exportPreview(p),
+    "export.write": (p) => needProject().exportFile(p),
     "provider.get": () => needProvider().view(),
     "provider.save": (p) => needProvider().save(p),
     "provider.test": () => needProvider().test(),

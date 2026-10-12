@@ -1,5 +1,6 @@
 import type { BlockState, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
+import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
 
@@ -72,6 +73,23 @@ export interface ConnectionTestResult {
 
 export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
 
+/** What to put in an exported file. */
+export interface ExportInput {
+  format: ExportFormat;
+  runIds: string[];
+  textVersion: ExportTextVersion;
+  /** Include blocks that have no translation, marked as missing. */
+  allowPartial: boolean;
+  /** CSV: protect against spreadsheet formulas. */
+  formulaSafe: boolean;
+}
+
+export interface ExportWriteResult {
+  /** Where the file was written, or null if the user cancelled the dialog. */
+  path: string | null;
+  bytes: number;
+}
+
 export interface CommandMap {
   "workspace.snapshot": undefined;
   "workspace.reset": undefined;
@@ -92,6 +110,8 @@ export interface CommandMap {
   "project.restoreRecovery": undefined;
   "project.discardRecovery": undefined;
   "project.dismissProblem": undefined;
+  "export.preview": ExportInput;
+  "export.write": ExportInput;
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -99,8 +119,10 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
+  "export.preview": ExportPreview;
+  "export.write": ExportWriteResult;
   "provider.get": ProviderView;
   "provider.save": ProviderView;
   "provider.test": ConnectionTestResult;
@@ -125,6 +147,8 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "project.restoreRecovery",
   "project.discardRecovery",
   "project.dismissProblem",
+  "export.preview",
+  "export.write",
   "provider.get",
   "provider.save",
   "provider.test",
