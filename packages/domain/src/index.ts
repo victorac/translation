@@ -45,3 +45,4 @@ export {
   type RequestContext,
 } from "./prompt.js";
 export { newId, sha256Hex } from "./platform.js";
+export * from "./ipc.js";

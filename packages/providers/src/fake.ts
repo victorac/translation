@@ -121,6 +121,8 @@ export interface FakeProviderOptions {
   listModelsError?: ProviderError;
   healthError?: ProviderError;
   tokenCounting?: boolean;
+  /** Decides the script per request (return undefined to use the default). Queued scripts still win. */
+  scriptFor?: (request: GenerateRequest, callIndex: number) => Script | undefined;
 }
 
 const lastUserContent = (messages: ChatMessage[]): string =>
@@ -227,7 +229,8 @@ export class FakeProvider implements TranslationProvider {
         };
         return;
       }
-      const steps = this.queue.shift() ?? this.defaultScript(request);
+      const steps =
+        this.queue.shift() ?? this.options.scriptFor?.(request, this.requests.length - 1) ?? this.defaultScript(request);
       const sig = this.options.ignoreAbort ? undefined : signal;
       for (const s of steps) {
         if (sig?.aborted) {
