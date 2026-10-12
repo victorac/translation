@@ -63,7 +63,7 @@ describe("chunkSource basics", () => {
 
 describe("quotes", () => {
   it("does not split inside a quote pair when the quoted unit fits", () => {
-    const b = chunkSource(quotedAttribution, { targetTokens: 12, maxTokens: 30 });
+    const b = chunkSource(quotedAttribution, { targetTokens: 12, maxTokens: 24 });
     assertLossless(quotedAttribution, b);
     expect(texts(quotedAttribution, b)[0]).toBe("「今日は晴れだ。散歩に行こう。」と彼は言った。");
   });
