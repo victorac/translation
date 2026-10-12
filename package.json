@@ -7,7 +7,10 @@
   },
   "scripts": {
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --filter @ltw/desktop dev",
+    "dev:web": "node scripts/dev-web.mjs",
+    "build": "pnpm --filter @ltw/desktop build"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

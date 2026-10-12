@@ -7,5 +7,6 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p ."
-  }
+  },
+  "sideEffects": false
 }
