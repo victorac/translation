@@ -1,0 +1,18 @@
+{
+  "name": "local-translation-workbench",
+  "private": true,
+  "packageManager": "pnpm@10.13.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4",
+    "fast-check": "^4.10.2",
+    "@types/node": "^26.6.5"
+  }
+}
