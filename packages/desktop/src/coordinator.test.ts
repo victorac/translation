@@ -348,6 +348,27 @@ describe("what counts as finished (AC-12)", () => {
     expect(stateOf(c, a.id, 0, revision)).toBe("failed");
   });
 
+  it("an empty reply that hit the reply limit while thinking says so and how to fix it", async () => {
+    const { c, revision, provider, run } = setup();
+    provider.enqueue([{ t: "finish", reason: "length", usage: { outputTokens: 1536 }, reasoningSeen: true }]);
+    const a = run();
+    await c.startJob({ revisionId: revision.id, runIds: [a.id], blockIds: [revision.blocks[0]!.id] }).done;
+    const attempt = c.snapshotRun(a.id).outputs[revision.blocks[0]!.id]!.attempts[0]!;
+    expect(attempt.state).toBe("failed");
+    expect(attempt.error?.message).toMatch(/1536 tokens/);
+    expect(attempt.error?.message).toMatch(/thinking/);
+    expect(attempt.error?.message).toMatch(/Longest reply/);
+    expect(attempt.finishReason).toBe("length");
+  });
+
+  it("other empty replies mention what the server reported", async () => {
+    const { c, revision, provider, run } = setup();
+    provider.enqueue([{ t: "finish", reason: "stop" }]);
+    const a = run();
+    await c.startJob({ revisionId: revision.id, runIds: [a.id], blockIds: [revision.blocks[0]!.id] }).done;
+    expect(c.snapshotRun(a.id).outputs[revision.blocks[0]!.id]!.attempts[0]!.error?.message).toMatch(/reported: stop/);
+  });
+
   it("a stream that just stops is a failure and keeps the partial text", async () => {
     const { c, revision, provider, run } = setup();
     provider.enqueue(script.disconnect("partial"));

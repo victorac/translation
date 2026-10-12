@@ -55,7 +55,13 @@ export type FinishReason = "stop" | "length" | "refusal" | "unknown";
 
 export type GenerateEvent =
   | { type: "delta"; text: string }
-  | { type: "finish"; reason: FinishReason; usage?: { inputTokens?: number; outputTokens?: number } }
+  | {
+      type: "finish";
+      reason: FinishReason;
+      usage?: { inputTokens?: number; outputTokens?: number };
+      /** The server sent separate "reasoning" text (which is never added to the translation). */
+      reasoningSeen?: boolean;
+    }
   | { type: "error"; error: ProviderError };
 
 export interface TranslationProvider {

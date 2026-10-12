@@ -162,6 +162,35 @@ describe("streaming generation", () => {
     expect(out.text).toBe("cut off");
   });
 
+  it("a thinking model that spends its whole reply limit thinking ends empty, length, with reasoning flagged", async () => {
+    const s = await serve((_q, res) => {
+      startSse(res);
+      sse(res, { choices: [{ delta: { reasoning_content: "Let me think about this..." }, finish_reason: null }] });
+      sse(res, { choices: [{ delta: { reasoning_content: " still thinking" }, finish_reason: null }] });
+      sse(res, chunk(null, "length", { usage: { prompt_tokens: 50, completion_tokens: 1536 } }));
+      res.end();
+    });
+    const out = await run(new OpenAICompatibleProvider(), cfg(s.baseUrl));
+    expect(out.text).toBe("");
+    expect(out.terminal).toEqual({ type: "finish", reason: "length", usage: { inputTokens: 50, outputTokens: 1536 }, reasoningSeen: true });
+  });
+
+  it("a long think does not trip the wait-for-first-text timeout", async () => {
+    const s = await serve((_q, res) => {
+      startSse(res);
+      const t = setInterval(() => sse(res, { choices: [{ delta: { reasoning_content: "hmm " }, finish_reason: null }] }), 30);
+      setTimeout(() => {
+        clearInterval(t);
+        sse(res, chunk("Done"));
+        sse(res, chunk(null, "stop"));
+        res.end();
+      }, 400);
+    });
+    const out = await run(new OpenAICompatibleProvider({ timeouts: { headersMs: 500, firstContentMs: 150, idleMs: 200, totalMs: 5000 } }), cfg(s.baseUrl));
+    expect(out.text).toBe("Done");
+    expect(out.terminal).toMatchObject({ type: "finish", reason: "stop", reasoningSeen: true });
+  });
+
   it("reports a refusal field as a refusal", async () => {
     const s = await serve((_q, res) => (startSse(res), sse(res, { choices: [{ delta: { refusal: "I can't help with that." }, finish_reason: null }] }), sse(res, chunk(null, "stop")), res.end()));
     const out = await run(new OpenAICompatibleProvider(), cfg(s.baseUrl));
@@ -213,7 +242,7 @@ describe("non-streaming generation", () => {
     });
     const out = await run(new OpenAICompatibleProvider(), cfg(s.baseUrl), req({ stream: false }));
     expect(out.text).toBe("Hello there");
-    expect(out.terminal).toEqual({ type: "finish", reason: "stop", usage: { inputTokens: 5, outputTokens: 2 } });
+    expect(out.terminal).toEqual({ type: "finish", reason: "stop", usage: { inputTokens: 5, outputTokens: 2 }, reasoningSeen: true });
     expect(JSON.parse(s.requests[0]!.body).stream).toBe(false);
   });
 

@@ -163,7 +163,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
   private async *readWhole(response: Response, run: Request_): AsyncGenerator<GenerateEvent> {
     run.startContentTimers(false);
     const text = await readLimited(response, this.maxRaw);
-    let json: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[]; usage?: Usage; error?: unknown };
+    let json: { choices?: { message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: unknown }[]; usage?: Usage; error?: unknown };
     try {
       json = JSON.parse(text);
     } catch {
@@ -181,7 +181,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       return;
     }
     if (content !== "") yield { type: "delta", text: content };
-    yield finishEvent(mapFinish(choice?.finish_reason), json.usage);
+    yield finishEvent(mapFinish(choice?.finish_reason), json.usage, hasText(choice?.message?.reasoning_content) || hasText(choice?.message?.reasoning));
   }
 
   private async *readStream(response: Response, run: Request_, baseUrl: string): AsyncGenerator<GenerateEvent> {
@@ -197,6 +197,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
     let usage: Usage | undefined;
     let sawDone = false;
     let refused = false;
+    let reasoningSeen = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -232,6 +233,11 @@ export class OpenAICompatibleProvider implements TranslationProvider {
             yield { type: "delta", text };
           }
           if (typeof choice.delta?.refusal === "string" && choice.delta.refusal !== "") refused = true;
+          if (hasText(choice.delta?.reasoning_content) || hasText(choice.delta?.reasoning)) {
+            reasoningSeen = true;
+            // Thinking time counts as activity, so a long think is not mistaken for a stalled server.
+            run.contentReceived();
+          }
           if (typeof choice.finish_reason === "string") finish = mapFinish(choice.finish_reason);
         }
         if (done) break;
@@ -254,7 +260,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       };
       return;
     }
-    yield finishEvent(refused ? "refusal" : finish, usage);
+    yield finishEvent(refused ? "refusal" : finish, usage, reasoningSeen);
   }
 }
 
@@ -265,17 +271,19 @@ interface Usage {
   completion_tokens?: number;
 }
 interface StreamChunk {
-  choices?: { delta?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
+  choices?: { delta?: { content?: unknown; refusal?: unknown; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: unknown }[];
   usage?: Usage;
   error?: unknown;
 }
 
-function finishEvent(reason: FinishReason, usage?: Usage): GenerateEvent {
+function finishEvent(reason: FinishReason, usage?: Usage, reasoningSeen = false): GenerateEvent {
   const u: { inputTokens?: number; outputTokens?: number } = {};
   if (typeof usage?.prompt_tokens === "number") u.inputTokens = usage.prompt_tokens;
   if (typeof usage?.completion_tokens === "number") u.outputTokens = usage.completion_tokens;
-  return { type: "finish", reason, ...(Object.keys(u).length ? { usage: u } : {}) };
+  return { type: "finish", reason, ...(Object.keys(u).length ? { usage: u } : {}), ...(reasoningSeen ? { reasoningSeen: true } : {}) };
 }
+
+const hasText = (v: unknown): boolean => typeof v === "string" && v !== "";
 
 function mapFinish(reason: unknown): FinishReason {
   if (reason === "stop") return "stop";

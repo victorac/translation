@@ -54,7 +54,7 @@ export type Step =
   | { t: "gate"; gate: Gate }
   /** Never completes on its own; ends only by abort. */
   | { t: "hang" }
-  | { t: "finish"; reason: FinishReason; usage?: { inputTokens?: number; outputTokens?: number } }
+  | { t: "finish"; reason: FinishReason; usage?: { inputTokens?: number; outputTokens?: number }; reasoningSeen?: boolean }
   | { t: "error"; error: ProviderError }
   /** An adapter bug or raw network rejection: thrown, not yielded. */
   | { t: "throw"; error: unknown };
@@ -262,7 +262,7 @@ export class FakeProvider implements TranslationProvider {
             yield canceled;
             return;
           case "finish":
-            yield { type: "finish", reason: s.reason, ...(s.usage ? { usage: s.usage } : {}) };
+            yield { type: "finish", reason: s.reason, ...(s.usage ? { usage: s.usage } : {}), ...(s.reasoningSeen ? { reasoningSeen: true } : {}) };
             return;
           case "error":
             yield { type: "error", error: s.error };

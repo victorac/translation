@@ -117,6 +117,22 @@ interface ActiveAttempt {
   controller: AbortController;
 }
 
+/** Explains an empty reply in terms of what the user can change. */
+export function emptyReplyMessage(reason: string, outputTokens: number | undefined, reasoningSeen: boolean, replyLimit: number): string {
+  if (reason === "length") {
+    return (
+      `The model used up its whole reply limit (${outputTokens ?? replyLimit} tokens) before writing any translation.` +
+      (reasoningSeen
+        ? ' It was "thinking" first, and thinking text is never added to the translation. Raise "Longest reply", turn thinking off for this model in LM Studio, or use a model that does not think.'
+        : ' Raise "Longest reply" or check the model.')
+    );
+  }
+  if (reasoningSeen) {
+    return 'The model sent only "thinking" text and no translation. Turn thinking off for this model in LM Studio, or use a model that does not think.';
+  }
+  return `The model finished without writing anything (it reported: ${reason}). Check that the model is fully loaded and suitable for chat, then Retry.`;
+}
+
 const WAIT_CODES = new Set(["connection", "model_unavailable", "auth", "context_overflow"]);
 const BACKOFF_MS = [1000, 3000];
 const MAX_RETRY_AFTER_MS = 30_000;
@@ -591,7 +607,10 @@ export class Coordinator {
       if (terminal.usage) attempt.usage = terminal.usage;
       attempt.finishReason = terminal.reason;
       if (draft.trim() === "") {
-        this.failAttempt(j, run, out, attempt, { code: "invalid_response", message: "The model returned no text." });
+        this.failAttempt(j, run, out, attempt, {
+          code: "invalid_response",
+          message: emptyReplyMessage(terminal.reason, terminal.usage?.outputTokens ?? undefined, terminal.reasoningSeen === true, run.config.maxOutputTokens),
+        });
         this.setBlockState(run.id, out, "failed");
         return { kind: "done" };
       }
