@@ -15,3 +15,11 @@ export const DEFAULTS = {
   maxBlocks: 2000,
   maxRunsPerRevision: 8,
 } as const;
+
+/** The block sizes the user can choose. The model's own limits can still make blocks smaller. */
+export const BLOCK_SIZES = {
+  small: { targetTokens: 300, maxTokens: 450 },
+  normal: { targetTokens: 600, maxTokens: 900 },
+  large: { targetTokens: 1200, maxTokens: 1800 },
+} as const;
+export type BlockSize = keyof typeof BLOCK_SIZES;

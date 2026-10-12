@@ -21,6 +21,7 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   models: [model("alpha"), model("beta")],
   glossary: [],
   prompts: [],
+  blockSize: "normal",
   demo: { speed: "fast", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });

@@ -48,3 +48,5 @@ export { newId, sha256Hex } from "./platform.js";
 export * from "./ipc.js";
 export * from "./project.js";
 export * from "./export.js";
+export * from "./split.js";
+export { BLOCK_SIZES, type BlockSize } from "./defaults.js";

@@ -18,22 +18,7 @@ const exportInput = z.object({
   formulaSafe: z.boolean(),
 });
 
-const schemas: Record<CommandName, z.ZodType> = {
-  "workspace.snapshot": z.undefined(),
-  "workspace.reset": z.undefined(),
-  "demo.loadModel": z.undefined(),
-  "project.save": z.object({ saveAs: z.boolean() }),
-  "project.open": z.object({ useBackup: z.boolean() }),
-  "project.new": z.undefined(),
-  "project.restoreRecovery": z.undefined(),
-  "project.discardRecovery": z.undefined(),
-  "project.dismissProblem": z.undefined(),
-  "export.preview": exportInput,
-  "export.write": exportInput,
-  "provider.get": z.undefined(),
-  "provider.test": z.undefined(),
-  "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
-  "job.start": z.object({
+const startInput = z.object({
     text: z.string().max(MAX_TEXT),
     sourceLanguage: z.string().max(100),
     targetLanguage: z.string().max(100),
@@ -56,13 +41,32 @@ const schemas: Record<CommandName, z.ZodType> = {
     prompts: z
       .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
       .max(100),
+    blockSize: z.enum(["small", "normal", "large"]),
     demo: z.object({
       speed: z.enum(["fast", "normal", "slow"]),
       smallBlocks: z.boolean(),
       failBlockOnce: z.number().int().min(1).max(100_000).nullable(),
       firstModelUnloaded: z.boolean(),
     }),
-  }),
+  });
+
+const schemas: Record<CommandName, z.ZodType> = {
+  "workspace.snapshot": z.undefined(),
+  "workspace.reset": z.undefined(),
+  "demo.loadModel": z.undefined(),
+  "project.save": z.object({ saveAs: z.boolean() }),
+  "project.open": z.object({ useBackup: z.boolean() }),
+  "project.new": z.undefined(),
+  "project.restoreRecovery": z.undefined(),
+  "project.discardRecovery": z.undefined(),
+  "project.dismissProblem": z.undefined(),
+  "export.preview": exportInput,
+  "export.write": exportInput,
+  "provider.get": z.undefined(),
+  "provider.test": z.undefined(),
+  "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
+  "job.start": startInput,
+  "source.preview": startInput,
   "job.cancel": z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("job") }),
     z.object({ kind: z.literal("run"), runId: id }),
@@ -112,6 +116,7 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "run.retryUnfinished": (p) => service.retryUnfinished(p.runId),
     "run.retranslateDownstream": (p) => service.retranslateDownstream(p.runId),
     "run.resolveWaiting": (p) => service.resolveWaiting(p.runId, p.resolution),
+    "source.preview": (p) => service.previewSplit(p),
     "export.preview": (p) => needProject().exportPreview(p),
     "export.write": (p) => needProject().exportFile(p),
     "provider.get": () => needProvider().view(),

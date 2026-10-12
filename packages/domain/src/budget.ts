@@ -64,7 +64,7 @@ export interface ChunkPlan {
  * smallest source budget wins. If any model cannot fit its fixed prompt, nothing is chunked
  * for it behind the user's back: the plan reports the problem and the user fixes the config.
  */
-export function planChunking(models: ModelBudgetInput[]): ChunkPlan {
+export function planChunking(models: ModelBudgetInput[], limits: { targetTokens: number; maxTokens: number } = { targetTokens: DEFAULTS.targetBlockTokens, maxTokens: DEFAULTS.maxBlockTokens }): ChunkPlan {
   const budgets = models.map(modelBudget);
   const issues: BudgetIssue[] = budgets
     .filter((b) => !b.fits)
@@ -76,8 +76,8 @@ export function planChunking(models: ModelBudgetInput[]): ChunkPlan {
   const ok = issues.length === 0;
   const fitting = budgets.filter((b) => b.fits);
   const smallest = fitting.reduce<ModelBudget | undefined>((a, b) => (a && a.sourceBudget <= b.sourceBudget ? a : b), undefined);
-  const maxTokens = Math.max(1, Math.min(DEFAULTS.maxBlockTokens, smallest?.sourceBudget ?? DEFAULTS.maxBlockTokens));
-  const targetTokens = Math.min(DEFAULTS.targetBlockTokens, maxTokens);
+  const maxTokens = Math.max(1, Math.min(limits.maxTokens, smallest?.sourceBudget ?? limits.maxTokens));
+  const targetTokens = Math.min(limits.targetTokens, maxTokens);
   return { ok, targetTokens, maxTokens, ...(smallest ? { limitingModel: smallest.label } : {}), budgets, issues };
 }
 

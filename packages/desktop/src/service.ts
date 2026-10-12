@@ -1,9 +1,14 @@
 import {
   allPrompts,
+  BLOCK_SIZES,
+  chunkSource,
   createRevision,
+  DEFAULTS,
+  describeSplit,
   currentVersion,
   estimateTokens,
   normalizeGlossary,
+  normalizeSource,
   planChunking,
   relevantEntries,
   renderPrompt,
@@ -21,6 +26,7 @@ import {
   type ProjectFile,
   type ProjectView,
   type SourceRevision,
+  type SplitPreview,
   type StartJobInput,
   type WorkspaceSnapshot,
 } from "@ltw/domain";
@@ -121,24 +127,18 @@ export class WorkspaceService {
     }
 
     const plan = planChunking(
-      plans.map((p) => ({
-        label: p.label,
-        contextLimit: p.contextLimit,
-        outputReserve: p.maxOutputTokens,
-        systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
-        glossaryTokens: estimateTokens(JSON.stringify(p.glossary)),
-      })),
+      plans.map((p) => this.budgetInput(p, input)),
+      this.sizeLimits(input),
     );
     if (!plan.ok) throw new UserError("budget", plan.issues[0]?.message ?? "The prompt does not fit the model.");
-    const small = input.backend === "practice" && input.demo.smallBlocks;
     let revision: SourceRevision;
     try {
       revision = createRevision({
         text: input.text,
         sourceLanguage: input.sourceLanguage.trim() || "the source language",
         targetLanguage: input.targetLanguage.trim() || "the target language",
-        targetTokens: small ? 40 : plan.targetTokens,
-        maxTokens: small ? 60 : plan.maxTokens,
+        targetTokens: plan.targetTokens,
+        maxTokens: plan.maxTokens,
       });
     } catch (e) {
       if (e instanceof RevisionError) throw new UserError(e.code, e.message);
@@ -167,6 +167,93 @@ export class WorkspaceService {
     );
     this.jobId = coordinator.startJob({ revisionId: revision.id, runIds: this.runIds }).job.id;
     return this.snapshot();
+  }
+
+  /** What one model run needs to know to work out how large a block may be. */
+  private budgetInput(p: { label: string; contextLimit: number; maxOutputTokens: number; style: { template: string; appendFraming: boolean }; glossary: { source: string; target: string; note?: string }[] }, input: Pick<StartJobInput, "sourceLanguage" | "targetLanguage">) {
+    return {
+      label: p.label,
+      contextLimit: p.contextLimit,
+      outputReserve: p.maxOutputTokens,
+      systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
+      glossaryTokens: estimateTokens(JSON.stringify(p.glossary)),
+    };
+  }
+
+  /** The block size the user asked for. The practice translator's "small blocks" option overrides it. */
+  private sizeLimits(input: Pick<StartJobInput, "blockSize" | "backend" | "demo">): { targetTokens: number; maxTokens: number } {
+    if (input.backend === "practice" && input.demo.smallBlocks) return { targetTokens: 40, maxTokens: 60 };
+    return BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
+  }
+
+  /**
+   * Shows how the text would be split, using exactly the rules a run uses (same sizes, same model limits),
+   * without starting anything. It is forgiving: with no model chosen yet it uses the default sizes.
+   */
+  previewSplit(input: StartJobInput): SplitPreview {
+    const text = normalizeSource(input.text);
+    const empty: SplitPreview = {
+      ok: false,
+      problem: null,
+      blocks: [],
+      characters: text.length,
+      bytes: 0,
+      targetTokens: 0,
+      maxTokens: 0,
+      limitingModel: null,
+      models: [],
+      issues: [],
+      notes: [],
+    };
+    if (text.trim() === "") return { ...empty, problem: "Paste some text to see how it will be split." };
+
+    const styles = allPrompts(input.prompts.filter((p) => validatePrompt(p) === null));
+    const glossary = normalizeGlossary(input.glossary).entries;
+    const plans = input.models
+      .filter((m) => m.name.trim() !== "")
+      .map((m) => {
+        const style = styles.find((p) => p.id === m.promptId) ?? styles[0]!;
+        const label = [m.name.trim(), style.id !== STANDARD_PROMPT_ID ? style.name : null, !m.useGlossary && glossary.length > 0 ? "no glossary" : null].filter(Boolean).join(" · ");
+        return { ...m, label, style, glossary: m.useGlossary ? glossary : [] };
+      });
+    const limits = this.sizeLimits(input);
+    const plan = planChunking(plans.map((p) => this.budgetInput(p, input)), limits);
+
+    const bytes = new TextEncoder().encode(text).length;
+    const issues = plan.issues.map((i) => i.message);
+    const base = {
+      characters: text.length,
+      bytes,
+      targetTokens: plan.targetTokens,
+      maxTokens: plan.maxTokens,
+      limitingModel: plan.limitingModel ?? null,
+      models: plan.budgets.map((b, i) => ({
+        label: b.label,
+        contextLimit: plans[i]!.contextLimit,
+        outputReserve: plans[i]!.maxOutputTokens,
+        fixedTokens: b.fixedTokens,
+        sourceBudget: b.sourceBudget,
+        contextReserve: b.contextReserve,
+        fits: b.fits,
+      })),
+    };
+    if (bytes > DEFAULTS.maxSourceBytes) {
+      return { ...empty, ...base, issues, problem: `The text is ${(bytes / 1024 / 1024).toFixed(2)} MiB; the limit is 1 MiB. Split it into several projects.` };
+    }
+    const chunks = chunkSource(text, { targetTokens: plan.targetTokens, maxTokens: plan.maxTokens });
+    if (chunks.length > DEFAULTS.maxBlocks) {
+      return { ...empty, ...base, issues, problem: `The text would make ${chunks.length} blocks; the limit is ${DEFAULTS.maxBlocks}. Choose a larger block size or split the text.` };
+    }
+    const notes = describeSplit(chunks);
+    if (plans.length === 0) notes.unshift("No model is chosen yet, so the default block size is shown. It may change once you add one.");
+    return {
+      ...empty,
+      ...base,
+      ok: issues.length === 0,
+      issues,
+      notes,
+      blocks: chunks.map((c) => ({ index: c.index, text: text.slice(c.startOffset, c.endOffset), estimatedTokens: c.estimatedTokens, boundaryKind: c.boundaryKind })),
+    };
   }
 
   /** Creates the job runner for a translator backend (the real server connection or the practice translator). */

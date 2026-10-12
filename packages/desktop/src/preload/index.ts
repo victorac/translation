@@ -27,6 +27,7 @@ const COMMANDS = new Set([
   "project.dismissProblem",
   "export.preview",
   "export.write",
+  "source.preview",
   "provider.get",
   "provider.save",
   "provider.test",

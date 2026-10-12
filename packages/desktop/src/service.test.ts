@@ -14,6 +14,7 @@ const input = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   models: [model("alpha")],
   glossary: [],
   prompts: [],
+  blockSize: "normal",
   demo,
   ...over,
 });
@@ -210,5 +211,85 @@ describe("glossary and prompt styles", () => {
     const state = s.exportState();
     expect(state.runs[0]!.prompt).toEqual({ id: "mine", name: "My style", template: style.template, appendFraming: true });
     expect(state.runs[0]!.glossary).toEqual(GLOSSARY);
+  });
+});
+
+describe("previewing how the text will be split", () => {
+  const LONG = Array.from({ length: 12 }, (_, i) => `${i + 1}番目の段落です。${"これは少し長い文章です。".repeat(8)}`).join("\n\n");
+
+  it("shows exactly the blocks a real run would use", async () => {
+    const cases = [
+      input({ text: LONG, blockSize: "small" }),
+      input({ text: LONG, blockSize: "normal" }),
+      input({ text: LONG, blockSize: "large" }),
+      input({ text: LONG, models: [model("tiny", { contextLimit: 2048, maxOutputTokens: 256 })] }),
+      input({ text: TEXT, demo: { ...demo, smallBlocks: false } }),
+    ];
+    for (const c of cases) {
+      const preview = new WorkspaceService({ speedMs: 0 }).previewSplit({ ...c, demo: c.demo.smallBlocks ? c.demo : { ...c.demo, smallBlocks: false } });
+      const s = new WorkspaceService({ speedMs: 0 });
+      s.start({ ...c, demo: c.demo.smallBlocks ? c.demo : { ...c.demo, smallBlocks: false } });
+      await s.whenIdle();
+      const real = s.snapshot().revision!.blocks;
+      expect(preview.blocks.map((b) => b.text)).toEqual(real.map((b) => b.text));
+      expect(preview.blocks.map((b) => b.estimatedTokens)).toEqual(real.map((b) => b.estimatedTokens));
+      expect(preview.ok).toBe(true);
+    }
+  });
+
+  it("bigger sizes make fewer blocks, and a small model's limits can make blocks smaller than asked", () => {
+    const n = (over: Partial<StartJobInput>) => new WorkspaceService().previewSplit(input({ text: LONG, demo: { ...demo, smallBlocks: false }, ...over })).blocks.length;
+    expect(n({ blockSize: "small" })).toBeGreaterThan(n({ blockSize: "normal" }));
+    expect(n({ blockSize: "normal" })).toBeGreaterThanOrEqual(n({ blockSize: "large" }));
+    const limited = new WorkspaceService().previewSplit(input({ text: LONG, blockSize: "large", demo: { ...demo, smallBlocks: false }, models: [model("small-ctx", { contextLimit: 2048, maxOutputTokens: 256 })] }));
+    expect(limited.limitingModel).toBe("small-ctx");
+    expect(limited.maxTokens).toBeLessThan(1800);
+    expect(limited.models[0]).toMatchObject({ label: "small-ctx", contextLimit: 2048, fits: true });
+  });
+
+  it("works before any model is chosen, and says so", () => {
+    const p = new WorkspaceService().previewSplit(input({ text: LONG, models: [], demo: { ...demo, smallBlocks: false } }));
+    expect(p.ok).toBe(true);
+    expect(p.blocks.length).toBeGreaterThan(0);
+    expect(p.notes[0]).toMatch(/No model is chosen yet/);
+    expect(p.limitingModel).toBeNull();
+  });
+
+  it("explains when there is nothing to show or the text is too big", () => {
+    const s = new WorkspaceService();
+    expect(s.previewSplit(input({ text: " \n " }))).toMatchObject({ ok: false, problem: expect.stringMatching(/Paste some text/), blocks: [] });
+    const huge = s.previewSplit(input({ text: "あ".repeat(400_000) }));
+    expect(huge).toMatchObject({ ok: false, problem: expect.stringMatching(/1 MiB/) });
+    const many = s.previewSplit(input({ text: "あ".repeat(300_000), demo: { ...demo, smallBlocks: true } }));
+    expect(many).toMatchObject({ ok: false, problem: expect.stringMatching(/limit is 2000/) });
+  });
+
+  it("reports models that cannot fit, and still shows the blocks", () => {
+    const p = new WorkspaceService().previewSplit(input({ text: TEXT, models: [model("tiny", { contextLimit: 2048, maxOutputTokens: 1900 })], demo: { ...demo, smallBlocks: false } }));
+    expect(p.ok).toBe(false);
+    expect(p.issues[0]).toMatch(/tiny/);
+    expect(p.models[0]!.fits).toBe(false);
+    expect(p.blocks.length).toBeGreaterThan(0);
+  });
+
+  it("points out awkward cuts and divider lines in plain words", () => {
+    const p = new WorkspaceService().previewSplit(input({ text: "あ".repeat(2000) + "\n\n***\n\n終わり。", blockSize: "small", demo: { ...demo, smallBlocks: false } }));
+    expect(p.notes.join(" ")).toMatch(/cut in the middle of text/);
+    expect(p.notes.join(" ")).toMatch(/divider line/);
+    expect(p.blocks.some((b) => b.boundaryKind === "hard")).toBe(true);
+  });
+
+  it("normalizes line endings the same way a run does, and never changes anything", () => {
+    const s = new WorkspaceService();
+    const p = s.previewSplit(input({ text: "一行目。\r\n\r\n二行目。" }));
+    expect(p.blocks.map((b) => b.text).join("")).toBe("一行目。\n\n二行目。");
+    expect(s.snapshot().revision).toBeNull();
+  });
+
+  it("works through the window's command and rejects malformed requests", async () => {
+    const h = createHandler(new WorkspaceService());
+    const ok = await h("1", "source.preview", input({ text: TEXT }));
+    expect(ok).toMatchObject({ ok: true, value: { blocks: expect.any(Array) } });
+    expect(await h("2", "source.preview", { ...input(), blockSize: "huge" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
   });
 });

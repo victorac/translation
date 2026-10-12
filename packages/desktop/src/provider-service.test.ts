@@ -87,6 +87,7 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   models: [model("qwen2.5-7b-instruct")],
   glossary: [],
   prompts: [],
+  blockSize: "normal",
   demo: { speed: "fast", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });

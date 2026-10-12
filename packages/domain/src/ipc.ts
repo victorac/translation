@@ -1,6 +1,7 @@
 import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
+import type { BlockSize } from "./defaults.js";
 import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
@@ -36,6 +37,28 @@ export interface ModelSetting {
 
 export type Backend = "provider" | "practice";
 
+/** What the splitting preview shows: the blocks the run would use, and why they are that size. */
+export interface SplitPreview {
+  /** Nothing in the way of running (text present, everything fits). */
+  ok: boolean;
+  /** Why there is no preview, or null. */
+  problem: string | null;
+  blocks: { index: number; text: string; estimatedTokens: number; boundaryKind: BoundaryKind }[];
+  characters: number;
+  bytes: number;
+  /** Sizes actually used, after the models' limits were applied. */
+  targetTokens: number;
+  maxTokens: number;
+  /** The model whose limits set the block size, if any. */
+  limitingModel: string | null;
+  /** Per model: how much of its context a block may use. */
+  models: { label: string; contextLimit: number; outputReserve: number; fixedTokens: number; sourceBudget: number; contextReserve: number; fits: boolean }[];
+  /** Things that stop the run, in plain words. */
+  issues: string[];
+  /** Things worth a look, in plain words. */
+  notes: string[];
+}
+
 export interface StartJobInput {
   text: string;
   sourceLanguage: string;
@@ -47,6 +70,8 @@ export interface StartJobInput {
   glossary: GlossaryEntry[];
   /** The user's own translation styles (the built-in ones are always available). */
   prompts: PromptPreset[];
+  /** How big each block should be. The models' own limits can make blocks smaller. */
+  blockSize: BlockSize;
   demo: DemoOptions;
 }
 
@@ -120,6 +145,7 @@ export interface CommandMap {
   "project.dismissProblem": undefined;
   "export.preview": ExportInput;
   "export.write": ExportInput;
+  "source.preview": StartJobInput;
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -127,8 +153,9 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write">;
+export type SnapshotCommand = Exclude<CommandName, "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
+  "source.preview": SplitPreview;
   "export.preview": ExportPreview;
   "export.write": ExportWriteResult;
   "provider.get": ProviderView;
@@ -157,6 +184,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "project.dismissProblem",
   "export.preview",
   "export.write",
+  "source.preview",
   "provider.get",
   "provider.save",
   "provider.test",

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type { Backend, DemoOptions, GlossaryEntry, ModelSetting, PromptPreset } from "@ltw/domain";
+import type { Backend, BlockSize, DemoOptions, GlossaryEntry, ModelSetting, PromptPreset, SplitPreview } from "@ltw/domain";
 import { allPrompts } from "@ltw/domain/pure";
 import { GlossaryPanel } from "./GlossaryPanel";
 import { PromptsPanel } from "./PromptsPanel";
 import { SAMPLE_PASSAGES } from "./samples";
+import { SplitPreviewView } from "./SplitPreviewView";
 import type { useProvider } from "./useProvider";
 
 export interface SetupState {
@@ -15,6 +16,7 @@ export interface SetupState {
   glossary: GlossaryEntry[];
   /** The user's own translation styles. */
   prompts: PromptPreset[];
+  blockSize: BlockSize;
   demo: DemoOptions;
 }
 
@@ -31,6 +33,7 @@ export const initialSetup: SetupState = {
   models: [],
   glossary: [],
   prompts: [],
+  blockSize: "normal",
   demo: { speed: "normal", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
 };
 
@@ -45,9 +48,20 @@ const isLocalHost = (address: string): boolean => {
   }
 };
 
-export function Setup({ value, onChange, provider }: { value: SetupState; onChange: (v: SetupState) => void; provider: ReturnType<typeof useProvider> }) {
+export function Setup({
+  value,
+  onChange,
+  provider,
+  split,
+}: {
+  value: SetupState;
+  onChange: (v: SetupState) => void;
+  provider: ReturnType<typeof useProvider>;
+  split: { preview: SplitPreview | null; loading: boolean };
+}) {
   const [newName, setNewName] = useState("");
   const [lookFor, setLookFor] = useState<string | null>(null);
+  const [tab, setTab] = useState<"text" | "split">("text");
   const set = (patch: Partial<SetupState>) => onChange({ ...value, ...patch });
   const setDemo = (patch: Partial<DemoOptions>) => set({ demo: { ...value.demo, ...patch } });
   const styles = allPrompts(value.prompts);
@@ -76,41 +90,59 @@ export function Setup({ value, onChange, provider }: { value: SetupState; onChan
   return (
     <div className="setup">
       <section className="panel source-panel" aria-labelledby="h-source">
-        <h2 id="h-source">1. Paste the text to translate</h2>
-        <textarea
-          className="source-input"
-          aria-label="Source text"
-          placeholder="Paste or type the text here…"
-          value={value.text}
-          onChange={(e) => set({ text: e.target.value })}
-        />
-        <div className="actions">
-          <button onClick={() => set({ text: SAMPLE })}>Use a sample passage</button>
-          <label className="inline">
-            <span className="sr-only">Insert a test passage</span>
-            <select
-              value=""
-              onChange={(e) => {
-                const p = SAMPLE_PASSAGES.find((x) => x.id === e.target.value);
-                if (!p) return;
-                set({ text: p.text, ...(p.glossary ? { glossary: p.glossary } : {}) });
-                setLookFor(p.lookFor);
-              }}
-            >
-              <option value="">Insert a test passage…</option>
-              {SAMPLE_PASSAGES.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="muted">{value.text.length.toLocaleString()} characters</span>
+        <h2 id="h-source">1. The text to translate</h2>
+        <div role="tablist" aria-label="Source view" className="tabs">
+          <button role="tab" id="tab-text" aria-selected={tab === "text"} aria-controls="pane-text" className={tab === "text" ? "tab active" : "tab"} onClick={() => setTab("text")}>
+            Text
+          </button>
+          <button role="tab" id="tab-split" aria-selected={tab === "split"} aria-controls="pane-split" className={tab === "split" ? "tab active" : "tab"} onClick={() => setTab("split")}>
+            How it will be split{split.preview && split.preview.blocks.length > 0 ? ` (${split.preview.blocks.length} blocks)` : ""}
+            {split.preview && (split.preview.issues.length > 0 || split.preview.problem) && <span aria-label="has problems"> ⚠</span>}
+          </button>
         </div>
-        {lookFor && (
-          <p className="note" role="note">
-            <strong>What to look for:</strong> {lookFor}
-          </p>
+
+        {tab === "text" ? (
+          <div role="tabpanel" id="pane-text" aria-labelledby="tab-text">
+            <textarea
+              className="source-input"
+              aria-label="Source text"
+              placeholder="Paste or type the text here…"
+              value={value.text}
+              onChange={(e) => set({ text: e.target.value })}
+            />
+            <div className="actions">
+              <button onClick={() => set({ text: SAMPLE })}>Use a sample passage</button>
+              <label className="inline">
+                <span className="sr-only">Insert a test passage</span>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const p = SAMPLE_PASSAGES.find((x) => x.id === e.target.value);
+                    if (!p) return;
+                    set({ text: p.text, ...(p.glossary ? { glossary: p.glossary } : {}) });
+                    setLookFor(p.lookFor);
+                  }}
+                >
+                  <option value="">Insert a test passage…</option>
+                  {SAMPLE_PASSAGES.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="muted">{value.text.length.toLocaleString()} characters</span>
+            </div>
+            {lookFor && (
+              <p className="note" role="note">
+                <strong>What to look for:</strong> {lookFor}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div role="tabpanel" id="pane-split" aria-labelledby="tab-split">
+            <SplitPreviewView preview={split.preview} loading={split.loading} />
+          </div>
         )}
       </section>
 
@@ -150,6 +182,15 @@ export function Setup({ value, onChange, provider }: { value: SetupState; onChan
           <p className="muted">
             Each model translates the same blocks, one model after another. Load only one at a time in LM Studio if your graphics card is small.
           </p>
+          <label>
+            Block size
+            <select value={value.blockSize} onChange={(e) => set({ blockSize: e.target.value as BlockSize })}>
+              <option value="small">Smaller: more requests, needs less context</option>
+              <option value="normal">Normal (recommended)</option>
+              <option value="large">Larger: fewer requests, more context per block</option>
+            </select>
+          </label>
+          <p className="muted">A model with a small context can still make blocks smaller than this. See the "How it will be split" tab.</p>
           {value.models.length > 0 && (
             <ul className="model-list">
               {value.models.map((m, i) => (

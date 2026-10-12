@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import type { StartJobInput } from "@ltw/domain";
 import { normalizeGlossary } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
 import { Setup, initialSetup, newModel, type SetupState } from "./Setup";
 import { Workspace } from "./Workspace";
 import { countCells, summarize } from "./status";
 import { useProvider } from "./useProvider";
+import { useSplitPreview } from "./useSplitPreview";
 import { useWorkspace } from "./useWorkspace";
 
 const STORAGE_KEY = "ltw.setup.v1";
@@ -23,6 +25,7 @@ function loadSetup(): SetupState {
         ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
         ...(Array.isArray(s.glossary) ? { glossary: s.glossary } : {}),
         ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
+        ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
       };
     }
   } catch {
@@ -49,11 +52,24 @@ export function App() {
   useEffect(() => saveSetup(setup), [setup]);
 
   const glossaryProblem = normalizeGlossary(setup.glossary).problems[0] ?? null;
+  const startInput: StartJobInput = {
+    text: setup.text,
+    sourceLanguage: setup.sourceLanguage,
+    targetLanguage: setup.targetLanguage,
+    backend: setup.backend,
+    models: setup.models,
+    glossary: setup.glossary,
+    prompts: setup.prompts,
+    blockSize: setup.blockSize,
+    demo: setup.demo,
+  };
+  const split = useSplitPreview(startInput);
+  const splitProblem = split.preview ? (split.preview.problem ?? split.preview.issues[0] ?? null) : null;
   const hasRevision = !!snapshot?.revision;
   const project = snapshot?.project;
   const dirty = project?.dirty ?? false;
   const busy = snapshot?.busy ?? false;
-  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !glossaryProblem && !(setup.backend === "provider" && provider.view?.problem);
+  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !glossaryProblem && !splitProblem && !(setup.backend === "provider" && provider.view?.problem);
   const disabledReason = hasRevision
     ? null
     : setup.text.trim() === ""
@@ -62,22 +78,15 @@ export function App() {
         ? "Add at least one model."
         : glossaryProblem
           ? "Fix the glossary first (step 5)."
+          : splitProblem
+            ? "The text does not fit the chosen models (see how it will be split)."
           : setup.backend === "provider" && provider.view?.problem
             ? "The server address cannot be used yet (see step 3)."
             : null;
 
   const run = () => {
     if (!canRun) return;
-    void send("job.start", {
-      text: setup.text,
-      sourceLanguage: setup.sourceLanguage,
-      targetLanguage: setup.targetLanguage,
-      backend: setup.backend,
-      models: setup.models,
-      glossary: setup.glossary,
-      prompts: setup.prompts,
-      demo: setup.demo,
-    });
+    void send("job.start", startInput);
   };
 
   useEffect(() => {
@@ -208,7 +217,7 @@ export function App() {
         ) : snapshot.revision ? (
           <Workspace snap={snapshot} send={send} />
         ) : (
-          <Setup value={setup} onChange={setSetup} provider={provider} />
+          <Setup value={setup} onChange={setSetup} provider={provider} split={split} />
         )}
       </main>
     </div>
