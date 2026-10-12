@@ -1,4 +1,5 @@
 import type { ModelBudgetInput } from "./budget.js";
+import type { PromptSnapshot } from "./prompts.js";
 
 /** A glossary line: how a name or term should be translated. */
 export interface GlossaryEntry {
@@ -49,6 +50,8 @@ export interface Attempt {
   endedAt?: string;
   usage?: { inputTokens?: number; outputTokens?: number };
   error?: AttemptError;
+  /** Reasons the finished text deserves a look (missing glossary terms, possible commentary...). */
+  notes?: string[];
 }
 
 export interface OutputVersion {
@@ -90,6 +93,8 @@ export interface ModelRun {
   label: string;
   config: RunConfig;
   promptVersion: string;
+  /** The translation style used. Missing in older saved projects, which used the standard style. */
+  prompt?: PromptSnapshot;
   glossary: GlossaryEntry[];
   state: RunState;
   archived: boolean;
@@ -107,12 +112,16 @@ export const currentVersion = (o: BlockOutput): OutputVersion | undefined =>
  * A manual edit counts, because the user chose that wording.
  */
 export function usableText(o: BlockOutput | undefined): string | null {
-  if (!o || o.state === "needs_review" || o.state === "stale") return null;
+  if (!o || o.state === "stale") return null;
   const v = currentVersion(o);
   if (!v) return null;
-  if (v.kind === "manual") return v.text;
+  if (v.kind === "manual") return o.state === "needs_review" ? null : v.text;
   const producedBy = o.attempts.find((a) => a.id === v.attemptId);
-  return producedBy?.state === "succeeded" ? v.text : null;
+  if (producedBy?.state === "succeeded") return v.text;
+  // Flagged only by the quality checks (the model finished normally): still good enough as context.
+  // Truncated, refused or unknown endings are not.
+  if (producedBy?.state === "needs_review" && producedBy.finishReason === "stop") return v.text;
+  return null;
 }
 
 export function runBudgetInput(run: ModelRun, systemTokens: number, glossaryTokens: number): ModelBudgetInput {

@@ -11,7 +11,7 @@ afterEach(() => {
   for (const p of made.splice(0)) p.dispose();
 });
 
-const model = (name: string): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2 });
+const model = (name: string): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, promptId: "standard", useGlossary: true });
 const PARAS = ["最初の段落です。とても短い。", "二番目の段落です。もう少し長い。", "三番目の段落です。さらに続く。", "四番目の段落です。まだ続く。", "五番目の段落です。これで最後。"];
 const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   text: PARAS.join("\n\n"),
@@ -19,6 +19,8 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   targetLanguage: "English",
   backend: "practice",
   models: [model("alpha"), model("beta")],
+  glossary: [],
+  prompts: [],
   demo: { speed: "fast", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });

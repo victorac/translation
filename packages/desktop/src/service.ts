@@ -1,10 +1,17 @@
 import {
+  allPrompts,
   createRevision,
   currentVersion,
   estimateTokens,
+  normalizeGlossary,
   planChunking,
-  renderSystemPrompt,
+  relevantEntries,
+  renderPrompt,
   RevisionError,
+  snapshotPrompt,
+  STANDARD_PROMPT_ID,
+  systemPromptFor,
+  validatePrompt,
   type BlockCellView,
   type BlockOutput,
   type Backend,
@@ -78,9 +85,28 @@ export class WorkspaceService {
     if (this.snapshot().busy) throw new UserError("busy", "A translation is already running. Cancel it first.");
     const settings = input.models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name !== "");
     if (settings.length === 0) throw new UserError("no_models", "Add at least one model.");
-    if (settings.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} models per source.`);
-    if (new Set(settings.map((m) => m.name)).size !== settings.length) throw new UserError("duplicate_models", "Each model name must be different.");
+    if (settings.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} model runs per source.`);
     if (input.text.trim() === "") throw new UserError("empty", "Paste some text to translate first.");
+
+    // Translation styles: the built-in ones plus the user's own (checked here, because the window is not trusted).
+    if (input.prompts.length > 20) throw new UserError("too_many_prompts", "At most 20 custom prompts.");
+    for (const p of input.prompts) {
+      const problem = validatePrompt(p);
+      if (problem) throw new UserError("bad_prompt", problem);
+    }
+    const styles = allPrompts(input.prompts);
+    const glossary = normalizeGlossary(input.glossary);
+    if (glossary.problems.length > 0) throw new UserError("bad_glossary", glossary.problems[0]!);
+
+    const plans = settings.map((m) => {
+      const style = styles.find((p) => p.id === m.promptId);
+      if (!style) throw new UserError("unknown_prompt", `${m.name}: the chosen prompt no longer exists.`);
+      const label = [m.name, style.id !== STANDARD_PROMPT_ID ? style.name : null, !m.useGlossary && glossary.entries.length > 0 ? "no glossary" : null].filter(Boolean).join(" · ");
+      return { ...m, label, style, glossary: m.useGlossary ? glossary.entries : [] };
+    });
+    if (new Set(plans.map((p) => p.label)).size !== plans.length) {
+      throw new UserError("duplicate_models", "Each combination of model, prompt and glossary setting can only be used once.");
+    }
     for (const m of settings) {
       if (m.maxOutputTokens >= m.contextLimit) {
         throw new UserError("bad_limits", `${m.name}: the output limit must be smaller than the context size.`);
@@ -94,9 +120,14 @@ export class WorkspaceService {
       if (problem) throw new UserError("endpoint", problem);
     }
 
-    const system = estimateTokens(renderSystemPrompt(input.sourceLanguage, input.targetLanguage));
     const plan = planChunking(
-      settings.map((m) => ({ label: m.name, contextLimit: m.contextLimit, outputReserve: m.maxOutputTokens, systemTokens: system, glossaryTokens: 0 })),
+      plans.map((p) => ({
+        label: p.label,
+        contextLimit: p.contextLimit,
+        outputReserve: p.maxOutputTokens,
+        systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
+        glossaryTokens: estimateTokens(JSON.stringify(p.glossary)),
+      })),
     );
     if (!plan.ok) throw new UserError("budget", plan.issues[0]?.message ?? "The prompt does not fit the model.");
     const small = input.backend === "practice" && input.demo.smallBlocks;
@@ -116,20 +147,22 @@ export class WorkspaceService {
 
     this.revision = revision;
     this.backend = input.backend;
-    this.firstModel = settings[0]!.name;
+    this.firstModel = plans[0]!.name;
     this.demoModelUnloaded = input.backend === "practice" && input.demo.firstModelUnloaded;
     this.waitingInfo.clear();
     this.queuedJobIds = [];
     const coordinator = this.buildCoordinator(input.backend, revision, input.demo);
     this.coordinator = coordinator;
-    this.runIds = settings.map(
-      (m) =>
+    this.runIds = plans.map(
+      (p) =>
         coordinator.addRun({
           revisionId: revision.id,
           providerRefId: "main",
-          modelId: m.name,
-          label: m.name,
-          config: { contextLimit: m.contextLimit, maxOutputTokens: m.maxOutputTokens, temperature: m.temperature },
+          modelId: p.name,
+          label: p.label,
+          config: { contextLimit: p.contextLimit, maxOutputTokens: p.maxOutputTokens, temperature: p.temperature },
+          prompt: snapshotPrompt(p.style),
+          glossary: p.glossary,
         }).id,
     );
     this.jobId = coordinator.startJob({ revisionId: revision.id, runIds: this.runIds }).job.id;
@@ -151,7 +184,13 @@ export class WorkspaceService {
       registry.register(this.provider);
       providerConfig = () => ({ id: "practice", kind: "fake", baseUrl: "http://localhost:1234/v1" });
     }
-    const coordinator = new Coordinator({ registry, providerConfig, ...(this.options.checkpoint ? { checkpoint: this.options.checkpoint } : {}) });
+    const coordinator = new Coordinator({
+      registry,
+      providerConfig,
+      // The practice translator only echoes text, so only the glossary check is meaningful for it.
+      checks: backend === "practice" ? "terms" : "all",
+      ...(this.options.checkpoint ? { checkpoint: this.options.checkpoint } : {}),
+    });
     coordinator.addRevision(revision);
     coordinator.onEvent((e) => this.onCoordinatorEvent(e));
     return coordinator;
@@ -280,6 +319,7 @@ export class WorkspaceService {
       runs: runs.map((r) => ({
         id: r.id,
         label: r.label,
+        promptName: r.prompt?.name ?? "Standard",
         state: r.state,
         blocks: Object.fromEntries(Object.entries(r.outputs).map(([id, o]) => [id, cellView(o)])),
       })),
@@ -334,8 +374,11 @@ export class WorkspaceService {
       chunk: 3,
       unavailable: demo.firstModelUnloaded ? [first] : [],
       translate: (req) => {
-        const user = JSON.parse(req.messages[1]!.content) as { source_block: string };
-        return `[practice translation by ${req.modelId}] ${user.source_block}`;
+        const user = JSON.parse(req.messages[1]!.content) as { source_block: string; glossary?: { source: string; target: string }[] };
+        // Pretend to follow the glossary: swap each term it was sent for its preferred translation.
+        let text = user.source_block;
+        for (const g of user.glossary ?? []) text = text.replaceAll(g.source, g.target.split("|")[0]!.trim());
+        return `[practice translation by ${req.modelId}] ${text}`;
       },
       scriptFor: (req) => {
         if (failIndex < 0 || req.modelId !== first || failed.has(req.modelId)) return undefined;
@@ -361,6 +404,7 @@ function cellView(o: BlockOutput): BlockCellView {
     attempts: o.attempts.length,
     error: o.state === "failed" || o.state === "waiting" ? (latest?.error?.message ?? null) : null,
     candidateText: candidate?.text ?? null,
+    reviewNotes: o.state === "needs_review" ? (o.attempts.find((a) => a.id === cur?.attemptId)?.notes ?? []) : [],
     edited: cur?.kind === "manual",
   };
 }

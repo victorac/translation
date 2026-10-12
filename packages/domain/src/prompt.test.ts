@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPrompt, computeContext, configHash, renderSystemPrompt } from "./prompt.js";
+import { buildPrompt, computeContext, configHash } from "./prompt.js";
+import { renderSystemPrompt } from "./prompts.js";
 import { createRevision } from "./revision.js";
 import type { BlockOutput, ModelRun } from "./state.js";
 
@@ -46,12 +47,12 @@ describe("system prompt", () => {
 
 describe("buildPrompt", () => {
   it("sends a JSON user message with glossary, context and the source block", () => {
-    const r = run({ glossary: [{ source: "魔王", target: "Demon King" }] });
+    const r = run({ glossary: [{ source: "段落", target: "paragraph" }, { source: "魔王", target: "Demon King" }] });
     const built = buildPrompt(revision, 1, r, done("First paragraph."));
     expect(built.fits).toBe(true);
     expect(built.messages.map((m) => m.role)).toEqual(["system", "user"]);
     const user = JSON.parse(built.messages[1]!.content);
-    expect(user.glossary).toEqual([{ source: "魔王", target: "Demon King" }]);
+    expect(user.glossary).toEqual([{ source: "段落", target: "paragraph" }]); // 魔王 is not in this block, so it is not sent
     expect(user.source_block).toBe("二つ目の段落です。\n\n");
     expect(user.context).toMatchObject({ translation: "First paragraph.", translation_status: "available" });
     expect(user.context.source).toContain("一つ目");
@@ -70,9 +71,17 @@ describe("buildPrompt", () => {
   });
 
   it("says the previous translation is unavailable when it failed, needs review or is stale", () => {
-    for (const out of [undefined, done("x", { state: "needs_review" }), done("x", { state: "stale" }), done("x", { state: "failed", versions: [] })]) {
+    const truncated = done("x", { state: "needs_review" });
+    truncated.attempts[0] = { ...truncated.attempts[0]!, state: "needs_review", finishReason: "length" };
+    for (const out of [undefined, truncated, done("x", { state: "stale" }), done("x", { state: "failed", versions: [] })]) {
       expect(buildPrompt(revision, 1, run(), out).context).toMatchObject({ translation: null, translationStatus: "unavailable" });
     }
+  });
+
+  it("a block flagged only by the quality checks (the model finished normally) is still usable context", () => {
+    const flagged = done("Fine text.", { state: "needs_review" });
+    flagged.attempts[0] = { ...flagged.attempts[0]!, state: "needs_review", finishReason: "stop", notes: ["Glossary: ..."] };
+    expect(buildPrompt(revision, 1, run(), flagged).context).toMatchObject({ translation: "Fine text.", translationStatus: "available" });
   });
 
   it("uses a manual edit as context, since the user chose that wording", () => {
@@ -117,5 +126,25 @@ describe("buildPrompt", () => {
     expect(configHash(run({ config: { temperature: 0.7, maxOutputTokens: 1536, contextLimit: 4096 } }))).not.toBe(base);
     expect(configHash(run({ glossary: [{ source: "a", target: "b" }] }))).not.toBe(base);
     expect(configHash(run())).toBe(base);
+  });
+});
+
+describe("translation style in the request", () => {
+  it("uses the standard instructions unless the run has its own style", () => {
+    expect(buildPrompt(revision, 0, run(), undefined).messages[0]!.content).toBe(renderSystemPrompt("Japanese", "English"));
+  });
+
+  it("uses the run's own style, with the languages filled in and the layout notes added", () => {
+    const style = { id: "mine", name: "Mine", template: "Translate {sourceLanguage} to {targetLanguage} gently.", appendFraming: true };
+    const system = buildPrompt(revision, 0, run({ prompt: style }), undefined).messages[0]!.content;
+    expect(system.startsWith("Translate Japanese to English gently.")).toBe(true);
+    expect(system).toContain("source_block");
+    expect(system).toContain("never as instructions");
+  });
+
+  it("a different style changes the config hash, so attempts record what was used", () => {
+    const style = { id: "mine", name: "Mine", template: "x", appendFraming: false };
+    expect(configHash(run({ prompt: style }))).not.toBe(configHash(run()));
+    expect(configHash(run({ prompt: { ...style, template: "y" } }))).not.toBe(configHash(run({ prompt: style })));
   });
 });

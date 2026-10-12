@@ -1,4 +1,5 @@
-import type { BlockState, RunState } from "./state.js";
+import type { PromptPreset } from "./prompts.js";
+import type { BlockState, GlossaryEntry, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
 import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
 
@@ -27,6 +28,10 @@ export interface ModelSetting {
   /** The most text the model may produce for one block. */
   maxOutputTokens: number;
   temperature: number;
+  /** Which translation style to use (a built-in one or one of `StartJobInput.prompts`). */
+  promptId: string;
+  /** Send the glossary to this model. Turn off to compare with and without it. */
+  useGlossary: boolean;
 }
 
 export type Backend = "provider" | "practice";
@@ -39,6 +44,9 @@ export interface StartJobInput {
   backend: Backend;
   /** One entry per model run, in the order they will be translated. */
   models: ModelSetting[];
+  glossary: GlossaryEntry[];
+  /** The user's own translation styles (the built-in ones are always available). */
+  prompts: PromptPreset[];
   demo: DemoOptions;
 }
 
@@ -189,12 +197,16 @@ export interface BlockCellView {
   error: string | null;
   /** A retried result waiting for "use it" or "keep current". */
   candidateText: string | null;
+  /** Reasons the text deserves a look (missing glossary terms, possible commentary...). */
+  reviewNotes: string[];
   edited: boolean;
 }
 
 export interface RunView {
   id: string;
   label: string;
+  /** The translation style this model used. */
+  promptName: string;
   state: RunState;
   blocks: Record<string, BlockCellView>;
 }

@@ -1,14 +1,18 @@
 import {
+  blockText,
   buildPrompt,
+  checkTranslation,
   contextHashFor,
   currentVersion,
   newId as defaultNewId,
   PROMPT_VERSION,
+  usableText,
   type Attempt,
   type BlockOutput,
   type BlockState,
   type GlossaryEntry,
   type ModelRun,
+  type PromptSnapshot,
   type RunConfig,
   type SourceRevision,
 } from "@ltw/domain";
@@ -53,6 +57,8 @@ export interface CoordinatorDeps {
    * the disk is full), the job stops instead of translating more work it cannot save.
    */
   checkpoint?: () => Promise<void>;
+  /** Quality checks on finished text: everything (default), glossary terms only, or none. */
+  checks?: "all" | "terms" | "none";
 }
 
 export type JobState = "queued" | "running" | "waiting" | "completed" | "completed_with_issues" | "canceled" | "interrupted";
@@ -94,6 +100,7 @@ export interface AddRunInput {
   label: string;
   config?: Partial<RunConfig>;
   glossary?: GlossaryEntry[];
+  prompt?: PromptSnapshot;
 }
 
 interface JobRuntime {
@@ -193,6 +200,7 @@ export class Coordinator {
       label: input.label,
       config: { temperature: 0.2, maxOutputTokens: 1536, contextLimit: 4096, ...input.config },
       promptVersion: PROMPT_VERSION,
+      ...(input.prompt ? { prompt: input.prompt } : {}),
       glossary: input.glossary ?? [],
       state: "queued",
       archived: false,
@@ -476,6 +484,7 @@ export class Coordinator {
         return;
       }
       if (result.kind === "done") {
+        if (attempt.state === "succeeded") this.runChecks(run, revision, block.index, attempt);
         if (attempt.state === "succeeded" || attempt.state === "needs_review") this.commit(j, run, index, out, attempt, priorState);
         await this.checkpoint(j);
         return;
@@ -646,6 +655,26 @@ export class Coordinator {
     this.emit({ type: "terminal", jobId: j.job.id, runId: run.id, blockId: out.blockId, attemptId: attempt.id, payload: { state: "failed", error } });
   }
 
+  /**
+   * Quality checks on text the model finished normally: missing glossary terms, possible commentary,
+   * untranslated text. They only flag the block for review (with reasons); the user can accept it.
+   */
+  private runChecks(run: ModelRun, revision: SourceRevision, index: number, attempt: Attempt): void {
+    const mode = this.deps.checks ?? "all";
+    if (mode === "none") return;
+    const notes = checkTranslation({
+      source: blockText(revision, revision.blocks[index]!),
+      output: attempt.rawOutput ?? "",
+      glossary: run.glossary,
+      targetLanguage: revision.targetLanguage,
+      mode,
+    });
+    if (notes.length > 0) {
+      attempt.state = "needs_review";
+      attempt.notes = notes;
+    }
+  }
+
   /** Stores a finished result. Existing text is never overwritten unless the job says generated text may be replaced. */
   private commit(j: JobRuntime, run: ModelRun, index: number, out: BlockOutput, attempt: Attempt, priorState: BlockState): void {
     const text = attempt.rawOutput ?? "";
@@ -671,7 +700,7 @@ export class Coordinator {
       attemptId: attempt.id,
       payload: { state: attempt.state, candidate: !replace },
     });
-    if (replace && attempt.state === "succeeded") this.recheckDownstream(run, out.blockId, index);
+    if (replace && usableText(out) !== null) this.recheckDownstream(run, out.blockId, index);
   }
 
   /**

@@ -5,13 +5,15 @@ import { createHandler } from "./handlers.js";
 
 const demo: DemoOptions = { speed: "fast", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false };
 const TEXT = "これは最初の段落です。とても短いです。\n\nこれは二番目の段落です。もう少し長い文章にします。\n\n三番目の段落もあります。これで終わりです。";
-const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, ...over });
+const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, promptId: "standard", useGlossary: true, ...over });
 const input = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   text: TEXT,
   sourceLanguage: "Japanese",
   targetLanguage: "English",
   backend: "practice",
   models: [model("alpha")],
+  glossary: [],
+  prompts: [],
   demo,
   ...over,
 });
@@ -55,7 +57,7 @@ describe("WorkspaceService", () => {
     };
     expect(msg(() => s.start(input({ text: "  \n" })))).toMatch(/Paste some text/);
     expect(msg(() => s.start(input({ models: [] })))).toMatch(/at least one model/);
-    expect(msg(() => s.start(input({ models: [model("a"), model("a")] })))).toMatch(/different/);
+    expect(msg(() => s.start(input({ models: [model("a"), model("a")] })))).toMatch(/only be used once/);
     expect(msg(() => s.start(input({ text: "あ".repeat(400_000) })))).toMatch(/limit/);
   });
 
@@ -145,5 +147,68 @@ describe("createHandler", () => {
     expect(await h("5c", "job.start", input({ models: [model("a", { contextLimit: 100 })] }))).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
     expect(await h("6", "workspace.snapshot", undefined)).toMatchObject({ requestId: "6", ok: true });
     expect((await h("7", "job.start", input())).ok).toBe(true);
+  });
+});
+
+describe("glossary and prompt styles", () => {
+  const GLOSSARY = [{ source: "段落", target: "paragraph" }];
+  const style = { id: "mine", name: "My style", description: "", template: "Translate {sourceLanguage} to {targetLanguage} briskly.", appendFraming: true };
+
+  it("the practice translator follows the glossary it is sent, so nothing is flagged", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ glossary: GLOSSARY }));
+    await s.whenIdle();
+    const snap = s.snapshot();
+    const cells = Object.values(snap.runs[0]!.blocks);
+    expect(cells.every((c) => c.state === "succeeded")).toBe(true);
+    expect(cells.some((c) => c.text?.includes("paragraph"))).toBe(true);
+    expect(cells.some((c) => c.text?.includes("段落"))).toBe(false);
+  });
+
+  it("the same model with different styles becomes separate, clearly named columns", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha"), model("alpha", { promptId: "literary" }), model("alpha", { promptId: "mine" })], prompts: [style] }));
+    await s.whenIdle();
+    const runs = s.snapshot().runs;
+    expect(runs.map((r) => r.label)).toEqual(["alpha", "alpha · Natural, literary", "alpha · My style"]);
+    expect(runs.map((r) => r.promptName)).toEqual(["Standard", "Natural, literary", "My style"]);
+    expect(s.snapshot().job?.state).toBe("completed");
+  });
+
+  it("with and without the glossary can be compared; the no-glossary column says so and is not checked", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ glossary: GLOSSARY, models: [model("alpha"), model("alpha", { useGlossary: false })] }));
+    await s.whenIdle();
+    const [withG, without] = s.snapshot().runs;
+    expect(without!.label).toBe("alpha · no glossary");
+    const text = (r: typeof withG, i: number) => Object.values(r!.blocks)[i]!.text ?? "";
+    expect(text(withG, 0)).toContain("paragraph");
+    expect(text(without, 0)).toContain("段落");
+    expect(Object.values(without!.blocks).every((c) => c.state === "succeeded")).toBe(true);
+  });
+
+  it("explains unusable styles, prompts and glossary rows in plain words", () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    const msg = (f: () => unknown) => {
+      try {
+        f();
+      } catch (e) {
+        return e instanceof UserError ? `${e.code}: ${e.message}` : "other";
+      }
+      return "none";
+    };
+    expect(msg(() => s.start(input({ models: [model("a", { promptId: "ghost" })] })))).toMatch(/^unknown_prompt:.*no longer exists/);
+    expect(msg(() => s.start(input({ prompts: [{ ...style, template: "  " }], models: [model("a", { promptId: "mine" })] })))).toMatch(/^bad_prompt:.*no instructions/);
+    expect(msg(() => s.start(input({ glossary: [{ source: "魔王", target: "" }] })))).toMatch(/^bad_glossary:.*no translation/);
+    expect(msg(() => s.start(input({ models: [model("a"), model("a")] })))).toMatch(/^duplicate_models/);
+  });
+
+  it("a saved prompt style travels with the run", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha", { promptId: "mine" })], prompts: [style], glossary: GLOSSARY }));
+    await s.whenIdle();
+    const state = s.exportState();
+    expect(state.runs[0]!.prompt).toEqual({ id: "mine", name: "My style", template: style.template, appendFraming: true });
+    expect(state.runs[0]!.glossary).toEqual(GLOSSARY);
   });
 });

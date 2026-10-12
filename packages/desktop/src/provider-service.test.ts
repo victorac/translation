@@ -22,6 +22,9 @@ interface Seen {
   body: string;
 }
 
+/** What the stand-in "translates" a block into: not the source text, so it does not look untranslated. */
+const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
+
 /** A small stand-in for LM Studio: lists two models and "translates" by echoing the source block. */
 async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string } = {}) {
   const seen: Seen[] = [];
@@ -50,7 +53,7 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = `EN(${j.model}): ${source}`;
+        const text = `EN(${j.model}): ${fakeEnglish(source)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -74,7 +77,7 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
   return { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, seen, server };
 }
 
-const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, ...over });
+const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, promptId: "standard", useGlossary: true, ...over });
 const TEXT = "一つ目の段落です。\n\n二つ目の段落です。\n\n三つ目の段落です。";
 const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   text: TEXT,
@@ -82,6 +85,8 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   targetLanguage: "English",
   backend: "provider",
   models: [model("qwen2.5-7b-instruct")],
+  glossary: [],
+  prompts: [],
   demo: { speed: "fast", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });
@@ -167,8 +172,8 @@ describe("translating through the saved connection", () => {
     const snap = service.snapshot();
     expect(snap.job?.state).toBe("completed");
     const block = snap.revision!.blocks[0]!;
-    expect(snap.runs[0]!.blocks[block.id]!.text).toBe(`EN(qwen2.5-7b-instruct): ${block.text}`);
-    expect(snap.runs[1]!.blocks[block.id]!.text).toBe(`EN(gemma-2-9b): ${block.text}`);
+    expect(snap.runs[0]!.blocks[block.id]!.text).toBe(`EN(qwen2.5-7b-instruct): ${fakeEnglish(block.text)}`);
+    expect(snap.runs[1]!.blocks[block.id]!.text).toBe(`EN(gemma-2-9b): ${fakeEnglish(block.text)}`);
     const posts = lm.seen.filter((s) => s.method === "POST");
     expect(posts.map((p) => JSON.parse(p.body).model)).toEqual([...Array(posts.length / 2).fill("qwen2.5-7b-instruct"), ...Array(posts.length / 2).fill("gemma-2-9b")]);
     expect(JSON.parse(posts.at(-1)!.body)).toMatchObject({ temperature: 0.7, max_tokens: 1536, stream: true });
@@ -238,6 +243,65 @@ describe("translating through the saved connection", () => {
     expect(await h("1", "provider.save", { baseUrl: lm.baseUrl, allowRemote: false })).toMatchObject({ ok: true, value: { loopback: true } });
     expect(await h("2", "provider.test", undefined)).toMatchObject({ ok: true, value: { ok: true } });
     expect(await h("3", "provider.save", { baseUrl: "http://10.0.0.5:1234/v1", allowRemote: false })).toMatchObject({ ok: false, error: { code: "remote_not_allowed" } });
+  });
+});
+
+describe("glossary and prompt styles with a real server connection", () => {
+  const style = { id: "mine", name: "Brisk", description: "", template: "Translate {sourceLanguage} to {targetLanguage} briskly.", appendFraming: true };
+  const posts = (lm: { seen: Seen[] }) => lm.seen.filter((s) => s.method === "POST").map((s) => JSON.parse(s.body) as { model: string; messages: { content: string }[] });
+
+  it("sends each model its own style and only the glossary entries a block needs", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    service.start(
+      job({
+        text: "魔王が来た。",
+        glossary: [{ source: "魔王", target: "Demon King", note: "villain" }, { source: "勇者", target: "Hero" }],
+        prompts: [style],
+        models: [model("qwen2.5-7b-instruct"), model("qwen2.5-7b-instruct", { promptId: "mine" }), model("qwen2.5-7b-instruct", { promptId: "literary", useGlossary: false })],
+      }),
+    );
+    await service.whenIdle();
+    const sent = posts(lm);
+    expect(sent).toHaveLength(3);
+    expect(sent[0]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // standard style
+    expect(sent[1]!.messages[0]!.content).toMatch(/^Translate Japanese to English briskly\./);
+    expect(sent[1]!.messages[0]!.content).toContain("source_block"); // layout notes were added
+    expect(JSON.parse(sent[0]!.messages[1]!.content).glossary).toEqual([{ source: "魔王", target: "Demon King", note: "villain" }]); // 勇者 is not in the block
+    expect(JSON.parse(sent[2]!.messages[1]!.content).glossary).toEqual([]);
+    expect(service.snapshot().runs.map((r) => r.label)).toEqual(["qwen2.5-7b-instruct", "qwen2.5-7b-instruct · Brisk", "qwen2.5-7b-instruct · Natural, literary · no glossary"]);
+  });
+
+  it("flags a block whose required term is missing, with the reason, and the user can accept it", async () => {
+    const lm = await fakeLmStudio(); // this stand-in ignores the glossary
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    service.start(job({ text: "魔王が来た。", glossary: [{ source: "魔王", target: "Demon King" }] }));
+    await service.whenIdle();
+    let snap = service.snapshot();
+    const run = snap.runs[0]!;
+    const blockId = snap.revision!.blocks[0]!.id;
+    expect(run.blocks[blockId]).toMatchObject({ state: "needs_review", reviewNotes: ['Glossary: "魔王" should be "Demon King", but that was not found.'] });
+    expect(snap.job?.state).toBe("completed_with_issues");
+    service.acceptReview(run.id, blockId);
+    snap = service.snapshot();
+    expect(snap.runs[0]!.blocks[blockId]).toMatchObject({ state: "succeeded", reviewNotes: [] });
+  });
+
+  it("a flagged block that finished normally is still used as context for the next block", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const text = `魔王が来た。${"あ".repeat(550)}。\n\n${"い".repeat(100)}。`; // two blocks at the default size
+    service.start(job({ text, glossary: [{ source: "魔王", target: "Demon King" }] }));
+    await service.whenIdle();
+    const snap = service.snapshot();
+    expect(snap.revision!.blocks).toHaveLength(2);
+    expect(snap.runs[0]!.blocks[snap.revision!.blocks[0]!.id]!.state).toBe("needs_review");
+    const sent = posts(lm);
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(sent[1]!.messages[1]!.content).context).toMatchObject({ translation_status: "available" });
   });
 });
 

@@ -45,9 +45,17 @@ const schemas: Record<CommandName, z.ZodType> = {
           contextLimit: z.number().int().min(512).max(10_000_000),
           maxOutputTokens: z.number().int().min(16).max(1_000_000),
           temperature: z.number().min(0).max(2),
+          promptId: z.string().min(1).max(100),
+          useGlossary: z.boolean(),
         }),
       )
       .max(50),
+    glossary: z
+      .array(z.object({ source: z.string().max(1000), target: z.string().max(1000), note: z.string().max(1000).optional() }))
+      .max(2000),
+    prompts: z
+      .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
+      .max(100),
     demo: z.object({
       speed: z.enum(["fast", "normal", "slow"]),
       smallBlocks: z.boolean(),

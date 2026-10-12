@@ -51,6 +51,7 @@ const attemptSchema = z.object({
   endedAt: iso.optional(),
   usage: z.object({ inputTokens: count.optional(), outputTokens: count.optional() }).optional(),
   error: z.object({ code: z.string().max(100), message: z.string().max(20_000), httpStatus: count.optional() }).optional(),
+  notes: z.array(z.string().max(2000)).max(50).optional(),
 });
 
 const versionSchema = z.object({
@@ -85,6 +86,7 @@ const runSchema = z.object({
     contextLimit: z.number().int().min(1).max(100_000_000),
   }),
   promptVersion: z.string().max(50),
+  prompt: z.object({ id: z.string().min(1).max(100), name: z.string().max(200), template: z.string().max(20_000), appendFraming: z.boolean() }).optional(),
   glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional() })).max(10_000),
   state: runState,
   archived: z.boolean(),
