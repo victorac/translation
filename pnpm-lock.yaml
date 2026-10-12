@@ -21,7 +21,14 @@ importers:
         specifier: ^5.0.4
         version: 5.0.4(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5))
 
-  packages/desktop: {}
+  packages/desktop:
+    dependencies:
+      '@ltw/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ltw/providers':
+        specifier: workspace:*
+        version: link:../providers
 
   packages/domain: {}
 
