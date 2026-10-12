@@ -7,25 +7,19 @@ import {
   RevisionError,
   type BlockCellView,
   type BlockOutput,
+  type Backend,
   type CancelInput,
   type DemoOptions,
   type SourceRevision,
   type StartJobInput,
   type WorkspaceSnapshot,
 } from "@ltw/domain";
-import { FakeProvider, ProviderRegistry, providerError, script } from "@ltw/providers";
+import { FakeProvider, ProviderRegistry, providerError, script, type ProviderConfig } from "@ltw/providers";
 import { Coordinator, type CoordinatorEvent } from "./coordinator.js";
+import { UserError } from "./errors.js";
+import type { ProviderService } from "./provider-service.js";
 
-/** A problem the user can fix (empty text, no models...). Shown as a message, not a crash. */
-export class UserError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "UserError";
-  }
-}
+export { UserError };
 
 const SPEED_MS = { fast: 4, normal: 35, slow: 140 } as const;
 const MAX_MODELS = 8;
@@ -33,6 +27,8 @@ const MAX_MODELS = 8;
 export interface ServiceOptions {
   /** Override the practice translator's speed (tests use 0). */
   speedMs?: number;
+  /** The saved connection to a real model server. Without it only the practice translator is available. */
+  provider?: ProviderService;
 }
 
 /**
@@ -48,6 +44,7 @@ export class WorkspaceService {
   private waitingInfo = new Map<string, { code: string; message: string }>();
   private demoModelUnloaded = false;
   private firstModel = "";
+  private backend: Backend | null = null;
   private listeners = new Set<() => void>();
 
   constructor(private readonly options: ServiceOptions = {}) {}
@@ -64,16 +61,30 @@ export class WorkspaceService {
 
   start(input: StartJobInput): WorkspaceSnapshot {
     if (this.snapshot().busy) throw new UserError("busy", "A translation is already running. Cancel it first.");
-    const models = input.models.map((m) => m.trim()).filter(Boolean);
-    if (models.length === 0) throw new UserError("no_models", "Add at least one model.");
-    if (models.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} models per source.`);
-    if (new Set(models).size !== models.length) throw new UserError("duplicate_models", "Each model name must be different.");
+    const settings = input.models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name !== "");
+    if (settings.length === 0) throw new UserError("no_models", "Add at least one model.");
+    if (settings.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} models per source.`);
+    if (new Set(settings.map((m) => m.name)).size !== settings.length) throw new UserError("duplicate_models", "Each model name must be different.");
     if (input.text.trim() === "") throw new UserError("empty", "Paste some text to translate first.");
+    for (const m of settings) {
+      if (m.maxOutputTokens >= m.contextLimit) {
+        throw new UserError("bad_limits", `${m.name}: the output limit must be smaller than the context size.`);
+      }
+    }
+
+    const provider = this.options.provider;
+    if (input.backend === "provider") {
+      if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
+      const problem = provider.problem();
+      if (problem) throw new UserError("endpoint", problem);
+    }
 
     const system = estimateTokens(renderSystemPrompt(input.sourceLanguage, input.targetLanguage));
-    const plan = planChunking(models.map((label) => ({ label, contextLimit: 4096, outputReserve: 1536, systemTokens: system, glossaryTokens: 0 })));
+    const plan = planChunking(
+      settings.map((m) => ({ label: m.name, contextLimit: m.contextLimit, outputReserve: m.maxOutputTokens, systemTokens: system, glossaryTokens: 0 })),
+    );
     if (!plan.ok) throw new UserError("budget", plan.issues[0]?.message ?? "The prompt does not fit the model.");
-    const small = input.demo.smallBlocks;
+    const small = input.backend === "practice" && input.demo.smallBlocks;
     let revision: SourceRevision;
     try {
       revision = createRevision({
@@ -89,17 +100,36 @@ export class WorkspaceService {
     }
 
     this.revision = revision;
-    this.firstModel = models[0]!;
-    this.demoModelUnloaded = input.demo.firstModelUnloaded;
+    this.backend = input.backend;
+    this.firstModel = settings[0]!.name;
+    this.demoModelUnloaded = input.backend === "practice" && input.demo.firstModelUnloaded;
     this.waitingInfo.clear();
     this.queuedJobIds = [];
-    this.provider = this.makeProvider(revision, input.demo);
-    const registry = new ProviderRegistry().register(this.provider);
-    const coordinator = new Coordinator({ registry, providerConfig: () => ({ id: "practice", kind: "fake", baseUrl: "http://localhost:1234/v1" }) });
+    const registry = new ProviderRegistry();
+    let providerConfig: () => ProviderConfig;
+    if (input.backend === "provider") {
+      this.provider = null;
+      registry.register(provider!.adapter());
+      providerConfig = () => provider!.config();
+    } else {
+      this.provider = this.makeProvider(revision, input.demo);
+      registry.register(this.provider);
+      providerConfig = () => ({ id: "practice", kind: "fake", baseUrl: "http://localhost:1234/v1" });
+    }
+    const coordinator = new Coordinator({ registry, providerConfig });
     coordinator.addRevision(revision);
     coordinator.onEvent((e) => this.onCoordinatorEvent(e));
     this.coordinator = coordinator;
-    this.runIds = models.map((label) => coordinator.addRun({ revisionId: revision.id, providerRefId: "practice", modelId: label, label }).id);
+    this.runIds = settings.map(
+      (m) =>
+        coordinator.addRun({
+          revisionId: revision.id,
+          providerRefId: "main",
+          modelId: m.name,
+          label: m.name,
+          config: { contextLimit: m.contextLimit, maxOutputTokens: m.maxOutputTokens, temperature: m.temperature },
+        }).id,
+    );
     this.jobId = coordinator.startJob({ revisionId: revision.id, runIds: this.runIds }).job.id;
     return this.snapshot();
   }
@@ -109,6 +139,7 @@ export class WorkspaceService {
     this.coordinator = null;
     this.provider = null;
     this.revision = null;
+    this.backend = null;
     this.runIds = [];
     this.jobId = null;
     this.queuedJobIds = [];
@@ -177,7 +208,7 @@ export class WorkspaceService {
     const c = this.coordinator;
     const revision = this.revision;
     if (!c || !revision) {
-      return { revision: null, runs: [], job: null, busy: false, waiting: null, demoModelUnloaded: false };
+      return { revision: null, runs: [], job: null, backend: null, busy: false, waiting: null, demoModelUnloaded: false };
     }
     const runs = this.runIds.map((id) => c.snapshotRun(id));
     const job = this.jobId ? c.snapshotJob(this.jobId) : null;
@@ -204,6 +235,7 @@ export class WorkspaceService {
         state: r.state,
         blocks: Object.fromEntries(Object.entries(r.outputs).map(([id, o]) => [id, cellView(o)])),
       })),
+      backend: this.backend,
       job: job ? { id: job.id, state: job.state, ...(job.stopReason ? { stopReason: job.stopReason } : {}) } : null,
       busy,
       waiting: waitingRun ? { runId: waitingRun.id, label: waitingRun.label, code: info?.code ?? "waiting", message: info?.message ?? "Waiting for the model." } : null,

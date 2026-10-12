@@ -2,22 +2,26 @@ import { useEffect, useState } from "react";
 import { Setup, initialSetup, type SetupState } from "./Setup";
 import { Workspace } from "./Workspace";
 import { countCells, summarize } from "./status";
+import { useProvider } from "./useProvider";
 import { useWorkspace } from "./useWorkspace";
 
 export function App() {
   const { snapshot, error, clearError, send } = useWorkspace();
+  const provider = useProvider();
   const [setup, setSetup] = useState<SetupState>(initialSetup);
 
   const hasRevision = !!snapshot?.revision;
   const busy = snapshot?.busy ?? false;
-  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0;
+  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !(setup.backend === "provider" && provider.view?.problem);
   const disabledReason = hasRevision
     ? null
     : setup.text.trim() === ""
       ? "Paste some text to translate first."
       : setup.models.length === 0
         ? "Add at least one model."
-        : null;
+        : setup.backend === "provider" && provider.view?.problem
+          ? "The server address cannot be used yet (see step 3)."
+          : null;
 
   const run = () => {
     if (!canRun) return;
@@ -25,6 +29,7 @@ export function App() {
       text: setup.text,
       sourceLanguage: setup.sourceLanguage,
       targetLanguage: setup.targetLanguage,
+      backend: setup.backend,
       models: setup.models,
       demo: setup.demo,
     });
@@ -88,7 +93,7 @@ export function App() {
         ) : snapshot.revision ? (
           <Workspace snap={snapshot} send={send} />
         ) : (
-          <Setup value={setup} onChange={setSetup} />
+          <Setup value={setup} onChange={setSetup} provider={provider} />
         )}
       </main>
     </div>

@@ -1,12 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from "electron";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHandler } from "../handlers.js";
 import { createThrottle } from "../notifier.js";
+import { ProviderService } from "../provider-service.js";
 import { WorkspaceService } from "../service.js";
+import { EncryptedFileCredentialStore, FileSettingsStore } from "../storage.js";
 
-const service = new WorkspaceService();
-const handle = createHandler(service);
+// Created once the app is ready, because the settings folder and secure storage are not available before that.
+let service!: WorkspaceService;
+let handle!: ReturnType<typeof createHandler>;
 const devUrl = process.env["ELECTRON_RENDERER_URL"];
 let mainWindow: BrowserWindow | null = null;
 let seq = 0;
@@ -14,7 +17,6 @@ let seq = 0;
 const notifyWindow = createThrottle(() => {
   mainWindow?.webContents.send("ltw:event", { eventVersion: 1, seq: ++seq, type: "changed" });
 });
-service.onChange(notifyWindow);
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -62,10 +64,12 @@ function createWindow(): void {
       const result = await win.webContents.executeJavaScript(`(async () => {
         const snap = await window.ltw.invoke('workspace.snapshot');
         const bad = await window.ltw.invoke('not.a.command');
+        const prov = await window.ltw.invoke('provider.get');
         return {
           preloadBridge: typeof window.ltw?.invoke === 'function',
           snapshotOk: snap.ok === true,
           unknownCommandRefused: bad.ok === false,
+          providerSettingsOk: prov.ok === true && prov.value.baseUrl === 'http://localhost:1234/v1' && prov.value.hasApiKey === false,
           pageHasNoNode: typeof require === 'undefined' && typeof process === 'undefined',
           pageRendered: (document.getElementById('root')?.children.length ?? 0) > 0,
           title: document.title,
@@ -83,10 +87,24 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const dataDir = app.getPath("userData");
+  const provider = new ProviderService(
+    new FileSettingsStore(join(dataDir, "settings.json")),
+    // API keys are encrypted with a key kept in the operating system's keychain.
+    new EncryptedFileCredentialStore(join(dataDir, "credentials.json"), {
+      isAvailable: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (data) => safeStorage.decryptString(data),
+    }),
+  );
+  service = new WorkspaceService({ provider });
+  handle = createHandler(service, provider);
+  service.onChange(notifyWindow);
+
   // No camera, microphone, notifications or anything else the page might ask for.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
-  ipcMain.handle("ltw:invoke", (event, requestId: unknown, command: unknown, payload: unknown) => {
+  ipcMain.handle("ltw:invoke", async (event, requestId: unknown, command: unknown, payload: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       return { requestId: String(requestId), ok: false, error: { code: "forbidden", message: "Request refused." } };
     }

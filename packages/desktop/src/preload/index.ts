@@ -19,6 +19,9 @@ const COMMANDS = new Set([
   "run.retranslateDownstream",
   "run.resolveWaiting",
   "demo.loadModel",
+  "provider.get",
+  "provider.save",
+  "provider.test",
 ]);
 
 let counter = 0;

@@ -14,9 +14,9 @@ export function Workspace({ snap, send }: { snap: WorkspaceSnapshot; send: Send 
       {snap.waiting && (
         <div className="banner waiting-banner" role="alert">
           <strong>{snap.waiting.label} is waiting.</strong> {snap.waiting.message}
-          <p>{WAITING_HELP[snap.waiting.code] ?? "Fix the problem, then press Retry."}</p>
+          {!snap.waiting.message.includes("Retry") && <p>{WAITING_HELP[snap.waiting.code] ?? "Fix the problem, then press Retry."}</p>}
           <div className="actions">
-            {snap.waiting.code === "model_unavailable" && (
+            {snap.backend === "practice" && snap.waiting.code === "model_unavailable" && (
               <button onClick={() => void send("demo.loadModel")} disabled={!snap.demoModelUnloaded}>
                 {snap.demoModelUnloaded ? "Practice mode: load the model" : "Practice model loaded"}
               </button>

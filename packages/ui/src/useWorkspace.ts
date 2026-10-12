@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CommandMap, CommandName, WorkspaceSnapshot } from "@ltw/domain";
+import type { CommandMap, SnapshotCommand, WorkspaceSnapshot } from "@ltw/domain";
 import { api } from "./api";
 
 /** Keeps the latest picture of the workspace from the background process. */
@@ -32,7 +32,7 @@ export function useWorkspace() {
     return api.onEvent(() => void refresh());
   }, [refresh]);
 
-  const send = useCallback(async <C extends CommandName>(command: C, ...payload: CommandMap[C] extends undefined ? [] : [CommandMap[C]]) => {
+  const send = useCallback(async <C extends SnapshotCommand>(command: C, ...payload: CommandMap[C] extends undefined ? [] : [CommandMap[C]]) => {
     const r = await api.invoke(command, ...payload);
     if (r.ok) {
       setSnapshot(r.value);

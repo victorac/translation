@@ -5,11 +5,15 @@
 import { createServer, type ServerResponse } from "node:http";
 import { createHandler } from "./handlers.js";
 import { createThrottle } from "./notifier.js";
+import { ProviderService } from "./provider-service.js";
 import { WorkspaceService } from "./service.js";
+import { FileSettingsStore, MemoryCredentialStore } from "./storage.js";
 
 const PORT = Number(process.env["LTW_BRIDGE_PORT"] ?? 5174);
-const service = new WorkspaceService();
-const handle = createHandler(service);
+// Dev mode keeps the address in a local file but API keys only in memory (they are forgotten when this stops).
+const provider = new ProviderService(new FileSettingsStore(new URL("../.dev-data/settings.json", import.meta.url).pathname), new MemoryCredentialStore());
+const service = new WorkspaceService({ provider });
+const handle = createHandler(service, provider);
 const streams = new Set<ServerResponse>();
 let seq = 0;
 const notify = createThrottle(() => {
@@ -42,11 +46,11 @@ const server = createServer((req, res) => {
       body += c;
       if (body.length > 8_000_000) req.destroy();
     });
-    req.on("end", () => {
+    req.on("end", async () => {
       let result;
       try {
         const m = JSON.parse(body) as { requestId?: unknown; command?: unknown; payload?: unknown };
-        result = handle(m.requestId, m.command, m.payload);
+        result = await handle(m.requestId, m.command, m.payload);
       } catch {
         result = { requestId: "", ok: false, error: { code: "invalid_payload", message: "The request was malformed." } };
       }

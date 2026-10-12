@@ -1,14 +1,14 @@
-import type { CommandMap, CommandName, IpcEvent, IpcResult, WorkspaceSnapshot } from "@ltw/domain";
-
-export type InvokeResult = IpcResult<WorkspaceSnapshot>;
+import type { CommandMap, CommandName, CommandResultMap, IpcEvent, IpcResult } from "@ltw/domain";
 
 export interface Api {
-  invoke<C extends CommandName>(command: C, ...payload: CommandMap[C] extends undefined ? [] : [CommandMap[C]]): Promise<InvokeResult>;
+  invoke<C extends CommandName>(command: C, ...payload: CommandMap[C] extends undefined ? [] : [CommandMap[C]]): Promise<IpcResult<CommandResultMap[C]>>;
   onEvent(callback: (event: IpcEvent) => void): () => void;
 }
 
+type AnyResult = IpcResult<unknown>;
+
 interface ElectronBridge {
-  invoke(command: string, payload?: unknown): Promise<InvokeResult>;
+  invoke(command: string, payload?: unknown): Promise<AnyResult>;
   onEvent(callback: (event: IpcEvent) => void): () => void;
 }
 declare global {
@@ -30,7 +30,7 @@ const webBridge: ElectronBridge = {
         headers: { "content-type": "application/json", "x-ltw-dev": "1" },
         body: JSON.stringify({ requestId, command, payload }),
       });
-      return (await res.json()) as InvokeResult;
+      return (await res.json()) as AnyResult;
     } catch {
       return { requestId, ok: false, error: { code: "connection", message: "Could not reach the app's background process." } };
     }

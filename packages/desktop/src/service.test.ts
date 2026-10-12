@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { DemoOptions, StartJobInput } from "@ltw/domain";
+import type { DemoOptions, ModelSetting, StartJobInput } from "@ltw/domain";
 import { WorkspaceService, UserError } from "./service.js";
 import { createHandler } from "./handlers.js";
 
 const demo: DemoOptions = { speed: "fast", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false };
 const TEXT = "これは最初の段落です。とても短いです。\n\nこれは二番目の段落です。もう少し長い文章にします。\n\n三番目の段落もあります。これで終わりです。";
+const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, ...over });
 const input = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   text: TEXT,
   sourceLanguage: "Japanese",
   targetLanguage: "English",
-  models: ["alpha"],
+  backend: "practice",
+  models: [model("alpha")],
   demo,
   ...over,
 });
@@ -25,7 +27,7 @@ describe("WorkspaceService", () => {
 
   it("translates pasted text with the practice translator and shows every block done", async () => {
     const s = new WorkspaceService({ speedMs: 0 });
-    s.start(input({ models: ["alpha", "beta"] }));
+    s.start(input({ models: [model("alpha"), model("beta")] }));
     await s.whenIdle();
     const snap = s.snapshot();
     expect(snap.busy).toBe(false);
@@ -53,7 +55,7 @@ describe("WorkspaceService", () => {
     };
     expect(msg(() => s.start(input({ text: "  \n" })))).toMatch(/Paste some text/);
     expect(msg(() => s.start(input({ models: [] })))).toMatch(/at least one model/);
-    expect(msg(() => s.start(input({ models: ["a", "a"] })))).toMatch(/different/);
+    expect(msg(() => s.start(input({ models: [model("a"), model("a")] })))).toMatch(/different/);
     expect(msg(() => s.start(input({ text: "あ".repeat(400_000) })))).toMatch(/limit/);
   });
 
@@ -134,14 +136,14 @@ describe("WorkspaceService", () => {
 describe("createHandler", () => {
   it("validates input and never throws", async () => {
     const h = createHandler(new WorkspaceService({ speedMs: 0 }));
-    expect(h("1", "nope", undefined)).toMatchObject({ ok: false, error: { code: "unknown_command" } });
-    expect(h("2", "__proto__", undefined)).toMatchObject({ ok: false, error: { code: "unknown_command" } });
-    expect(h("3", "job.start", { text: 5 })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
-    expect(h("4", "job.cancel", { kind: "run" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
-    expect(h("5", "block.edit", { runId: "x", blockId: "y", text: "t" })).toMatchObject({ ok: false, error: { code: "no_workspace" } });
-    const ok = h("6", "workspace.snapshot", undefined);
-    expect(ok).toMatchObject({ requestId: "6", ok: true });
-    const started = h("7", "job.start", input());
-    expect(started.ok).toBe(true);
+    expect(await h("1", "nope", undefined)).toMatchObject({ ok: false, error: { code: "unknown_command" } });
+    expect(await h("2", "__proto__", undefined)).toMatchObject({ ok: false, error: { code: "unknown_command" } });
+    expect(await h("3", "job.start", { text: 5 })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    expect(await h("4", "job.cancel", { kind: "run" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    expect(await h("5", "block.edit", { runId: "x", blockId: "y", text: "t" })).toMatchObject({ ok: false, error: { code: "no_workspace" } });
+    expect(await h("5b", "provider.get", undefined)).toMatchObject({ ok: false, error: { code: "no_provider" } });
+    expect(await h("5c", "job.start", input({ models: [model("a", { contextLimit: 100 })] }))).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    expect(await h("6", "workspace.snapshot", undefined)).toMatchObject({ requestId: "6", ok: true });
+    expect((await h("7", "job.start", input())).ok).toBe(true);
   });
 });
