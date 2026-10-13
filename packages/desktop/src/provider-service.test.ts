@@ -26,7 +26,7 @@ interface Seen {
 const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
 
 /** A small stand-in for LM Studio: lists two models and "translates" by echoing the source block. */
-async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string } = {}) {
+async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string; analysisReply?: string } = {}) {
   const seen: Seen[] = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -47,13 +47,14 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           res.writeHead(404, { "content-type": "application/json" }).end('{"error":{"message":"No models loaded. Please load a model in the developer page."}}');
           return;
         }
-        const source = parseUserMessage(j.messages[1]!.content)!.sourceBlock;
+        const reading = j.messages[0]!.content.includes("help a translator prepare");
+        const source = reading ? "" : parseUserMessage(j.messages[1]!.content)!.sourceBlock;
         if (opts.failBlock && source.includes(opts.failBlock)) {
           res.writeHead(400, { "content-type": "application/json" }).end('{"error":{"message":"Trying to keep the first 9000 tokens when context overflows"}}');
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = `EN(${j.model}): ${fakeEnglish(source)}`;
+        const text = reading ? (opts.analysisReply ?? "NONE") : `EN(${j.model}): ${fakeEnglish(source)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -341,5 +342,40 @@ describe("storage", () => {
   it("refuses to save a key when secure storage is unavailable", () => {
     const store = new EncryptedFileCredentialStore(join(dir(), "c.json"), { isAvailable: () => false, encrypt: () => Buffer.alloc(0), decrypt: () => "" });
     expect(() => store.set("r", "k")).toThrow(/secure storage/);
+  });
+});
+
+describe("suggested notes", () => {
+  const ask = (over = {}) => ({
+    backend: "provider" as const,
+    modelId: "qwen2.5-7b-instruct",
+    contextLimit: 4096,
+    maxOutputTokens: 512,
+    sourceLanguage: "Japanese",
+    targetLanguage: "English",
+    passage: "「え、だって花子、昨日は休みだったんだろ？」",
+    glossary: [],
+    notes: "",
+    ...over,
+  });
+
+  it("asks the model to read a passage and returns the people and notes it found", async () => {
+    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: The speaker is talking to Hanako." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const r = await service.analyze(ask());
+    expect(r).toEqual({ characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: ["The speaker is talking to Hanako."], canceled: false });
+    const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] }).at(-1)!;
+    expect(sent.messages[1]!.content).toContain("PASSAGE:\n「え、だって花子");
+  });
+
+  it("explains a problem in plain words and does not run while translating", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await expect(service.analyze(ask({ contextLimit: 512, maxOutputTokens: 500 }))).rejects.toThrow(/does not fit/);
+    service.start(job());
+    await expect(service.analyze(ask())).rejects.toThrow(/Wait for the translations/);
+    await service.whenIdle();
   });
 });

@@ -30,7 +30,7 @@ export function SettingsDrawer({
   onTab: (t: SettingsTab) => void;
   onClose: () => void;
   setup: SetupState;
-  onSetup: (s: SetupState) => void;
+  onSetup: (update: (s: SetupState) => SetupState) => void;
   provider: ReturnType<typeof useProvider>;
   split: { preview: SplitPreview | null; loading: boolean };
 }) {
@@ -46,7 +46,7 @@ export function SettingsDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const set = (patch: Partial<SetupState>) => onSetup({ ...setup, ...patch });
+  const set = (patch: Partial<SetupState>) => onSetup((s) => ({ ...s, ...patch }));
   const setDemo = (patch: Partial<DemoOptions>) => set({ demo: { ...setup.demo, ...patch } });
 
   return (
@@ -102,7 +102,7 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {tab === "glossary" && <GlossaryPanel value={setup.glossary} onChange={(glossary) => set({ glossary })} notes={setup.notes} onNotes={(notes) => set({ notes })} />}
+        {tab === "glossary" && <GlossaryPanel value={setup.glossary} onChange={(glossary) => set({ glossary })} notes={setup.notes} onNotes={(notes) => set({ notes })} setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} />}
 
         {tab === "styles" && (
           <PromptsPanel

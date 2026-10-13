@@ -54,3 +54,4 @@ export * from "./project.js";
 export * from "./export.js";
 export * from "./split.js";
 export { BLOCK_SIZES, type BlockSize } from "./defaults.js";
+export * from "./analysis.js";

@@ -1,5 +1,8 @@
 import {
   allPrompts,
+  analysisSystemPrompt,
+  analysisUserMessage,
+  parseAnalysisReply,
   blockSettingsHash,
   BLOCK_SIZES,
   chunkSource,
@@ -22,6 +25,8 @@ import {
   snapshotPrompt,
   validatePrompt,
   type Backend,
+  type AnalyzeInput,
+  type AnalyzeResult,
   type BlockCellView,
   type BlockOutput,
   type CancelInput,
@@ -960,6 +965,72 @@ export class WorkspaceService {
     this.firstModel = firstModel;
     this.practiceOptions.deltaDelayMs = this.options.speedMs ?? SPEED_MS[this.demo.speed];
     this.practice?.setUnavailable(firstModel, this.demo.firstModelUnloaded);
+  }
+
+  // ---- suggested notes ----
+
+  private analysisAbort: AbortController | null = null;
+
+  /**
+   * Asks a model to read one passage and suggest notes. It is a single request, made only when the user asks,
+   * and never while translations are running (the model server handles one thing at a time).
+   */
+  async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
+    if (this.snapshot().busy) throw new UserError("busy", "Wait for the translations to finish, then try again.");
+    if (this.analysisAbort) throw new UserError("busy", "Already reading the text.");
+    const messages = [
+      { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
+      { role: "user" as const, content: analysisUserMessage({ glossary: input.glossary, notes: input.notes }, input.passage) },
+    ];
+    const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
+    if (needed > input.contextLimit) {
+      throw new UserError("context_overflow", "This part of the text does not fit the model's context. Raise the context size for this model, or use smaller blocks.");
+    }
+    const abort = new AbortController();
+    this.analysisAbort = abort;
+    try {
+      let reply = "";
+      if (input.backend === "practice") {
+        await new Promise((r) => setTimeout(r, this.options.speedMs ?? 150));
+        reply = input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: Practice mode: these notes are examples." : "NONE";
+      } else {
+        const provider = this.options.provider;
+        if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
+        const stream = provider.adapter().generate(
+          provider.config(),
+          { requestId: newId(), modelId: input.modelId, messages, temperature: 0.2, maxOutputTokens: input.maxOutputTokens, stream: true },
+          abort.signal,
+        );
+        const it = stream[Symbol.asyncIterator]();
+        try {
+          for (;;) {
+            const next = await it.next();
+            if (next.done) break;
+            const ev = next.value;
+            if (ev.type === "delta") reply += ev.text;
+            else if (ev.type === "error") {
+              if (abort.signal.aborted) break;
+              throw new UserError(ev.error.code, ev.error.message);
+            } else break;
+          }
+        } catch (e) {
+          if (!abort.signal.aborted) throw e;
+        } finally {
+          void it.return?.(undefined).catch(() => {});
+        }
+      }
+      if (abort.signal.aborted) return { characters: [], notes: [], canceled: true };
+      if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
+      return { ...parseAnalysisReply(reply), canceled: false };
+    } finally {
+      this.analysisAbort = null;
+    }
+  }
+
+  cancelAnalysis(): { canceled: boolean } {
+    const was = this.analysisAbort !== null;
+    this.analysisAbort?.abort();
+    return { canceled: was };
   }
 
   private makePractice(): FakeProvider {

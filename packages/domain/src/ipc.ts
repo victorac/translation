@@ -60,6 +60,27 @@ export interface SplitPreview {
   notes: string[];
 }
 
+/** Ask a model to read one passage and suggest notes (people, who speaks to whom) that help with pronouns. */
+export interface AnalyzeInput {
+  backend: Backend;
+  modelId: string;
+  contextLimit: number;
+  maxOutputTokens: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  passage: string;
+  /** What is already known, so the model does not repeat it. */
+  glossary: GlossaryEntry[];
+  notes: string;
+}
+
+export interface AnalyzeResult {
+  characters: GlossaryEntry[];
+  notes: string[];
+  /** True when the user stopped it; nothing was found in that case. */
+  canceled: boolean;
+}
+
 export interface StartJobInput {
   text: string;
   sourceLanguage: string;
@@ -163,6 +184,8 @@ export interface CommandMap {
   "export.preview": ExportInput;
   "export.write": ExportInput;
   "source.preview": StartJobInput;
+  "notes.analyze": AnalyzeInput;
+  "notes.cancel": undefined;
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -170,9 +193,11 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
+  "notes.analyze": AnalyzeResult;
+  "notes.cancel": { canceled: boolean };
   "export.preview": ExportPreview;
   "export.write": ExportWriteResult;
   "provider.get": ProviderView;
@@ -211,6 +236,8 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "export.preview",
   "export.write",
   "source.preview",
+  "notes.analyze",
+  "notes.cancel",
   "provider.get",
   "provider.save",
   "provider.test",

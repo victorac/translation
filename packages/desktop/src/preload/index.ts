@@ -37,6 +37,8 @@ const COMMANDS = new Set([
   "export.preview",
   "export.write",
   "source.preview",
+  "notes.analyze",
+  "notes.cancel",
   "provider.get",
   "provider.save",
   "provider.test",

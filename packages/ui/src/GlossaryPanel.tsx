@@ -1,9 +1,11 @@
 import { useState } from "react";
 import type { GlossaryEntry } from "@ltw/domain";
 import { normalizeGlossary, parseGlossaryText } from "@ltw/domain/pure";
+import { NotesAssistant } from "./NotesAssistant";
+import type { SetupState } from "./setup";
 
 /** The names and terms that must be translated the same way every time. */
-export function GlossaryPanel({ value, onChange, notes, onNotes }: { value: GlossaryEntry[]; onChange: (g: GlossaryEntry[]) => void; notes: string; onNotes: (n: string) => void }) {
+export function GlossaryPanel({ value, onChange, notes, onNotes, setup, passages }: { value: GlossaryEntry[]; onChange: (g: GlossaryEntry[]) => void; notes: string; onNotes: (n: string) => void; setup: Pick<SetupState, "backend" | "sourceLanguage" | "targetLanguage" | "models">; passages: readonly string[] }) {
   const [paste, setPaste] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
   const problems = normalizeGlossary(value).problems;
@@ -18,6 +20,7 @@ export function GlossaryPanel({ value, onChange, notes, onNotes }: { value: Glos
 
   return (
     <div className="stack">
+      <NotesAssistant setup={setup} passages={passages} glossary={value} notes={notes} onGlossary={onChange} onNotes={onNotes} />
       <label>
         Story notes
         <textarea
