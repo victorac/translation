@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   attribute,
+  plausibleName,
+  roleByForm,
   classify,
   mergeCandidates,
   parseChoice,
@@ -121,3 +123,24 @@ describe("questions and answers", () => {
     expect(parseShortText("", 60)).toBeNull();
   });
 });
+
+describe("names and roles that can be judged without a model", () => {
+  it("accepts a short plain name and refuses an explanation, a list or a sentence", () => {
+    expect(plausibleName("Hanako", "Hanako")).toBe(true);
+    expect(plausibleName("the Sato family", "the Sato family")).toBe(true);
+    expect(plausibleName("Sakurata Academy students, same class.\nHana's family runs a shop", "Sakurata Academy students, same class")).toBe(false);
+    expect(plausibleName("Hanako is a girl who waits", "Hanako is a girl who waits")).toBe(false);
+    expect(plausibleName("A, B", "A, B")).toBe(false);
+  });
+
+  it("settles what a person does from how the name is written", () => {
+    const s = splitSentences("学園の門の前で、花子は腕を組んで待っていた。「遅かったね、太郎」と彼女は言った。花子の家は古い。佐藤花子がいた。");
+    expect(roleByForm(s, ["花子"])).toBe(0); // 花子は: the subject
+    expect(roleByForm(s, ["太郎"])).toBe(1); // inside a quotation, just before 」: spoken to
+    expect(roleByForm(splitSentences("花子の家は古い。"), ["花子"])).toBeNull(); // only a possessive: leave it to the model
+    expect(roleByForm(splitSentences("「花子様、お待たせしました」"), ["花子"])).toBe(1);
+    expect(roleByForm(s, ["花子"])).toBeNull(); // 花子 is only part of 佐藤花子
+    expect(roleByForm(s, ["誰か"])).toBeNull();
+  });
+});
+

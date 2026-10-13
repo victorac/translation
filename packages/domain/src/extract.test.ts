@@ -162,12 +162,28 @@ describe("checking what the model says", () => {
     expect(await run(() => "A | 彼女は笑った")).toBeUndefined(); // favours a position: different answers in the two orders
   });
 
-  it("throws away a description the passage does not support, and a scene it does not support", async () => {
+  it("throws away a topic description the passage does not support, but keeps a scene description the model wrote from the passage", async () => {
     const unsupportedAll = scripted(sensible({ supported: (q) => letter(q, "No") }));
     const r = await extractBlock(base(unsupportedAll.asker));
     expect(r.entries.find((e) => e.source === "花子")!.hint).toBe("");
-    expect(r.entries.find((e) => e.kind === "scene")!.text).toBe(""); // still a scene, but with no description
-    expect(r.unsupported).toBe(3); // the girl's description, and the scene description on both tries
+    expect(r.entries.find((e) => e.kind === "scene")!.text).toBe("Hanako waits at the school gate."); // a small model's yes or no is too unsteady to judge a scene by
+    expect(r.unsupported).toBe(1);
+    expect(r.problems).toEqual([]);
+  });
+
+  it("tries a name and a description once more, with a stricter instruction, when the first answer cannot be used", async () => {
+    let names = 0;
+    let descriptions = 0;
+    const { asker, asked } = scripted(
+      sensible({
+        "english-name": (q) => (++names === 1 ? "Hanako is the girl who waits, a student, in the class" : "Hanako"),
+        describe: (q) => (++descriptions === 1 ? "花子は少女" : "a girl waiting at the gate"),
+      }),
+    );
+    const r = await extractBlock(base(asker, { candidates: ["花子"], listNames: false }));
+    expect(r.entries[0]).toMatchObject({ target: "Hanako", hint: "a girl waiting at the gate" });
+    expect(asked.filter((q) => q.id === "english-name")[1]!.user).toContain("not a plain name");
+    expect(asked.filter((q) => q.id === "describe")[1]!.user).toContain("could not be used");
   });
 
   it("asks for descriptions in the language of the translation, and throws away one that comes back in the language of the passage", async () => {

@@ -394,3 +394,4 @@ button.toggle .tag { margin-left: 0.35rem; }
 .cm-kbf-comment { color: var(--muted); font-size: 0.85em; font-style: italic; }
 .cm-kbf-problem { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .cm-kbf-msg { color: var(--danger); font-size: 0.85em; }
+.strip-details { margin: 0; padding: 0.3rem 1rem 0.3rem 2rem; background: var(--accent-soft); font-size: 0.9em; border-bottom: 1px solid var(--border); }

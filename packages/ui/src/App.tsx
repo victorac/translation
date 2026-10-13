@@ -119,6 +119,9 @@ export function App() {
   const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
   const [work, setWork] = useState<{ what: "extract" | "choose" | "summarize"; at: number; of: number } | null>(null);
   const [workNote, setWorkNote] = useState<string | null>(null);
+  /** The longer account behind the note: what was left out, replaced or flagged. */
+  const [workDetails, setWorkDetails] = useState<string[]>([]);
+  const [showDetails, setShowDetails] = useState(false);
   const stopWork = useRef(false);
   const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
   const blockTexts = split.preview?.blocks.map((b) => b.text) ?? [];
@@ -131,6 +134,8 @@ export function App() {
     if (!researcher || blockTexts.length === 0) return;
     stopWork.current = false;
     setWorkNote(null);
+    setWorkDetails([]);
+    setShowDetails(false);
     let added = 0;
     const left: string[] = [];
     // Reading again starts from what you accepted: suggestions nobody checked are dropped, and what you rejected stays rejected.
@@ -173,7 +178,8 @@ export function App() {
       // A last look over everything for names that clash and links that lead nowhere.
       const checked = await api.invoke("knowledge.check");
       const flagged = checked.ok ? checked.value.found : 0;
-      setWorkNote(`${left.length > 0 ? `Left out or incomplete: ${left.slice(0, 4).join(" ")}${left.length > 4 ? ` …and ${left.length - 4} more.` : ""} ` : ""}${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?.${flagged > 0 ? ` ${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:".` : ""} Accept what is right, fix or delete the rest, and read again if you like.`);
+      setWorkDetails([...(discarded > 0 ? [`${discarded} unchecked ${discarded === 1 ? "suggestion was" : "suggestions were"} replaced.`] : []), ...left, ...(flagged > 0 ? [`${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:" on the topics concerned.`] : [])]);
+      setWorkNote(`Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""}, marked with a ?.${left.length + flagged > 0 ? ` ${left.length + flagged} ${left.length + flagged === 1 ? "thing needs" : "things need"} a look.` : ""}`);
     } finally {
       setWork(null);
     }
@@ -432,10 +438,24 @@ export function App() {
           {workNote && (
             <div className="strip">
               <span>{workNote}</span>
-              <button className="small" onClick={() => setWorkNote(null)}>
-                Dismiss
-              </button>
+              <span className="row">
+                {workDetails.length > 0 && (
+                  <button className="small" aria-expanded={showDetails} onClick={() => setShowDetails((d) => !d)}>
+                    {showDetails ? "Hide details" : "Details"}
+                  </button>
+                )}
+                <button className="small" onClick={() => (setWorkNote(null), setWorkDetails([]))}>
+                  Dismiss
+                </button>
+              </span>
             </div>
+          )}
+          {workNote && showDetails && workDetails.length > 0 && (
+            <ul className="strip-details">
+              {workDetails.map((d, i) => (
+                <li key={i}>{d}</li>
+              ))}
+            </ul>
           )}
           {snap && hasVersion && !viewingLatest && (
             <div className="strip">

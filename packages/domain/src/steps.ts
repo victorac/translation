@@ -229,19 +229,19 @@ export const sameAs = (name: string, context: string, known: { label: string }[]
     [...known.map((k) => k.label), "None of them: it is a new one"],
   );
 
-export const englishName = (name: string, kind: string, context: string, targetLanguage: string): Question => ({
+export const englishName = (name: string, kind: string, context: string, targetLanguage: string, strict = false): Question => ({
   id: "english-name",
   kind: "text",
   system: `You translate names in fiction into ${targetLanguage}. ${RULE}`,
-  user: `Give the ${targetLanguage} name that should be used for 「${name}」 (${kind}) in a ${targetLanguage} translation: romanize the names of people, and translate the meaning of places and organizations when that reads naturally. Reply with the name only.\n\nPASSAGE:\n${context}`,
+  user: `Give the ${targetLanguage} name that should be used for 「${name}」 (${kind}) in a ${targetLanguage} translation: romanize the names of people, and translate the meaning of places and organizations when that reads naturally. Reply with the name only.${strict ? ` Your first answer was not a plain name. Reply with the name and nothing else: at most 4 words, no explanation.` : ""}\n\nPASSAGE:\n${context}`,
   maxTokens: 30,
 });
 
-export const describe = (name: string, context: string, targetLanguage: string): Question => ({
+export const describe = (name: string, kind: string, context: string, targetLanguage: string, strict = false): Question => ({
   id: "describe",
   kind: "text",
   system: `You write very short descriptions from a passage. ${RULE}`,
-  user: `In at most 15 words, written in ${targetLanguage}, say who or what 「${name}」 is in the story (for example their role or how they relate to others), using only what the passage says. Do not mention the passage or the text itself. If it does not say, reply UNKNOWN.\n\nPASSAGE:\n${context}`,
+  user: `In at most 15 words, written in ${targetLanguage}, say what 「${name}」 (${kind}) is in the story (for a person, their role or how they relate to others; for a place or organization, what kind it is), using only what the passage says. Do not mention the passage or the text itself. If it does not say, reply UNKNOWN.${strict ? ` Your first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and write no names in the original script.` : ""}\n\nPASSAGE:\n${context}`,
   maxTokens: 50,
 });
 
@@ -283,6 +283,36 @@ export const sceneText = (passage: string, present: string[], targetLanguage: st
   user: `In one sentence of at most 25 words, written in ${targetLanguage}, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.${names.length > 0 ? `\n\nWrite names like this, not in the original script: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
   maxTokens: 80,
 });
+
+/** A name is short and plain: no sentence, no list, no explanation. */
+export function plausibleName(reply: string, name: string): boolean {
+  const lines = reply.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length !== 1 || name.length > 60) return false;
+  return !/[,;:!?、。]/.test(name) && name.split(/\s+/).length <= 5 && !/\b(is|are|was|were|who|that|which)\b/i.test(name);
+}
+
+/**
+ * What a person does in a passage, when the way their name is written settles it, so the model need not be asked:
+ * a name followed by は or が is the one acting (0), and a name inside a quotation just before 」 or 、 is being spoken to (1).
+ * Anything else is left to the model (null).
+ */
+export function roleByForm(sentences: readonly Sentence[], names: readonly string[]): number | null {
+  const lonely = (s: string, n: string, after: string) => {
+    for (let i = s.indexOf(n); i >= 0; i = s.indexOf(n, i + 1)) {
+      const before = s[i - 1] ?? "";
+      if (before !== "" && KANJI_OR_KATAKANA.test(before) && KANJI_OR_KATAKANA.test(n[0]!)) continue;
+      const next = s.slice(i + n.length, i + n.length + 3);
+      if (new RegExp(`^(?:${after})`).test(next)) return true;
+    }
+    return false;
+  };
+  for (const s of sentences) for (const n of names) if (lonely(s.text, n, "は|が|も")) return 0;
+  for (const s of sentences) {
+    if (!/[「『]/.test(s.text)) continue;
+    for (const n of names) if (lonely(s.text, n, "」|』|、|，|さん|くん|ちゃん|様|君")) return 1;
+  }
+  return null;
+}
 
 // ---- reading answers ----
 

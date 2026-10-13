@@ -11,11 +11,13 @@ import {
   parseChoiceWithQuote,
   parseNameList,
   parseShortText,
+  plausibleName,
   quoteInPassage,
   related,
   relation,
   reversed,
   role,
+  roleByForm,
   sameAs,
   sameScene,
   sceneText,
@@ -210,20 +212,30 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       if (which === null) continue;
     }
 
-    const nameReply = await ask(englishName(c, category, context, input.targetLanguage));
-    const target = nameReply === null ? null : parseShortText(nameReply, 60, true);
-    // An English name with Japanese characters in it is not a translation.
-    if (!target || (latin && CJK.test(target))) {
+    // The English name must be a plain, short name. One more try, with a stricter instruction, before giving up.
+    const askName = async (strict: boolean): Promise<string | null> => {
+      const reply = await ask(englishName(c, category, context, input.targetLanguage, strict));
+      const name = reply === null ? null : parseShortText(reply, 60, true);
+      return reply !== null && name !== null && plausibleName(reply, name) && !(latin && CJK.test(name)) ? name : null;
+    };
+    let target = await askName(false);
+    if (!target && !stop()) target = await askName(true);
+    if (!target) {
       problems.push(`「${c}」 was left out: the model did not give a usable ${input.targetLanguage} name for it.`);
       continue;
     }
-    const descReply = await ask(describe(c, context, input.targetLanguage));
-    let summary = descReply === null ? "" : (parseShortText(descReply, 200) ?? "");
-    // A description in the language of the passage, not the language of the translation, is not kept.
-    if (summary !== "" && latin && CJK.test(summary)) {
-      unsupported++;
-      summary = "";
-    }
+    // A short description, in the language of the translation. One more try if it comes back in the language of the passage.
+    const askSummary = async (strict: boolean): Promise<string | null> => {
+      const reply = await ask(describe(c, category, context, input.targetLanguage, strict));
+      const text = reply === null ? null : parseShortText(reply, 200);
+      if (!text) return null;
+      if (latin && CJK.test(text)) {
+        unsupported++;
+        return null;
+      }
+      return text;
+    };
+    let summary = (await askSummary(false)) ?? (stop() ? null : await askSummary(true)) ?? "";
     if (summary !== "" && !(await isSupported(summary, c, context))) summary = "";
     const created: KnowledgeEntry = {
       id: deps.newId(),
@@ -253,7 +265,8 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
   const roles = new Map<string, number>();
   for (const p of people) {
     if (stop()) break;
-    const r = await pick(role(p.source, windowAround(sentences, nameSet(p))));
+    // Often the way the name is written settles it (は or が after it: acting; inside a quotation before 」: spoken to).
+    const r = roleByForm(sentences, nameSet(p)) ?? (await pick(role(p.source, windowAround(sentences, nameSet(p)))));
     if (r !== null) roles.set(p.id, r);
   }
 
@@ -276,7 +289,9 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
         update(p.id, { attrs: { ...current.attrs, [a.key]: [a.choices[got.index]!] }, attrFlags: [...new Set([...current.attrFlags, a.key])] });
         added++;
       } else if ((a.kind === "link" || a.kind === "links") && a.target) {
-        const others = terms().filter((o) => o.id !== p.id && o.category === a.target && mentioned.has(o.id)).slice(0, 2);
+        // Only a person and a thing named in the same sentence can be shown to be related by it.
+        const together = (o: KnowledgeEntry) => sentences.some((s) => nameSet(p).some((n) => s.text.includes(n)) && nameSet(o).some((n) => s.text.includes(n)));
+        const others = terms().filter((o) => o.id !== p.id && o.category === a.target && mentioned.has(o.id) && together(o)).slice(0, 2);
         for (const o of others) {
           if (stop() || budget <= 0) break;
           budget--;
@@ -318,11 +333,13 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
           const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage, names, strict));
           const text = reply === null ? null : parseShortText(reply, 300);
           if (!text) return null;
+          // The description is made from the passage and the names given, and the program checks its language. It is not
+          // judged "supported": a small model's yes or no to that is too unsteady, and it threw good descriptions away.
           if (latin && CJK.test(text)) {
             unsupported++;
             return null;
           }
-          return (await isSupported(text, "this scene", passage.slice(0, 1500))) ? text : null;
+          return text;
         };
         let text = await describeScene(false);
         if (!text && !stop()) text = await describeScene(true);
