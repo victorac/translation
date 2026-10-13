@@ -10,32 +10,39 @@ export function ModelEditor({
   discovered,
   takenLabels,
   existingRun,
+  live = false,
   onSave,
   onCancel,
 }: {
   /** null: adding a new model. */
   initial: ModelSetting | null;
-  setup: Pick<SetupState, "prompts" | "glossary">;
+  setup: Pick<SetupState, "prompts">;
   /** Model names the server listed. */
   discovered: string[];
   /** Labels already in use by other models. */
   takenLabels: Set<string>;
   existingRun: boolean;
+  /** Apply every valid change straight away instead of waiting for a Save button. */
+  live?: boolean;
   onSave: (m: ModelSetting) => void;
   onCancel: () => void;
 }) {
   const [m, setM] = useState<ModelSetting>(initial ?? newModel(""));
   const styles: PromptPreset[] = allPrompts(setup.prompts);
-  const label = labelOf(m, setup);
-  const problem =
-    m.name.trim() === ""
+  const problemOf = (x: ModelSetting): string | null =>
+    x.name.trim() === ""
       ? "Enter the model name"
-      : takenLabels.has(label)
+      : takenLabels.has(labelOf(x, setup))
         ? "Already added with these settings"
-        : m.maxOutputTokens >= m.contextLimit
+        : x.maxOutputTokens >= x.contextLimit
           ? "The reply limit must be smaller than the context"
           : null;
-  const set = (patch: Partial<ModelSetting>) => setM({ ...m, ...patch });
+  const problem = problemOf(m);
+  const set = (patch: Partial<ModelSetting>) => {
+    const next = { ...m, ...patch };
+    setM(next);
+    if (live && problemOf(next) === null) onSave({ ...next, name: next.name.trim() });
+  };
   const listId = "discovered-models";
 
   return (
@@ -49,7 +56,7 @@ export function ModelEditor({
       <label>
         Model
         <input
-          autoFocus
+          autoFocus={!live}
           list={listId}
           value={m.name}
           placeholder="Exact name in LM Studio"
@@ -63,7 +70,7 @@ export function ModelEditor({
           ))}
         </datalist>
       </label>
-      <div className="two">
+      <div className="stack">
         <label>
           Style
           <select value={m.promptId} onChange={(e) => set({ promptId: e.target.value })} disabled={existingRun}>
@@ -73,10 +80,6 @@ export function ModelEditor({
               </option>
             ))}
           </select>
-        </label>
-        <label className="check pad-top">
-          <input type="checkbox" checked={m.useGlossary} onChange={(e) => set({ useGlossary: e.target.checked })} disabled={existingRun} />
-          Glossary
         </label>
       </div>
       <div className="three">
@@ -94,15 +97,19 @@ export function ModelEditor({
         </label>
       </div>
       {existingRun && <p className="hint">Limits apply to new runs. Use “Run again” to redo this model with them. To try another style, add the model again.</p>}
-      <div className="row-end">
-        {problem && <span className="hint">{problem}</span>}
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="submit" className="primary" disabled={!!problem}>
-          {initial ? "Save" : "Add"}
-        </button>
-      </div>
+      {live ? (
+        problem && <span className="hint">{problem}</span>
+      ) : (
+        <div className="row-end">
+          {problem && <span className="hint">{problem}</span>}
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="primary" disabled={problem !== null}>
+            {initial ? "Save" : "Add"}
+          </button>
+        </div>
+      )}
     </form>
   );
 }

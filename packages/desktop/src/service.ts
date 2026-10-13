@@ -126,6 +126,7 @@ interface RunPlan {
   temperature: number;
   style: PromptPreset;
   glossary: GlossaryEntry[];
+  notes: string;
 }
 
 /**
@@ -226,10 +227,10 @@ export class WorkspaceService {
 
   /** Checks what the user asked for and works out the runs. Throws plain-language errors. */
   private validate(input: StartJobInput): RunPlan[] {
-    return this.buildPlans(input.models, input.prompts, input.glossary);
+    return this.buildPlans(input.models, input.prompts, input.glossary, input.notes);
   }
 
-  private buildPlans(models: StartJobInput["models"], prompts: StartJobInput["prompts"], glossaryInput: StartJobInput["glossary"]): RunPlan[] {
+  private buildPlans(models: StartJobInput["models"], prompts: StartJobInput["prompts"], glossaryInput: StartJobInput["glossary"], notesInput: string | undefined): RunPlan[] {
     const named = models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name !== "");
     if (named.length === 0) throw new UserError("no_models", "Add at least one model.");
     if (named.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} model runs per version of the text.`);
@@ -249,16 +250,17 @@ export class WorkspaceService {
       if (m.maxOutputTokens >= m.contextLimit) throw new UserError("bad_limits", `${m.name}: the output limit must be smaller than the context size.`);
       return {
         name: m.name,
-        label: runLabel(m, styles, glossary.entries.length),
+        label: runLabel(m, styles),
         contextLimit: m.contextLimit,
         maxOutputTokens: m.maxOutputTokens,
         temperature: m.temperature,
         style,
-        glossary: m.useGlossary ? glossary.entries : [],
+        glossary: glossary.entries,
+        notes: (notesInput ?? "").trim(),
       };
     });
     if (new Set(plans.map((p) => p.label)).size !== plans.length) {
-      throw new UserError("duplicate_models", "Each combination of model, prompt and glossary setting can only be used once.");
+      throw new UserError("duplicate_models", "Each combination of model and prompt can only be used once.");
     }
     return plans;
   }
@@ -271,7 +273,7 @@ export class WorkspaceService {
   syncSettings(input: SyncSettingsInput): WorkspaceSnapshot {
     let usable = true;
     try {
-      const plans = this.buildPlans(input.models, input.prompts, input.glossary);
+      const plans = this.buildPlans(input.models, input.prompts, input.glossary, input.notes);
       this.currentPlans = new Map(plans.map((p) => [p.label, p]));
     } catch {
       usable = false; // keep the last usable choices
@@ -285,6 +287,7 @@ export class WorkspaceService {
         blockSize: input.blockSize,
         models: input.models,
         glossary: input.glossary,
+        notes: input.notes ?? "",
         prompts: input.prompts,
       };
       changed = this.settings !== null && JSON.stringify(this.settings) !== JSON.stringify(next);
@@ -370,6 +373,7 @@ export class WorkspaceService {
     if (!plan) return;
     coordinator.updateRunSettings(runId, {
       glossary: plan.glossary,
+      notes: plan.notes,
       prompt: snapshotPrompt(plan.style),
       config: { contextLimit: plan.contextLimit, maxOutputTokens: plan.maxOutputTokens, temperature: plan.temperature },
     });
@@ -390,14 +394,14 @@ export class WorkspaceService {
     const plan = this.currentPlans.get(run.label);
     const out = new Set<string>();
     if (!plan) return out;
-    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
+    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, notes: plan.notes, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
     v.revision.blocks.forEach((b, i) => {
       if (this.isOutdated(v.revision, i, run.outputs[b.id], hypothetical)) out.add(b.id);
     });
     return out;
   }
 
-  private isOutdated(revision: SourceRevision, index: number, output: BlockOutput | undefined, current: Pick<ModelRun, "modelId" | "glossary" | "prompt" | "config">): boolean {
+  private isOutdated(revision: SourceRevision, index: number, output: BlockOutput | undefined, current: Pick<ModelRun, "modelId" | "glossary" | "notes" | "prompt" | "config">): boolean {
     if (!output) return false;
     const attempt = producingAttempt(output);
     return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current);
@@ -418,7 +422,7 @@ export class WorkspaceService {
       set.delete(blockId);
       return;
     }
-    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
+    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, notes: plan.notes, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
     if (this.isOutdated(v.revision, index, run.outputs[blockId], hypothetical)) set.add(blockId);
     else set.delete(blockId);
   }
@@ -432,6 +436,7 @@ export class WorkspaceService {
       config: { contextLimit: p.contextLimit, maxOutputTokens: p.maxOutputTokens, temperature: p.temperature },
       prompt: snapshotPrompt(p.style),
       glossary: p.glossary,
+      notes: p.notes,
     }).id;
   }
 
@@ -440,13 +445,13 @@ export class WorkspaceService {
   }
 
   /** What one model run needs to know to work out how large a block may be. */
-  private budgetInput(p: { label: string; contextLimit: number; maxOutputTokens: number; style: { template: string; appendFraming: boolean }; glossary: GlossaryEntry[] }, input: Pick<StartJobInput, "sourceLanguage" | "targetLanguage">) {
+  private budgetInput(p: { label: string; contextLimit: number; maxOutputTokens: number; style: { template: string; appendFraming: boolean }; glossary: GlossaryEntry[]; notes: string }, input: Pick<StartJobInput, "sourceLanguage" | "targetLanguage">) {
     return {
       label: p.label,
       contextLimit: p.contextLimit,
       outputReserve: p.maxOutputTokens,
       systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
-      glossaryTokens: estimateTokens(JSON.stringify(p.glossary)),
+      glossaryTokens: estimateTokens(JSON.stringify(p.glossary)) + estimateTokens(p.notes),
     };
   }
 
@@ -483,7 +488,7 @@ export class WorkspaceService {
       .filter((m) => m.name.trim() !== "")
       .map((m) => {
         const style = styles.find((p) => p.id === m.promptId) ?? styles[0]!;
-        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles, glossary.length), style, glossary: m.useGlossary ? glossary : [] };
+        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles), style, glossary, notes: (input.notes ?? "").trim() };
       });
     const limits = this.sizeLimits(input);
     const plan = planChunking(plans.map((p) => this.budgetInput(p, input)), limits);
@@ -850,7 +855,7 @@ export class WorkspaceService {
           maxOutputTokens: r.config.maxOutputTokens,
           temperature: r.config.temperature,
           promptId: r.prompt?.id ?? "standard",
-          useGlossary: r.glossary.length > 0,
+          useGlossary: true,
         },
         promptName: r.prompt?.name ?? "Standard",
         state: r.state,

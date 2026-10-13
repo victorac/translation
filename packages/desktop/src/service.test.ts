@@ -177,16 +177,16 @@ describe("glossary and prompt styles", () => {
     expect(s.snapshot().job?.state).toBe("completed");
   });
 
-  it("with and without the glossary can be compared; the no-glossary column says so and is not checked", async () => {
+  it("always sends the glossary to every model, and notes reach the request and mark results out of date when changed", async () => {
     const s = new WorkspaceService({ speedMs: 0 });
-    s.start(input({ glossary: GLOSSARY, models: [model("alpha"), model("alpha", { useGlossary: false })] }));
+    s.start(input({ glossary: GLOSSARY, models: [model("alpha")] }));
     await s.whenIdle();
-    const [withG, without] = s.snapshot().runs;
-    expect(without!.label).toBe("alpha · no glossary");
-    const text = (r: typeof withG, i: number) => Object.values(r!.blocks)[i]!.text ?? "";
-    expect(text(withG, 0)).toContain("paragraph");
-    expect(text(without, 0)).toContain("段落");
-    expect(Object.values(without!.blocks).every((c) => c.state === "succeeded")).toBe(true);
+    const run = s.snapshot().runs[0]!;
+    expect(run.label).toBe("alpha");
+    expect(Object.values(run.blocks)[0]!.text).toContain("paragraph");
+    expect(run.outdated).toBe(0);
+    s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }), notes: "Hanako is a girl who speaks politely." });
+    expect(s.snapshot().runs[0]!.outdated).toBeGreaterThan(0);
   });
 
   it("explains unusable styles, prompts and glossary rows in plain words", () => {

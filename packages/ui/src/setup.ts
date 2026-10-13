@@ -10,6 +10,8 @@ export interface SetupState {
   backend: Backend;
   models: ModelSetting[];
   glossary: GlossaryEntry[];
+  /** Background about the story and its people, sent with every block. */
+  notes: string;
   /** The user's own translation styles. */
   prompts: PromptPreset[];
   blockSize: BlockSize;
@@ -32,6 +34,7 @@ export const initialSetup: SetupState = {
   backend: "provider",
   models: [],
   glossary: [],
+  notes: "",
   prompts: [],
   blockSize: "normal",
   demo: { speed: "normal", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
@@ -44,13 +47,14 @@ export const toStartInput = (s: SetupState, rerun: string[] = []): StartJobInput
   backend: s.backend,
   models: s.models,
   glossary: s.glossary,
+  notes: s.notes,
   prompts: s.prompts,
   blockSize: s.blockSize,
   rerun,
   demo: s.demo,
 });
 
-export const labelOf = (m: ModelSetting, s: Pick<SetupState, "prompts" | "glossary">): string => runLabel(m, allPrompts(s.prompts), s.glossary.length);
+export const labelOf = (m: ModelSetting, s: Pick<SetupState, "prompts">): string => runLabel(m, allPrompts(s.prompts));
 
 /** The model list a project's runs imply. */
 export const modelsFromRuns = (runs: RunView[]): ModelSetting[] =>
@@ -77,11 +81,12 @@ export const settingsOf = (s: SetupState): ProjectSettings => ({
   blockSize: s.blockSize,
   models: s.models,
   glossary: s.glossary,
+  notes: s.notes,
   prompts: s.prompts,
 });
 
 /** Takes the project's choices over the window's own. The translator choice and practice controls stay as they are. */
-export const withSettings = (s: SetupState, p: ProjectSettings): SetupState => ({ ...s, ...p, models: p.models.map((m) => ({ ...newModel(m.name), ...m })) });
+export const withSettings = (s: SetupState, p: ProjectSettings): SetupState => ({ ...s, ...p, notes: p.notes ?? "", models: p.models.map((m) => ({ ...newModel(m.name), ...m })) });
 
 const KEY = "ltw.setup.v3";
 
@@ -101,6 +106,7 @@ export function loadSetup(): SetupState {
         ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
         ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
         ...(Array.isArray(s.glossary) ? { glossary: s.glossary } : {}),
+        ...(typeof s.notes === "string" ? { notes: s.notes } : {}),
         ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
         ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
         ...(s.demo && typeof s.demo === "object" ? { demo: { ...initialSetup.demo, ...s.demo } } : {}),

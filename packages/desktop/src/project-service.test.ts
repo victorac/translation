@@ -661,6 +661,7 @@ describe("documents in saved projects", () => {
     blockSize: j.blockSize,
     models: j.models,
     glossary: [{ source: "段落", target: "paragraph" }],
+    notes: "",
     prompts: [],
   });
 

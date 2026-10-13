@@ -1,7 +1,8 @@
+import { useState } from "react";
 import type { ModelSetting, RunView, WorkspaceSnapshot } from "@ltw/domain";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { Documents } from "./Documents";
-import { Menu, Popover } from "./Popover";
+import { Menu } from "./Popover";
 import { ModelEditor } from "./ModelEditor";
 import { IconButton } from "./Cell";
 import { countCells } from "./status";
@@ -54,6 +55,8 @@ export function Rail({
     onDelete: (id: string) => void;
   };
 }) {
+  const [adding, setAdding] = useState(false);
+  const [openLabel, setOpenLabel] = useState<string | null>(null);
   const runs = snap?.runs ?? [];
   const busy = snap?.busy ?? false;
   const entries: Entry[] = [];
@@ -91,60 +94,53 @@ export function Rail({
             Reset layout
           </button>
         )}
-        <Popover
-          label="Add a model"
-          className="wide"
-          trigger={(p) => (
-            <button className="icon-button" aria-label="Add a model" title="Add a model" {...p}>
-              +
-            </button>
-          )}
-        >
-          {(close) => (
-            <>
-              {discovered.length > 0 && (
-                <div className="quick-add">
-                  <span className="hint">From the server — click to add</span>
-                  <ul className="chips">
-                    {discovered.map((id) => {
-                      const taken = takenLabels(-1).has(labelOf(newModel(id), setup));
-                      return (
-                        <li key={id}>
-                          <button
-                            className="chip"
-                            disabled={taken}
-                            onClick={() => {
-                              onSetup({ ...setup, models: [...setup.models, newModel(id)] });
-                              close();
-                            }}
-                          >
-                            {taken ? "✓ " : "+ "}
-                            {id}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <span className="hint">…or type a name below</span>
-                </div>
-              )}
-              <ModelEditor
-                initial={null}
-                setup={setup}
-                discovered={discovered}
-                takenLabels={takenLabels(-1)}
-                existingRun={false}
-                onSave={(m) => {
-                  onSetup({ ...setup, models: [...setup.models, m] });
-                  close();
-                }}
-                onCancel={close}
-              />
-            </>
-          )}
-        </Popover>
+        <button className="icon-button" aria-label="Add a model" title="Add a model" aria-expanded={adding} onClick={() => setAdding((x) => !x)}>
+          {adding ? "−" : "+"}
+        </button>
       </div>
 
+      {adding && (
+        <div className="rail-inline">
+          {discovered.length > 0 && (
+            <div className="quick-add">
+              <span className="hint">From the server — click to add</span>
+              <ul className="chips">
+                {discovered.map((id) => {
+                  const taken = takenLabels(-1).has(labelOf(newModel(id), setup));
+                  return (
+                    <li key={id}>
+                      <button
+                        className="chip"
+                        disabled={taken}
+                        onClick={() => {
+                          onSetup({ ...setup, models: [...setup.models, newModel(id)] });
+                          setAdding(false);
+                        }}
+                      >
+                        {taken ? "✓ " : "+ "}
+                        {id}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <span className="hint">…or type a name below</span>
+            </div>
+          )}
+          <ModelEditor
+            initial={null}
+            setup={setup}
+            discovered={discovered}
+            takenLabels={takenLabels(-1)}
+            existingRun={false}
+            onSave={(m) => {
+              onSetup({ ...setup, models: [...setup.models, m] });
+              setAdding(false);
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
       {entries.length === 0 && <p className="hint pad">Add a model to start.</p>}
       <ul className="rail-list">
         {entries.map((e) => {
@@ -162,31 +158,10 @@ export function Rail({
                 {glyph}
               </span>
               {e.config ? (
-                <Popover
-                  label={`Settings for ${e.label}`}
-                  className="wide"
-                  trigger={(p) => (
-                    <button className="rail-name" title={`${e.label} — click for settings`} {...p}>
-                      <span className="ellipsis">{e.config!.name}</span>
-                      {sub && <span className="hint ellipsis">{sub}</span>}
-                    </button>
-                  )}
-                >
-                  {(close) => (
-                    <ModelEditor
-                      initial={e.config}
-                      setup={setup}
-                      discovered={discovered}
-                      takenLabels={takenLabels(e.configIndex)}
-                      existingRun={!!e.run}
-                      onSave={(m) => {
-                        onSetup({ ...setup, models: setup.models.map((x, i) => (i === e.configIndex ? m : x)) });
-                        close();
-                      }}
-                      onCancel={close}
-                    />
-                  )}
-                </Popover>
+                <button className="rail-name" title={e.label} aria-expanded={openLabel === e.label} onClick={() => setOpenLabel(openLabel === e.label ? null : e.label)}>
+                  <span className="ellipsis">{e.config.name}</span>
+                  {sub && <span className="hint ellipsis">{sub}</span>}
+                </button>
               ) : (
                 <span className="rail-name static" title={e.label}>
                   <span className="ellipsis">{e.run?.settings.modelId ?? e.label}</span>
@@ -217,6 +192,20 @@ export function Rail({
                   { label: "Remove", onSelect: () => void remove(e), danger: true, separated: true },
                 ]}
               />
+              {e.config && openLabel === e.label && (
+                <div className="rail-inline">
+                  <ModelEditor
+                    live
+                    initial={e.config}
+                    setup={setup}
+                    discovered={discovered}
+                    takenLabels={takenLabels(e.configIndex)}
+                    existingRun={!!e.run}
+                    onSave={(m) => onSetup({ ...setup, models: setup.models.map((x, i) => (i === e.configIndex ? m : x)) })}
+                    onCancel={() => setOpenLabel(null)}
+                  />
+                </div>
+              )}
             </li>
           );
         })}

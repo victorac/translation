@@ -34,6 +34,8 @@ export interface ProjectSettings {
   blockSize: BlockSize;
   models: ModelSetting[];
   glossary: GlossaryEntry[];
+  /** Background about the story and its people, sent with every block. */
+  notes?: string | undefined;
   /** The user's own translation styles. */
   prompts: PromptPreset[];
 }
@@ -124,6 +126,7 @@ const runSchema = z.object({
   promptVersion: z.string().max(50),
   prompt: z.object({ id: z.string().min(1).max(100), name: z.string().max(200), template: z.string().max(20_000), appendFraming: z.boolean() }).optional(),
   glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional() })).max(10_000),
+  notes: z.string().max(20_000).optional(),
   state: runState,
   archived: z.boolean(),
   outputs: z.record(id, outputSchema),
@@ -171,6 +174,7 @@ const settingsSchema = z.object({
   blockSize: z.enum(["small", "normal", "large"]),
   models: z.array(modelSettingSchema).max(24),
   glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional() })).max(10_000),
+  notes: z.string().max(20_000).optional(),
   prompts: z
     .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
     .max(100),

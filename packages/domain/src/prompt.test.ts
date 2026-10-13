@@ -251,3 +251,18 @@ describe("an echoed reply is never used as context", () => {
     expect(buildPrompt(revision, 1, run(), done("A real translation.")).context).toMatchObject({ translation: "A real translation." });
   });
 });
+
+describe("story notes and hints", () => {
+  const ctx = { source: null, translation: null, translationStatus: "none" as const };
+
+  it("puts notes before the glossary and still reads back the glossary and text", () => {
+    const msg = renderUserMessage([{ source: "花子", target: "Hanako", note: "girl, speaks politely" }], ctx, "本文", "Hanako is a girl.");
+    expect(msg.indexOf("Hanako is a girl.")).toBeLessThan(msg.indexOf("GLOSSARY:"));
+    expect(msg).toContain("— girl, speaks politely");
+    expect(parseUserMessage(msg)).toMatchObject({ glossary: [{ source: "花子", target: "Hanako" }], sourceBlock: "本文" });
+  });
+
+  it("leaves the request unchanged when there are no notes", () => {
+    expect(renderUserMessage([], ctx, "本文", "  ")).toBe(renderUserMessage([], ctx, "本文"));
+  });
+});

@@ -103,6 +103,8 @@ export interface ModelRun {
   /** The translation style used. Missing in older saved projects, which used the standard style. */
   prompt?: PromptSnapshot;
   glossary: GlossaryEntry[];
+  /** Background about the story and its people, sent with every block. Missing in older saved projects. */
+  notes?: string | undefined;
   state: RunState;
   archived: boolean;
   outputs: Record<string, BlockOutput>;

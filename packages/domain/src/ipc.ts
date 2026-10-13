@@ -69,6 +69,8 @@ export interface StartJobInput {
   /** One entry per model run, in the order they will be translated. */
   models: ModelSetting[];
   glossary: GlossaryEntry[];
+  /** Background about the story and its people, sent with every block. */
+  notes?: string | undefined;
   /** The user's own translation styles (the built-in ones are always available). */
   prompts: PromptPreset[];
   /** How big each block should be. The models' own limits can make blocks smaller. */
@@ -108,7 +110,7 @@ export interface ConnectionTestResult {
 }
 
 /** The choices that decide how blocks are translated. Sent whenever they change, so retries use them. */
-export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "prompts" | "blockSize">;
+export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "notes" | "prompts" | "blockSize">;
 
 export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
 

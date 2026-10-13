@@ -12,7 +12,7 @@ export type SettingsTab = "server" | "text" | "glossary" | "styles" | "practice"
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "server", label: "Server" },
   { id: "text", label: "Text" },
-  { id: "glossary", label: "Glossary" },
+  { id: "glossary", label: "Names & notes" },
   { id: "styles", label: "Styles" },
 ];
 
@@ -102,7 +102,7 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {tab === "glossary" && <GlossaryPanel value={setup.glossary} onChange={(glossary) => set({ glossary })} />}
+        {tab === "glossary" && <GlossaryPanel value={setup.glossary} onChange={(glossary) => set({ glossary })} notes={setup.notes} onNotes={(notes) => set({ notes })} />}
 
         {tab === "styles" && (
           <PromptsPanel

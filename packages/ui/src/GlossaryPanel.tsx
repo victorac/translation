@@ -3,7 +3,7 @@ import type { GlossaryEntry } from "@ltw/domain";
 import { normalizeGlossary, parseGlossaryText } from "@ltw/domain/pure";
 
 /** The names and terms that must be translated the same way every time. */
-export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onChange: (g: GlossaryEntry[]) => void }) {
+export function GlossaryPanel({ value, onChange, notes, onNotes }: { value: GlossaryEntry[]; onChange: (g: GlossaryEntry[]) => void; notes: string; onNotes: (n: string) => void }) {
   const [paste, setPaste] = useState("");
   const [skipped, setSkipped] = useState<string[]>([]);
   const problems = normalizeGlossary(value).problems;
@@ -18,8 +18,17 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
 
   return (
     <div className="stack">
+      <label>
+        Story notes
+        <textarea
+          rows={5}
+          value={notes}
+          onChange={(e) => onNotes(e.target.value)}
+          placeholder={"Sent with every block. For example:\nHanako is a girl who speaks very politely.\nThe narrator is a boy; he speaks casually.\nMost lines are spoken by Hanako or the narrator."}
+        />
+      </label>
       <p className="hint">
-        Terms to translate the same way every time. Use <code>|</code> for alternatives (<code>Demon King|Demon Lord</code>). A block is flagged if a required term is missing; that check is a hint.
+        Names and terms. Add a hint to a name, such as "girl, polite speech"; it is sent whenever that name appears. Terms to translate the same way every time. Use <code>|</code> for alternatives (<code>Demon King|Demon Lord</code>). A block is flagged if a required term is missing; that check is a hint.
       </p>
 
       {value.length > 0 && (
@@ -28,7 +37,7 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
             <tr>
               <th scope="col">Source term</th>
               <th scope="col">Translate as</th>
-              <th scope="col">Note (optional)</th>
+              <th scope="col">Hint (optional)</th>
               <th scope="col">
                 <span className="sr-only">Remove</span>
               </th>
@@ -44,7 +53,7 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
                   <input aria-label={`Translation ${i + 1}`} value={e.target} onChange={(ev) => update(i, { target: ev.target.value })} />
                 </td>
                 <td>
-                  <input aria-label={`Note ${i + 1}`} value={e.note ?? ""} onChange={(ev) => update(i, { note: ev.target.value })} />
+                  <input aria-label={`Hint ${i + 1}`} placeholder="e.g. girl, speaks politely" value={e.note ?? ""} onChange={(ev) => update(i, { note: ev.target.value })} />
                 </td>
                 <td>
                   <button aria-label={`Remove glossary entry ${i + 1}`} onClick={() => onChange(value.filter((_, j) => j !== i))}>

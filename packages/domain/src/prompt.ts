@@ -68,13 +68,15 @@ export function configHash(run: ModelRun): string {
       contextLimit: run.config.contextLimit,
       promptVersion: run.promptVersion,
       prompt: run.prompt ? sha256Hex(`${run.prompt.appendFraming}\n${run.prompt.template}`) : "standard-v1",
-      glossary: run.glossary.map((g) => [g.source, g.target]),
+      glossary: run.glossary.map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target])),
+      ...(run.notes?.trim() ? { notes: run.notes.trim() } : {}),
     }),
   );
 }
 
 const SOURCE_LABEL = "SOURCE_BLOCK:";
 const GLOSSARY_LABEL = "GLOSSARY:";
+const NOTES_LABEL = "NOTES (background about the story and its people; use it to work out who is speaking and who is addressed; do not translate):";
 const CONTEXT_LABEL = "CONTEXT (reference only, do not translate):";
 const UNAVAILABLE = "(not available)";
 
@@ -83,8 +85,9 @@ const UNAVAILABLE = "(not available)";
  * because some models write structured input back out instead of translating it. The text to translate is last,
  * so the natural continuation is its translation.
  */
-export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string): string {
+export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes = ""): string {
   const parts: string[] = [];
+  if (notes.trim() !== "") parts.push(`${NOTES_LABEL}\n${notes.trim()}`);
   if (glossary.length > 0) {
     const lines = glossary.map((g) => {
       const [first, ...others] = targetVariants(g.target);
@@ -146,7 +149,7 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
   const system = systemPromptFor(run, revision.sourceLanguage, revision.targetLanguage);
   // Budget for the whole glossary (an upper bound); each request only carries the entries it needs.
   const fullGlossary = run.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), estimateTokens(JSON.stringify(fullGlossary))));
+  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), estimateTokens(JSON.stringify(fullGlossary)) + estimateTokens(run.notes ?? "")));
 
   const base = { configHash: configHash(run), sourceHash: block.textHash };
   if (!budget.fits || block.estimatedTokens > budget.room) {
@@ -166,7 +169,7 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
   const glossary = relevantEntries(run.glossary, text).map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const user = renderUserMessage(glossary, context, text);
+  const user = renderUserMessage(glossary, context, text, run.notes ?? "");
   return {
     messages: [
       { role: "system", content: system },
@@ -185,15 +188,16 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
  * Comparing this with the value stored on the attempt says whether the settings changed in a way that
  * matters for this block. Reply and context limits are left out because they do not change the wording.
  */
-export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary">): string {
+export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary" | "notes">): string {
   const text = blockText(revision, revision.blocks[blockIndex]!);
-  const glossary = relevantEntries(run.glossary, text).map((g) => [g.source, g.target]);
+  const glossary = relevantEntries(run.glossary, text).map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target]));
   return sha256Hex(
     JSON.stringify({
       m: run.modelId,
       t: run.config.temperature,
       p: run.prompt ? sha256Hex(`${run.prompt.appendFraming}\n${run.prompt.template}`) : "standard-v1",
       g: glossary,
+      ...(run.notes?.trim() ? { n: run.notes.trim() } : {}),
     }),
   );
 }

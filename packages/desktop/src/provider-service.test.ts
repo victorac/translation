@@ -261,7 +261,7 @@ describe("glossary and prompt styles with a real server connection", () => {
         text: "魔王が来た。",
         glossary: [{ source: "魔王", target: "Demon King", note: "villain" }, { source: "勇者", target: "Hero" }],
         prompts: [style],
-        models: [model("qwen2.5-7b-instruct"), model("qwen2.5-7b-instruct", { promptId: "mine" }), model("qwen2.5-7b-instruct", { promptId: "literary", useGlossary: false })],
+        models: [model("qwen2.5-7b-instruct"), model("qwen2.5-7b-instruct", { promptId: "mine" }), model("qwen2.5-7b-instruct", { promptId: "literary" })],
       }),
     );
     await service.whenIdle();
@@ -271,8 +271,8 @@ describe("glossary and prompt styles with a real server connection", () => {
     expect(sent[1]!.messages[0]!.content).toMatch(/^Translate Japanese to English briskly\./);
     expect(sent[1]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // layout notes were added
     expect(parseUserMessage(sent[0]!.messages[1]!.content)!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]); // 勇者 is not in the block
-    expect(parseUserMessage(sent[2]!.messages[1]!.content)!.glossary).toEqual([]);
-    expect(service.snapshot().runs.map((r) => r.label)).toEqual(["qwen2.5-7b-instruct", "qwen2.5-7b-instruct · Brisk", "qwen2.5-7b-instruct · Natural, literary · no glossary"]);
+    expect(parseUserMessage(sent[2]!.messages[1]!.content)!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]);
+    expect(service.snapshot().runs.map((r) => r.label)).toEqual(["qwen2.5-7b-instruct", "qwen2.5-7b-instruct · Brisk", "qwen2.5-7b-instruct · Natural, literary"]);
   });
 
   it("flags a block whose required term is missing, with the reason, and the user can accept it", async () => {
