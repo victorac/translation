@@ -1,18 +1,16 @@
 import { useEffect, useRef } from "react";
 import type { Backend, BlockSize, DemoOptions, SplitPreview } from "@ltw/domain";
 import { Connection } from "./Connection";
-import { KnowledgePanel } from "./KnowledgePanel";
 import { PromptsPanel } from "./PromptsPanel";
 import { SplitPreviewView } from "./SplitPreviewView";
 import { newModel, type SetupState } from "./setup";
 import type { useProvider } from "./useProvider";
 
-export type SettingsTab = "server" | "text" | "glossary" | "styles" | "practice";
+export type SettingsTab = "server" | "text" | "styles" | "practice";
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "server", label: "Server" },
   { id: "text", label: "Text" },
-  { id: "glossary", label: "Names & notes" },
   { id: "styles", label: "Styles" },
 ];
 
@@ -25,8 +23,6 @@ export function SettingsDrawer({
   onSetup,
   provider,
   split,
-  knowledgeRev,
-  documentTitle,
 }: {
   tab: SettingsTab;
   onTab: (t: SettingsTab) => void;
@@ -35,8 +31,6 @@ export function SettingsDrawer({
   onSetup: (update: (s: SetupState) => SetupState) => void;
   provider: ReturnType<typeof useProvider>;
   split: { preview: SplitPreview | null; loading: boolean };
-  knowledgeRev: number;
-  documentTitle: string;
 }) {
   const ref = useRef<HTMLElement>(null);
   const tabs = setup.backend === "practice" ? [...TABS, { id: "practice" as const, label: "Practice" }] : TABS;
@@ -106,7 +100,6 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {tab === "glossary" && <KnowledgePanel setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} rev={knowledgeRev} documentTitle={documentTitle} />}
 
         {tab === "styles" && (
           <PromptsPanel

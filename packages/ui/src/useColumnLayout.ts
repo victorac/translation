@@ -25,9 +25,9 @@ function loadColumns(): ColumnLayout {
 function loadPanes(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(PANES_KEY) ?? "null") as Partial<Saved> | null;
-    return { mode: raw?.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw?.tree), linked: raw?.linked !== false, showKnowledge: raw?.showKnowledge === true };
+    return raw ? { mode: raw.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw.tree), linked: raw.linked !== false, showKnowledge: raw.showKnowledge === true } : { mode: "panes", tree: null, linked: true, showKnowledge: true };
   } catch {
-    return { mode: "aligned", tree: null, linked: true, showKnowledge: false };
+    return { mode: "panes", tree: null, linked: true, showKnowledge: true };
   }
 }
 

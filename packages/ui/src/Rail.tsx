@@ -97,7 +97,7 @@ export function Rail({
               { label: `${layoutControl.mode === "aligned" ? "✓ " : ""}Aligned columns`, onSelect: () => layoutControl.onMode("aligned") },
               { label: `${layoutControl.mode === "panes" ? "✓ " : ""}Free panes`, onSelect: () => layoutControl.onMode("panes") },
               { label: `${layoutControl.linked ? "✓ " : ""}Link scrolling (panes)`, onSelect: () => layoutControl.onLinked(!layoutControl.linked), disabled: layoutControl.mode !== "panes", separated: true },
-              { label: `${layoutControl.showKnowledge ? "✓ " : ""}Names & notes pane`, onSelect: () => layoutControl.onShowKnowledge(!layoutControl.showKnowledge), disabled: layoutControl.mode !== "panes" },
+              { label: `${layoutControl.showKnowledge ? "✓ " : ""}Knowledge base pane`, onSelect: () => layoutControl.onShowKnowledge(!layoutControl.showKnowledge), disabled: layoutControl.mode !== "panes" },
               { label: "Reset layout", onSelect: layoutControl.onReset },
             ]}
           />

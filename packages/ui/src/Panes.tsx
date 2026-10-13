@@ -4,8 +4,7 @@ import type { PreviewBlock } from "./blockMarkers";
 import { Cell } from "./Cell";
 import type { SourceMode } from "./Grid";
 import { KNOWLEDGE_KEY, SOURCE_KEY } from "./layout";
-import { KnowledgePanel } from "./KnowledgePanel";
-import type { SetupState } from "./setup";
+import { KnowledgeTable } from "./KnowledgeTable";
 import { placeView, reconcile, setRatio, type Edge, type PaneNode, type Path } from "./paneTree";
 import { SourceEditor } from "./SourceEditor";
 import { countCells } from "./status";
@@ -33,12 +32,10 @@ interface Props {
   onTree: (t: PaneNode) => void;
   onHide: (label: string) => void;
   linked: boolean;
-  /** Show the names-and-notes pane. */
+  /** Show the knowledge base pane. */
   showKnowledge: boolean;
   onCloseKnowledge: () => void;
-  setup: SetupState;
   knowledgeRev: number;
-  passages: readonly string[];
 }
 
 /** Source and translations as panes that can be resized, dragged next to or above each other, and closed. */
@@ -194,7 +191,7 @@ function Leaf(
       onDragEnd={p.onFinish}
       title="Drag to place this pane beside or above another"
     >
-      <span className="gh-title">{isSource ? p.title : isKb ? "Names & notes" : run?.label ?? view}</span>
+      <span className="gh-title">{isSource ? p.title : isKb ? "Knowledge base" : run?.label ?? view}</span>
       {isSource && hasBlocks && <span className="hint">{blocks.length} blocks</span>}
       {isSource && p.edited && <span className="tag warn-tag">edited</span>}
       {c && (
@@ -214,7 +211,7 @@ function Leaf(
         </div>
       )}
       {!isSource && (
-        <button className="small head-close" draggable={false} aria-label={`Close ${isKb ? "names and notes" : view}`} title="Close this pane (bring it back from the Layout menu or the side panel)" onClick={() => (isKb ? p.onCloseKnowledge() : p.onHide(view))}>
+        <button className="small head-close" draggable={false} aria-label={`Close ${isKb ? "the knowledge base" : view}`} title="Close this pane (bring it back from the Layout menu or the side panel)" onClick={() => (isKb ? p.onCloseKnowledge() : p.onHide(view))}>
           ×
         </button>
       )}
@@ -224,7 +221,7 @@ function Leaf(
   return (
     <section
       className="pane"
-      aria-label={isSource ? "Source" : isKb ? "Names and notes" : view}
+      aria-label={isSource ? "Source" : isKb ? "Knowledge base" : view}
       onDragOver={(e) => {
         if (!p.dragging || p.dragging === view) return;
         e.preventDefault();
@@ -240,7 +237,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgePanel setup={p.setup} passages={p.passages} rev={p.knowledgeRev} documentTitle={p.title} />
+          <KnowledgeTable rev={p.knowledgeRev} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />

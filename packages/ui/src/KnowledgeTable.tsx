@@ -32,7 +32,7 @@ function EntryForm({ initial, onSave, onCancel }: { initial: EntryInput; onSave:
       {!e.id && (
         <div className="segmented small" role="radiogroup" aria-label="Kind">
           <button type="button" role="radio" aria-checked={e.kind === "term"} className={e.kind === "term" ? "on" : ""} onClick={() => set({ kind: "term" })}>
-            Name or term
+            Term
           </button>
           <button type="button" role="radio" aria-checked={e.kind === "note"} className={e.kind === "note" ? "on" : ""} onClick={() => set({ kind: "note" })}>
             Note
@@ -79,7 +79,7 @@ function EntryForm({ initial, onSave, onCancel }: { initial: EntryInput; onSave:
   );
 }
 
-/** The project's names, hints and notes: search, filter, edit, confirm what a model suggested, add or paste more. */
+/** The knowledge base: the project's names, hints and notes. search, filter, edit, confirm what a model suggested, add or paste more. */
 export function KnowledgeTable({ rev }: { rev: number }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState<EntryKind | "">("");
@@ -105,10 +105,10 @@ export function KnowledgeTable({ rev }: { rev: number }) {
   return (
     <div className="kb-table">
       <div className="kb-bar">
-        <input type="search" aria-label="Search names and notes" placeholder="Search" value={text} onChange={(e) => setText(e.target.value)} />
+        <input type="search" aria-label="Search the knowledge base" placeholder="Search" value={text} onChange={(e) => setText(e.target.value)} />
         <select aria-label="Show" value={kind} onChange={(e) => setKind(e.target.value as EntryKind | "")}>
           <option value="">All</option>
-          <option value="term">Names & terms</option>
+          <option value="term">Terms</option>
           <option value="note">Notes</option>
         </select>
         <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as EntryStatus | "")}>
@@ -119,7 +119,7 @@ export function KnowledgeTable({ rev }: { rev: number }) {
       </div>
       <div className="kb-bar">
         <span className="hint">
-          {counts ? `${counts.terms} names · ${counts.notes} notes` : ""}
+          {counts ? `${counts.terms} ${counts.terms === 1 ? "term" : "terms"} · ${counts.notes} ${counts.notes === 1 ? "note" : "notes"}` : ""}
           {list && list.total !== counts!.terms + counts!.notes ? ` · ${list.total} shown` : ""}
         </span>
         <span className="kb-actions">
@@ -182,7 +182,7 @@ export function KnowledgeTable({ rev }: { rev: number }) {
         </div>
       )}
       {editing === "new" && <EntryForm initial={blank("term")} onSave={save} onCancel={() => setEditing(null)} />}
-      {list && list.entries.length === 0 && editing !== "new" && <p className="hint">{counts && counts.terms + counts.notes > 0 ? "Nothing matches." : "Nothing here yet. Add names and notes, paste a list, or let a model suggest them."}</p>}
+      {list && list.entries.length === 0 && editing !== "new" && <p className="hint">{counts && counts.terms + counts.notes > 0 ? "Nothing matches." : "Nothing here yet. Add entries, paste a list, or use Extract knowledge to let a model read the text."}</p>}
       <ul className="kb-rows">
         {list?.entries.map((e) => {
           const w = fromWhere(e);

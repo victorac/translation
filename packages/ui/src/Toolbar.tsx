@@ -17,6 +17,11 @@ export function Toolbar({
   confirmDiscard,
   splitCount,
   onSplit,
+  knowledge,
+  researcher,
+  onExtract,
+  canExtract,
+  extractHint,
 }: {
   snap: WorkspaceSnapshot | null;
   send: Send;
@@ -30,6 +35,13 @@ export function Toolbar({
   /** Number of blocks the editor text would make, or null if unknown. */
   splitCount: number | null;
   onSplit: () => void;
+  /** The knowledge base pane: whether it is showing, how many entries there are, and how many are waiting to be checked. */
+  knowledge: { open: boolean; count: number; suggested: number; onToggle: () => void };
+  /** The model that reads the text for knowledge and chooses the background for each block. */
+  researcher: { models: string[]; value: string | null; onChange: (name: string) => void };
+  onExtract: () => void;
+  canExtract: boolean;
+  extractHint: string;
 }) {
   const project = snap?.project;
   const has = !!snap?.revision;
@@ -76,6 +88,23 @@ export function Toolbar({
             <span className="progress-fill" style={{ width: `${pct}%` }} />
           </span>
         )}
+        <button className={knowledge.open ? "toggle on" : "toggle"} aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
+          Knowledge base
+          {knowledge.count > 0 && <span className="count">{knowledge.count}</span>}
+          {knowledge.suggested > 0 && <span className="tag warn-tag">{knowledge.suggested} to check</span>}
+        </button>
+        <label className="inline-select" title="The model that reads the text for the knowledge base and chooses the background for each block">
+          Researcher
+          <select value={researcher.value ?? ""} onChange={(e) => researcher.onChange(e.target.value)} disabled={researcher.models.length === 0}>
+            {researcher.models.length === 0 && <option value="">No model</option>}
+            {researcher.models.map((n) => (
+              <option key={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        <button onClick={onExtract} disabled={!canExtract || busy} title={extractHint}>
+          Extract knowledge
+        </button>
         {!busy && runHint && <span className="hint">{runHint}</span>}
         {busy ? (
           <button className="danger" onClick={() => void send("job.cancel", { kind: "job" })} title="Stop everything">

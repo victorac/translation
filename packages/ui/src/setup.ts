@@ -9,6 +9,8 @@ export interface SetupState {
   targetLanguage: string;
   backend: Backend;
   models: ModelSetting[];
+  /** The model that reads the text to extract knowledge and chooses the background for each block. Null: the first model. */
+  researcher: string | null;
   /** The user's own translation styles. */
   prompts: PromptPreset[];
   blockSize: BlockSize;
@@ -30,6 +32,7 @@ export const initialSetup: SetupState = {
   targetLanguage: "English",
   backend: "provider",
   models: [],
+  researcher: null,
   prompts: [],
   blockSize: "normal",
   demo: { speed: "normal", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
@@ -101,6 +104,7 @@ export function loadSetup(): SetupState {
         ...(typeof s.targetLanguage === "string" ? { targetLanguage: s.targetLanguage } : {}),
         ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
         ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
+        ...(typeof s.researcher === "string" ? { researcher: s.researcher } : {}),
         ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
         ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
         ...(s.demo && typeof s.demo === "object" ? { demo: { ...initialSetup.demo, ...s.demo } } : {}),

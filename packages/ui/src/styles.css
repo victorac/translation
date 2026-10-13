@@ -340,3 +340,10 @@ details > summary { cursor: pointer; }
 .err-text { color: var(--danger); }
 .kb-pane { overflow: auto; }
 .kb-bar select { width: auto; flex: none; }
+
+.toolbar-right { flex-wrap: wrap; justify-content: flex-end; }
+.inline-select { display: flex; align-items: center; gap: 0.35rem; font-size: 0.85em; color: var(--muted); }
+.inline-select select { width: auto; max-width: 11rem; }
+button.toggle.on { background: var(--accent-soft); border-color: var(--accent); }
+button.toggle .count { margin-left: 0.35rem; color: var(--muted); }
+button.toggle .tag { margin-left: 0.35rem; }

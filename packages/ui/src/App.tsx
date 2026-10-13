@@ -115,45 +115,79 @@ export function App() {
     setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
     snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
 
-  // Before translating, a model looks through the project's names and notes for each block and picks what matters for it.
-  const [preparing, setPreparing] = useState<{ at: number; of: number } | null>(null);
-  const [prepareNote, setPrepareNote] = useState<string | null>(null);
-  const stopPreparing = useRef(false);
+  // The researcher model reads the text for knowledge, and before translating it chooses the background for each block.
+  const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
+  const [work, setWork] = useState<{ what: "extract" | "choose"; at: number; of: number } | null>(null);
+  const [workNote, setWorkNote] = useState<string | null>(null);
+  const stopWork = useRef(false);
   const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
-  /** Returns false if the user stopped it. A problem is reported and translating goes on with a backup. */
-  const prepare = async (): Promise<boolean> => {
+  const blockTexts = split.preview?.blocks.map((b) => b.text) ?? [];
+  const sideRequest = researcher && !busy && !work;
+  const activeTitle = snap?.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Document";
+
+  /** The researcher reads the text block by block and adds what it finds to the knowledge base as suggestions. */
+  const extract = async () => {
     const s = setupRef.current;
-    const model = s.models[0];
-    const blocks = split.preview?.blocks ?? [];
-    if (!model || blocks.length === 0 || known === 0) return true;
-    stopPreparing.current = false;
-    setPrepareNote(null);
+    if (!researcher || blockTexts.length === 0) return;
+    stopWork.current = false;
+    setWorkNote(null);
+    let added = 0;
     try {
-      for (let i = 0; i < blocks.length; i++) {
-        setPreparing({ at: i + 1, of: blocks.length });
-        const r = await api.invoke("research.block", {
+      for (let i = 0; i < blockTexts.length; i++) {
+        setWork({ what: "extract", at: i + 1, of: blockTexts.length });
+        const r = await api.invoke("notes.analyze", {
           backend: s.backend,
-          modelId: model.name,
-          contextLimit: model.contextLimit,
-          maxOutputTokens: model.maxOutputTokens,
+          modelId: researcher.name,
+          contextLimit: researcher.contextLimit,
+          maxOutputTokens: researcher.maxOutputTokens,
           sourceLanguage: s.sourceLanguage,
           targetLanguage: s.targetLanguage,
-          passage: blocks[i]!.text,
+          passage: blockTexts[i]!,
+          documentTitle: activeTitle,
+          block: i + 1,
         });
-        if (stopPreparing.current || (r.ok && r.value.canceled)) return false;
+        if (stopWork.current || (r.ok && r.value.canceled)) break;
+        if (!r.ok) return setWorkNote(r.error.message);
+        added += r.value.added;
+      }
+      setWorkNote(added === 0 ? "Nothing new was found." : `Added ${added} ${added === 1 ? "suggestion" : "suggestions"} to the knowledge base. Please check them; the model can be wrong.`);
+    } finally {
+      setWork(null);
+    }
+  };
+
+  /** Before translating, the researcher chooses what matters for each block. Returns false if the user stopped it. */
+  const prepare = async (): Promise<boolean> => {
+    const s = setupRef.current;
+    if (!researcher || blockTexts.length === 0 || known === 0) return true;
+    stopWork.current = false;
+    setWorkNote(null);
+    try {
+      for (let i = 0; i < blockTexts.length; i++) {
+        setWork({ what: "choose", at: i + 1, of: blockTexts.length });
+        const r = await api.invoke("research.block", {
+          backend: s.backend,
+          modelId: researcher.name,
+          contextLimit: researcher.contextLimit,
+          maxOutputTokens: researcher.maxOutputTokens,
+          sourceLanguage: s.sourceLanguage,
+          targetLanguage: s.targetLanguage,
+          passage: blockTexts[i]!,
+        });
+        if (stopWork.current || (r.ok && r.value.canceled)) return false;
         if (!r.ok) {
-          setPrepareNote(`Could not choose the notes for every block: ${r.error.message} The remaining blocks use name matching as a backup.`);
+          setWorkNote(`Could not choose the background for every block: ${r.error.message} The remaining blocks use name matching as a backup.`);
           return true;
         }
       }
       return true;
     } finally {
-      setPreparing(null);
+      setWork(null);
     }
   };
 
   const run = async (rerun: string[] = []) => {
-    if (busy || preparing || (rerun.length === 0 && !canRun)) return;
+    if (busy || work || (rerun.length === 0 && !canRun)) return;
     let labels = rerun;
     if (labels.length === 0 && !needsRun) {
       // Nothing is missing, but the user asked: translate everything again rather than refusing.
@@ -207,6 +241,21 @@ export function App() {
         confirmDiscard={confirmDiscard}
         splitCount={split.preview && split.preview.blocks.length > 0 ? split.preview.blocks.length : null}
         onSplit={() => setTab("text")}
+        knowledge={{
+          open: columns.mode === "panes" && columns.showKnowledge,
+          count: known,
+          suggested: snap?.knowledge.suggested ?? 0,
+          onToggle: () => {
+            if (columns.mode !== "panes") {
+              columns.setMode("panes");
+              columns.setShowKnowledge(true);
+            } else columns.setShowKnowledge(!columns.showKnowledge);
+          },
+        }}
+        researcher={{ models: setup.models.map((m) => m.name), value: researcher?.name ?? null, onChange: (name) => setSetup((x) => ({ ...x, researcher: name })) }}
+        onExtract={() => void extract()}
+        canExtract={!!sideRequest && blockTexts.length > 0}
+        extractHint={!researcher ? "Add a model first" : blockTexts.length === 0 ? "Add some text first" : busy ? "Wait for the translation to finish" : "A model reads the text and suggests entries for the knowledge base"}
       />
 
       {project?.recovery && (
@@ -316,15 +365,15 @@ export function App() {
         />
 
         <main className="center">
-          {preparing && (
+          {work && (
             <div className="strip">
               <span>
-                Choosing the notes for block {preparing.at} of {preparing.of}…
+                {work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block {work.at} of {work.of}…
               </span>
               <button
                 className="small"
                 onClick={() => {
-                  stopPreparing.current = true;
+                  stopWork.current = true;
                   void api.invoke("notes.cancel");
                 }}
               >
@@ -332,10 +381,10 @@ export function App() {
               </button>
             </div>
           )}
-          {prepareNote && (
+          {workNote && (
             <div className="strip">
-              <span>{prepareNote}</span>
-              <button className="small" onClick={() => setPrepareNote(null)}>
+              <span>{workNote}</span>
+              <button className="small" onClick={() => setWorkNote(null)}>
                 Dismiss
               </button>
             </div>
@@ -377,9 +426,7 @@ export function App() {
                 linked={columns.linked}
                 showKnowledge={columns.showKnowledge}
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
-                setup={setup}
                 knowledgeRev={snap.knowledge.rev}
-                passages={split.preview?.blocks.map((b) => b.text) ?? []}
               />
             ) : (
             <Grid
@@ -406,7 +453,7 @@ export function App() {
           {snap && hasVersion && <Tray snap={snap} open={trayOpen} onToggle={() => setTrayOpen((o) => !o)} send={send} />}
         </main>
 
-        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} knowledgeRev={snap?.knowledge.rev ?? 0} documentTitle={snap?.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Document"} />}
+        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} />}
       </div>
 
       {exporting && snap?.revision && <ExportDialog snap={snap} onClose={() => setExporting(false)} />}
