@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { BlockCellView } from "@ltw/domain";
 import { STATUS } from "./status";
 
@@ -11,33 +11,29 @@ export interface CellActions {
   acceptReview(): void;
 }
 
-export function Badge({ state }: { state: keyof typeof STATUS }) {
-  const s = STATUS[state];
+export function IconButton({ label, onClick, children, danger }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean }) {
   return (
-    <span className={`badge badge-${state}`}>
-      <span aria-hidden="true">{s.icon}</span> {s.label}
-    </span>
+    <button className={danger ? "icon-button danger-text" : "icon-button"} aria-label={label} title={label} onClick={onClick}>
+      {children}
+    </button>
   );
 }
 
-/** One model's result for one block. */
-export function Cell({ cell, actions, runLabel, blockNumber }: { cell: BlockCellView; actions: CellActions; runLabel: string; blockNumber: number }) {
+/** One model's result for one block. Quiet when all is well; says what is wrong when it is not. */
+export function Cell({ cell, actions, label, n }: { cell: BlockCellView; actions: CellActions; label: string; n: number }) {
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState("");
-  const inProgress = cell.state === "running" || cell.state === "pending" || cell.state === "waiting";
-  const label = `${runLabel}, block ${blockNumber}`;
+  const where = `${label}, block ${n}`;
+  const busy = cell.state === "running" || cell.state === "pending";
+  const s = STATUS[cell.state];
+  const quiet = cell.state === "succeeded";
 
   if (editing) {
     return (
-      <div className="cell">
-        <textarea
-          className="edit-box"
-          aria-label={`Edit ${label}`}
-          value={draftText}
-          autoFocus
-          onChange={(e) => setDraftText(e.target.value)}
-        />
-        <div className="actions">
+      <div className="cell out editing">
+        <textarea className="edit-box" aria-label={`Edit ${where}`} value={draftText} autoFocus onChange={(e) => setDraftText(e.target.value)} />
+        <div className="row-end">
+          <button onClick={() => setEditing(false)}>Cancel</button>
           <button
             className="primary"
             onClick={() => {
@@ -45,104 +41,81 @@ export function Cell({ cell, actions, runLabel, blockNumber }: { cell: BlockCell
               setEditing(false);
             }}
           >
-            Save edit
+            Save
           </button>
-          <button onClick={() => setEditing(false)}>Cancel edit</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`cell cell-${cell.state}`}>
-      <div className="cell-head">
-        <Badge state={cell.state} />
-        {cell.edited && <span className="tag">Edited by you</span>}
-        {cell.attempts > 1 && <span className="tag">{cell.attempts} attempts</span>}
-      </div>
-
-      {cell.state === "needs_review" && (
-        <div className="note">
-          {cell.reviewNotes.length > 0 ? (
-            <>
-              <p>Worth a look before you rely on this:</p>
-              <ul className="plain">
-                {cell.reviewNotes.map((n, i) => (
-                  <li key={i}>{n}</li>
-                ))}
-              </ul>
-              <p className="muted">These checks are hints and can be wrong. Edit the text, retry, or accept it as is.</p>
-            </>
-          ) : (
-            <p>The model stopped early or declined, so this may be incomplete. Check it, edit it, or accept it as is.</p>
-          )}
-        </div>
-      )}
-      {cell.state === "stale" && (
-        <p className="note">The text before this block changed after it was translated. It may no longer fit; retranslate it if it matters.</p>
-      )}
-      {cell.state === "failed" && (
-        <p className="note error-note">
-          {cell.error ?? "This block failed."}
-          {cell.text !== null && " Retry failed; the earlier result is kept below."}
-        </p>
-      )}
-      {cell.state === "waiting" && <p className="note">Waiting for the model (see the message above).</p>}
-      {cell.state === "pending" && <p className="muted">Queued.</p>}
-
-      {cell.text !== null && <p className="text">{cell.text}</p>}
-
-      {cell.draft !== null && (
-        <div className="draft">
-          <span className="tag">{cell.state === "running" ? (cell.text !== null ? "New attempt (draft)" : "Draft") : "Incomplete draft, not a result"}</span>
-          <p className="text">
-            {cell.draft}
-            {cell.state === "running" && <span className="caret" aria-hidden="true" />}
-          </p>
-        </div>
-      )}
-
-      {cell.candidateText !== null && (
-        <div className="candidate" role="group" aria-label={`New version of ${label}`}>
-          <span className="tag">New version ready</span>
-          <p className="text">{cell.candidateText}</p>
-          <div className="actions">
-            <button className="primary" onClick={actions.acceptCandidate}>
-              Use new version
-            </button>
-            <button onClick={actions.keepCurrent}>Keep current</button>
-          </div>
-        </div>
-      )}
-
-      <div className="actions">
-        {cell.state === "running" || cell.state === "pending" ? (
-          <button onClick={actions.cancel} aria-label={`Cancel ${label}`}>
-            Cancel block
-          </button>
-        ) : null}
-        {cell.state === "needs_review" && (
-          <button onClick={actions.acceptReview} aria-label={`Accept ${label} as is`}>
-            Accept as is
-          </button>
+    <div className={`cell out st-${cell.state}`}>
+      <div className="cell-actions">
+        {busy && (
+          <IconButton label={`Cancel ${where}`} onClick={actions.cancel}>
+            ■
+          </IconButton>
         )}
-        {!inProgress || cell.state === "waiting" ? (
-          <button onClick={actions.retry} aria-label={`Retry ${label}`}>
-            Retry
-          </button>
-        ) : null}
-        {cell.text !== null && cell.state !== "running" && (
-          <button
+        {!busy && (
+          <IconButton label={`Retry ${where}`} onClick={actions.retry}>
+            ↻
+          </IconButton>
+        )}
+        {cell.text !== null && !busy && (
+          <IconButton
+            label={`Edit ${where}`}
             onClick={() => {
               setDraftText(cell.text ?? "");
               setEditing(true);
             }}
-            aria-label={`Edit ${label}`}
           >
-            Edit
-          </button>
+            ✎
+          </IconButton>
         )}
       </div>
+
+      {quiet ? <span className="sr-only">{s.label}. </span> : <span className={`state state-${cell.state}`}><span aria-hidden="true">{s.icon}</span> {s.label}{cell.state === "failed" && cell.error ? ` · ${cell.error}` : ""}</span>}
+      {cell.edited && <span className="tag">edited</span>}
+      {cell.attempts > 1 && quiet && <span className="tag">{cell.attempts} tries</span>}
+
+      {cell.state === "needs_review" && cell.reviewNotes.length > 0 && (
+        <ul className="notes" title={cell.reviewNotes.join("\n")}>
+          {cell.reviewNotes.slice(0, 2).map((n2, i) => (
+            <li key={i}>{n2}</li>
+          ))}
+          {cell.reviewNotes.length > 2 && <li className="hint">+{cell.reviewNotes.length - 2} more</li>}
+        </ul>
+      )}
+
+      {cell.text !== null && <p className="text">{cell.text}</p>}
+
+      {cell.draft !== null && (
+        <p className="text draft" aria-label={cell.state === "running" ? "Draft" : "Incomplete draft"}>
+          {cell.draft}
+          {cell.state === "running" && <span className="caret" aria-hidden="true" />}
+        </p>
+      )}
+
+      {cell.state === "needs_review" && (
+        <button className="small" onClick={actions.acceptReview} aria-label={`Accept ${where} as is`}>
+          Accept
+        </button>
+      )}
+
+      {cell.candidateText !== null && (
+        <div className="candidate" role="group" aria-label={`New version of ${where}`}>
+          <span className="tag">new version</span>
+          <p className="text">{cell.candidateText}</p>
+          <div className="row">
+            <button className="small primary" onClick={actions.acceptCandidate}>
+              Use
+            </button>
+            <button className="small" onClick={actions.keepCurrent}>
+              Keep
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

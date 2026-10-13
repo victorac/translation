@@ -4,9 +4,9 @@ import { api } from "./api";
 import { countCells } from "./status";
 
 const FORMATS: { id: ExportFormat; title: string; help: string }[] = [
-  { id: "text", title: "Plain text", help: "One model's translation as running text." },
-  { id: "markdown", title: "Markdown", help: "One or several models, each under its own heading." },
-  { id: "csv", title: "Comparison spreadsheet (CSV)", help: "One row per block with the source and every chosen model side by side. Opens in Excel." },
+  { id: "text", title: "Plain text", help: "One model" },
+  { id: "markdown", title: "Markdown", help: "One or several models" },
+  { id: "csv", title: "Spreadsheet (CSV)", help: "Side by side; opens in Excel" },
 ];
 
 /** Choose what to export, see exactly what will be in the file, and save it. Exporting never starts a translation. */
@@ -86,9 +86,7 @@ export function ExportDialog({ snap, onClose }: { snap: WorkspaceSnapshot; onClo
               }}
             />
             <span>
-              <strong>{f.title}</strong>
-              <br />
-              <span className="muted">{f.help}</span>
+              <strong>{f.title}</strong> <span className="hint">{f.help}</span>
             </span>
           </label>
         ))}
@@ -113,30 +111,26 @@ export function ExportDialog({ snap, onClose }: { snap: WorkspaceSnapshot; onClo
       </fieldset>
 
       <fieldset className="choice">
-        <legend>Which text</legend>
+        <legend>Text</legend>
         <label className="check">
           <input type="radio" name="version" checked={textVersion === "current"} onChange={() => setTextVersion("current")} />
-          Current text (includes your edits)
+          Current (with your edits)
         </label>
         <label className="check">
           <input type="radio" name="version" checked={textVersion === "original"} onChange={() => setTextVersion("original")} />
-          Original text as the model wrote it (ignores your edits)
+          Original (as the model wrote it)
         </label>
       </fieldset>
 
       {format === "csv" && (
         <label className="check">
           <input type="checkbox" checked={formulaSafe} onChange={(e) => setFormulaSafe(e.target.checked)} />
-          <span>
-            Protect against spreadsheet formulas
-            <br />
-            <span className="muted">Adds a ' before any text that starts with = + - or @, so Excel does not try to run it.</span>
-          </span>
+          <span title="Adds a ' before text starting with = + - or @, so Excel does not try to run it.">Protect against spreadsheet formulas</span>
         </label>
       )}
 
       <section aria-live="polite" className="export-preview">
-        <h3>What will be in the file</h3>
+        <h3>In the file</h3>
         {error && <p className="note error-note">{error}</p>}
         {preview?.problem && <p className="note error-note">{preview.problem}</p>}
         {preview && !preview.problem && (
@@ -169,7 +163,7 @@ export function ExportDialog({ snap, onClose }: { snap: WorkspaceSnapshot; onClo
                 </ul>
                 <label className="check">
                   <input type="checkbox" checked={allowPartial} onChange={(e) => setAllowPartial(e.target.checked)} />
-                  Export partial: mark the missing blocks in the file
+                  Export partial (marks the missing blocks)
                 </label>
               </div>
             )}
@@ -192,8 +186,8 @@ export function ExportDialog({ snap, onClose }: { snap: WorkspaceSnapshot; onClo
 
             {preview.excerpt && (
               <>
-                <p className="muted">
-                  {preview.fileName} · {(preview.bytes / 1024).toFixed(1)} KB · start of the file:
+                <p className="hint">
+                  {preview.fileName} · {(preview.bytes / 1024).toFixed(1)} KB
                 </p>
                 <pre className="excerpt" tabIndex={0} aria-label="Start of the file">
                   {preview.excerpt}

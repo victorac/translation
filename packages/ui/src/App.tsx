@@ -1,103 +1,104 @@
-import { useEffect, useState } from "react";
-import type { StartJobInput } from "@ltw/domain";
-import { normalizeGlossary } from "@ltw/domain/pure";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { normalizeGlossary, normalizeSource } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
-import { Setup, initialSetup, newModel, type SetupState } from "./Setup";
-import { Workspace } from "./Workspace";
-import { countCells, summarize } from "./status";
+import { Grid, type SourceMode } from "./Grid";
+import { Rail } from "./Rail";
+import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
+import { Toolbar } from "./Toolbar";
+import { Tray } from "./Tray";
+import { loadSetup, mergeRunModels, modelsFromRuns, saveSetup, toStartInput, type SetupState } from "./setup";
 import { useProvider } from "./useProvider";
 import { useSplitPreview } from "./useSplitPreview";
 import { useWorkspace } from "./useWorkspace";
 
-const STORAGE_KEY = "ltw.setup.v1";
-
-/** Remembers languages, models, glossary and your own styles between launches (not the text). Failure is harmless. */
-function loadSetup(): SetupState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as Partial<SetupState>;
-      return {
-        ...initialSetup,
-        ...(typeof s.sourceLanguage === "string" ? { sourceLanguage: s.sourceLanguage } : {}),
-        ...(typeof s.targetLanguage === "string" ? { targetLanguage: s.targetLanguage } : {}),
-        ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
-        ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
-        ...(Array.isArray(s.glossary) ? { glossary: s.glossary } : {}),
-        ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
-        ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
-      };
-    }
-  } catch {
-    /* no saved setup */
-  }
-  return initialSetup;
-}
-
-function saveSetup(setup: SetupState): void {
-  try {
-    const { text: _text, demo: _demo, ...rest } = setup;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
-  } catch {
-    /* storage unavailable: fine */
-  }
-}
-
+/** One screen: the text, the models, the translations side by side, and the controls around them. */
 export function App() {
-  const { snapshot, error, clearError, send } = useWorkspace();
+  const { snapshot: snap, error, clearError, send } = useWorkspace();
   const provider = useProvider();
   const [setup, setSetup] = useState<SetupState>(loadSetup);
+  const [tab, setTab] = useState<SettingsTab | null>(null);
+  const [mode, setMode] = useState<SourceMode | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [trayOpen, setTrayOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  const setupRef = useRef(setup);
+  setupRef.current = setup;
   useEffect(() => saveSetup(setup), [setup]);
 
-  const glossaryProblem = normalizeGlossary(setup.glossary).problems[0] ?? null;
-  const startInput: StartJobInput = {
-    text: setup.text,
-    sourceLanguage: setup.sourceLanguage,
-    targetLanguage: setup.targetLanguage,
-    backend: setup.backend,
-    models: setup.models,
-    glossary: setup.glossary,
-    prompts: setup.prompts,
-    blockSize: setup.blockSize,
-    demo: setup.demo,
-  };
+  const hasVersion = !!snap?.revision;
+  const viewingLatest = !snap || snap.viewingId === snap.latestId;
+  const busy = snap?.busy ?? false;
+  const edited = snap?.latestText != null && normalizeSource(setup.text) !== snap.latestText;
+  const effectiveMode: SourceMode = mode ?? (hasVersion ? "blocks" : "text");
+
+  // ---- keep the editor and the model list in step with the project ----
+  const seenLatest = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!snap) return;
+    const first = seenLatest.current === undefined;
+    if (!first && seenLatest.current === snap.latestId) return;
+    seenLatest.current = snap.latestId;
+    const cur = setupRef.current;
+    if (snap.latestId === null) {
+      if (!first && cur.text !== "") setSetup({ ...cur, text: "" }); // a new project starts with an empty editor
+      return;
+    }
+    // A project was opened or restored (or this is the first load): show its text and models.
+    if (snap.latestText !== null && normalizeSource(cur.text) !== snap.latestText) {
+      const latestRuns = snap.viewingId === snap.latestId ? snap.runs : [];
+      setSetup({ ...cur, text: snap.latestText, ...(latestRuns.length > 0 ? { models: modelsFromRuns(latestRuns) } : {}) });
+      setMode(null);
+    }
+  }, [snap?.latestId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Runs that exist (for example one just brought back) always have a model entry.
+  const runKey = snap ? snap.runs.map((r) => r.label).join("\u0000") : "";
+  useEffect(() => {
+    if (!snap || snap.viewingId !== snap.latestId) return;
+    const cur = setupRef.current;
+    const merged = mergeRunModels(cur, snap.runs);
+    if (merged !== cur.models) setSetup({ ...cur, models: merged });
+  }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- what Run would do, and why it might not ----
+  const startInput = useMemo(() => toStartInput(setup), [setup]);
   const split = useSplitPreview(startInput);
+  const glossaryProblem = normalizeGlossary(setup.glossary).problems[0] ?? null;
   const splitProblem = split.preview ? (split.preview.problem ?? split.preview.issues[0] ?? null) : null;
-  const hasRevision = !!snapshot?.revision;
-  const project = snapshot?.project;
-  const dirty = project?.dirty ?? false;
-  const busy = snapshot?.busy ?? false;
-  const canRun = !hasRevision && setup.text.trim() !== "" && setup.models.length > 0 && !glossaryProblem && !splitProblem && !(setup.backend === "provider" && provider.view?.problem);
-  const disabledReason = hasRevision
-    ? null
-    : setup.text.trim() === ""
-      ? "Paste some text to translate first."
+  const runHint =
+    setup.text.trim() === ""
+      ? "No text"
       : setup.models.length === 0
-        ? "Add at least one model."
+        ? "No model"
         : glossaryProblem
-          ? "Fix the glossary first (step 5)."
+          ? "Glossary problem"
           : splitProblem
-            ? "The text does not fit the chosen models (see how it will be split)."
-          : setup.backend === "provider" && provider.view?.problem
-            ? "The server address cannot be used yet (see step 3)."
-            : null;
+            ? "Doesn't fit"
+            : setup.backend === "provider" && provider.view?.problem
+              ? "Server problem"
+              : null;
+  const canRun = runHint === null && !busy;
 
-  const run = () => {
-    if (!canRun) return;
-    void send("job.start", startInput);
+  const run = async (rerun: string[] = []) => {
+    if (busy || (rerun.length === 0 && !canRun)) return;
+    setMode(null);
+    await send("job.start", toStartInput(setupRef.current, rerun));
   };
 
+  // ---- shortcuts ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === "Enter") {
         e.preventDefault();
-        run();
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        void run();
+      } else if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        if (hasRevision) void send("project.save", { saveAs: e.shiftKey });
+        if (snap?.revision) void send("project.save", { saveAs: e.shiftKey });
+      } else if (mod && e.key === ",") {
+        e.preventDefault();
+        setTab((t) => (t ? null : "server"));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -105,121 +106,159 @@ export function App() {
   });
 
   useEffect(() => {
-    document.title = `${dirty ? "● " : ""}${project?.title ?? "Untitled"} – Local Translation Workbench`;
-  }, [dirty, project?.title]);
+    document.title = `${snap?.project.dirty ? "● " : ""}${snap?.project.title ?? "Untitled"} – Local Translation Workbench`;
+  }, [snap?.project.dirty, snap?.project.title]);
 
-  const confirmDiscard = (what: string): boolean =>
-    !dirty || window.confirm(`This project has unsaved changes. ${what} will discard them. Continue?`);
+  const confirmDiscard = (what: string): boolean => !snap?.project.dirty || window.confirm(`This project has unsaved changes. ${what} will discard them. Continue?`);
+  const project = snap?.project;
+  const visibleRuns = (snap?.runs ?? []).filter((r) => !hidden.has(r.label));
+  const discovered = provider.test?.ok ? provider.test.models : [];
 
   return (
     <div className="app">
-      <header className="toolbar">
-        <div className="toolbar-title">
-          <h1>Local Translation Workbench</h1>
-          <span className="project-name" title={project?.path ?? "Not saved yet"}>
-            {project?.title ?? "Untitled"}
-            {hasRevision && (
-              <span className={dirty ? "save-state unsaved" : "save-state"}>
-                {dirty ? " · Unsaved changes" : project?.path ? " · Saved" : ""}
-              </span>
-            )}
-          </span>
-        </div>
-        <div className="toolbar-actions">
-          {snapshot && hasRevision && <span className="summary">{summarize(countCells(snapshot))}</span>}
-          {!hasRevision && disabledReason && <span className="muted">{disabledReason}</span>}
-          <button
-            onClick={() => confirmDiscard("Opening another project") && void send("project.open", { useBackup: false })}
-            disabled={busy || !!project?.recovery}
-          >
-            Open…
-          </button>
-          {hasRevision && (
-            <>
-              <button className={dirty ? "primary" : undefined} onClick={() => void send("project.save", { saveAs: false })} title="Ctrl/Cmd + S">
-                Save
-              </button>
-              <button onClick={() => void send("project.save", { saveAs: true })} title="Ctrl/Cmd + Shift + S">
-                Save As…
-              </button>
-              <button onClick={() => setExporting(true)}>Export…</button>
-            </>
-          )}
-          {!hasRevision && (
-            <button className="primary" onClick={run} disabled={!canRun} title="Ctrl/Cmd + Enter">
-              Run
-            </button>
-          )}
-          {hasRevision && busy && (
-            <button onClick={() => void send("job.cancel", { kind: "job" })} className="danger">
-              Cancel everything
-            </button>
-          )}
-          {hasRevision && !busy && (
-            <button
-              onClick={() => confirmDiscard("Starting a new project") && void send("project.new")}
-              title="Close this project and go back to the paste screen"
-            >
-              New
-            </button>
-          )}
-        </div>
-      </header>
+      <Toolbar
+        snap={snap}
+        send={send}
+        canRun={canRun}
+        runHint={runHint}
+        onRun={() => void run()}
+        onSettings={() => setTab((t) => (t ? null : "server"))}
+        onExport={() => setExporting(true)}
+        confirmDiscard={confirmDiscard}
+        splitCount={split.preview && split.preview.blocks.length > 0 ? split.preview.blocks.length : null}
+        onSplit={() => setTab("text")}
+      />
 
       {project?.recovery && (
-        <div className="banner warn-box" role="alert">
+        <div className="banner warn" role="alert">
           <span>
-            <strong>Unsaved work from last time was found.</strong> It has {project.recovery.blocks} blocks and {project.recovery.models} model
-            {project.recovery.models === 1 ? "" : "s"}, last updated {new Date(project.recovery.updatedAt).toLocaleString()}.
+            Unsaved work from last time ({project.recovery.blocks} blocks, {project.recovery.models} model{project.recovery.models === 1 ? "" : "s"}).
           </span>
-          <span className="actions">
-            <button className="primary" onClick={() => void send("project.restoreRecovery")}>
-              Restore it
+          <span className="row">
+            <button className="small primary" onClick={() => void send("project.restoreRecovery")}>
+              Restore
             </button>
-            <button onClick={() => window.confirm("Discard the recovered work? This cannot be undone.") && void send("project.discardRecovery")}>Discard</button>
+            <button className="small" onClick={() => window.confirm("Discard the recovered work? This cannot be undone.") && void send("project.discardRecovery")}>
+              Discard
+            </button>
           </span>
         </div>
       )}
       {project?.openProblem && (
-        <div className="banner error-banner" role="alert">
+        <div className="banner err" role="alert">
           <span>{project.openProblem.message}</span>
-          <span className="actions">
+          <span className="row">
             {project.openProblem.canOpenBackup && (
-              <button className="primary" onClick={() => void send("project.open", { useBackup: true })}>
-                Open the previous saved copy
+              <button className="small primary" onClick={() => void send("project.open", { useBackup: true })}>
+                Open previous copy
               </button>
             )}
-            <button onClick={() => void send("project.dismissProblem")}>Dismiss</button>
+            <button className="small" onClick={() => void send("project.dismissProblem")}>
+              Dismiss
+            </button>
           </span>
         </div>
       )}
       {project?.notice && !project.openProblem && (
-        <div className="banner info-box" role="status">
+        <div className="banner info" role="status">
           <span>{project.notice}</span>
-          <button onClick={() => void send("project.dismissProblem")}>Dismiss</button>
-        </div>
-      )}
-
-      {error && (
-        <div className="banner error-banner" role="alert">
-          {error}
-          <button onClick={clearError} aria-label="Dismiss message">
+          <button className="small" onClick={() => void send("project.dismissProblem")}>
             Dismiss
           </button>
         </div>
       )}
+      {error && (
+        <div className="banner err" role="alert">
+          <span>{error}</span>
+          <button className="small" onClick={clearError}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {snap?.waiting && (
+        <div className="banner warn" role="alert">
+          <span>
+            <strong>{snap.waiting.label}</strong> is waiting: {snap.waiting.message}
+          </span>
+          <span className="row">
+            {snap.backend === "practice" && snap.waiting.code === "model_unavailable" && snap.demoModelUnloaded && (
+              <button className="small" onClick={() => void send("demo.loadModel")}>
+                Load model
+              </button>
+            )}
+            <button className="small primary" onClick={() => void send("run.resolveWaiting", { runId: snap.waiting!.runId, resolution: "retry" })}>
+              Retry
+            </button>
+            <button className="small" onClick={() => void send("run.resolveWaiting", { runId: snap.waiting!.runId, resolution: "skip" })}>
+              Skip
+            </button>
+          </span>
+        </div>
+      )}
+      {snap?.job?.stopReason && (
+        <div className="banner err" role="alert">
+          Stopped: {snap.job.stopReason}
+        </div>
+      )}
 
-      {exporting && snapshot?.revision && <ExportDialog snap={snapshot} onClose={() => setExporting(false)} />}
+      <div className="body">
+        <Rail
+          snap={snap}
+          setup={setup}
+          onSetup={setSetup}
+          send={send}
+          hidden={hidden}
+          onToggleHidden={(label) =>
+            setHidden((h) => {
+              const next = new Set(h);
+              if (!next.delete(label)) next.add(label);
+              return next;
+            })
+          }
+          discovered={discovered}
+          viewingLatest={viewingLatest}
+          onRunAgain={(label) => void run([label])}
+        />
 
-      <main>
-        {!snapshot ? (
-          <p className="muted pad">Loading…</p>
-        ) : snapshot.revision ? (
-          <Workspace snap={snapshot} send={send} />
-        ) : (
-          <Setup value={setup} onChange={setSetup} provider={provider} split={split} />
-        )}
-      </main>
+        <main className="center">
+          {snap && hasVersion && !viewingLatest && (
+            <div className="strip">
+              <span>Looking at an earlier version of the text.</span>
+              <button className="small" onClick={() => void send("version.view", { versionId: snap.latestId! })}>
+                Back to latest
+              </button>
+            </div>
+          )}
+          {snap && hasVersion && viewingLatest && edited && (
+            <div className="strip">
+              <span>Text edited. The translations below are from the previous text.</span>
+              <button className="small primary" onClick={() => void run()} disabled={!canRun}>
+                Run
+              </button>
+            </div>
+          )}
+          {snap ? (
+            <Grid
+              snap={snap}
+              text={setup.text}
+              onText={(text) => setSetup({ ...setup, text })}
+              mode={effectiveMode}
+              onMode={setMode}
+              runs={visibleRuns}
+              send={send}
+              edited={edited && viewingLatest}
+              readOnlyOld={!viewingLatest}
+            />
+          ) : (
+            <p className="hint pad">Loading…</p>
+          )}
+          {snap && hasVersion && <Tray snap={snap} open={trayOpen} onToggle={() => setTrayOpen((o) => !o)} send={send} />}
+        </main>
+
+        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} />}
+      </div>
+
+      {exporting && snap?.revision && <ExportDialog snap={snap} onClose={() => setExporting(false)} />}
     </div>
   );
 }

@@ -18,10 +18,8 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
 
   return (
     <div className="stack">
-      <p className="muted">
-        Names and terms that must be translated the same way every time. Each request carries only the entries whose source term appears in that
-        block. Write alternatives with <code>|</code>, for example <code>Demon King|Demon Lord</code>: the first is asked for and any counts as correct.
-        After translating, a block is flagged for review if a required term is missing. That check is a hint and can be wrong.
+      <p className="hint">
+        Terms to translate the same way every time. Use <code>|</code> for alternatives (<code>Demon King|Demon Lord</code>). A block is flagged if a required term is missing; that check is a hint.
       </p>
 
       {value.length > 0 && (
@@ -71,7 +69,7 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
       )}
 
       <label>
-        Or paste a list, one per line
+        Paste a list
         <textarea
           rows={4}
           placeholder={"魔王 = Demon King\nアレン → Allen # the hero"}
@@ -83,7 +81,7 @@ export function GlossaryPanel({ value, onChange }: { value: GlossaryEntry[]; onC
         <button onClick={addFromText} disabled={paste.trim() === ""}>
           Add these terms
         </button>
-        <span className="muted">Use =, -&gt;, → or a tab between the two sides, and # for a note.</span>
+        <span className="hint">=, → or tab between sides; # for a note</span>
       </div>
       {skipped.length > 0 && (
         <p className="note error-note" role="alert">

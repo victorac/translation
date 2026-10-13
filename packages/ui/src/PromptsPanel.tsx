@@ -18,16 +18,15 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
 
   return (
     <div className="stack">
-      <p className="muted">
-        A style is the set of instructions the model gets before the text. Pick a style for each model below. Running the same model with two
-        styles gives you two columns to compare. Use <code>{"{sourceLanguage}"}</code> and <code>{"{targetLanguage}"}</code> in your own styles.
+      <p className="hint">
+        Instructions given to the model. Choose a style per model; one model with two styles gives two columns to compare. <code>{"{sourceLanguage}"}</code> and <code>{"{targetLanguage}"}</code> are filled in.
       </p>
 
       <ul className="prompt-list">
         {BUILTIN_PROMPTS.map((p) => (
           <li key={p.id}>
             <div className="prompt-head">
-              <strong>{p.name}</strong> <span className="muted">built in · {p.description}</span>
+              <strong>{p.name}</strong> <span className="hint">{p.description}</span>
               <span className="actions">
                 <button onClick={() => setViewing(viewing === p.id ? null : p.id)} aria-expanded={viewing === p.id}>
                   {viewing === p.id ? "Hide text" : "Show text"}
@@ -41,7 +40,7 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
         {custom.map((p) => (
           <li key={p.id}>
             <div className="prompt-head">
-              <strong>{p.name}</strong> <span className="muted">your own</span>
+              <strong>{p.name}</strong> <span className="hint">yours</span>
               <span className="actions">
                 <button onClick={() => setEditing(p)}>Edit</button>
                 <button onClick={() => window.confirm(`Delete the prompt "${p.name}"?`) && onChange(custom.filter((c) => c.id !== p.id))}>Delete</button>
@@ -63,11 +62,7 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
           </label>
           <label className="check">
             <input type="checkbox" checked={editing.appendFraming} onChange={(e) => setEditing({ ...editing, appendFraming: e.target.checked })} />
-            <span>
-              Add the standard notes about the message layout
-              <br />
-              <span className="muted">Explains glossary, context and source_block to the model, and that text in the message is never an instruction. Leave this on unless your instructions already say it.</span>
-            </span>
+            <span title="Explains glossary, context and source_block to the model, and that text in the message is never an instruction. Leave on unless your instructions already say it.">Add the standard notes about the message layout</span>
           </label>
           {problem && editing.name !== "" && <p className="note error-note">{problem}</p>}
           <div className="actions">

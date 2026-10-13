@@ -18,7 +18,7 @@ export function SplitPreviewView({ preview, loading }: { preview: SplitPreview |
         <strong>
           {preview.blocks.length} block{preview.blocks.length === 1 ? "" : "s"}
         </strong>{" "}
-        · about {average} tokens each (largest {largest}, at most {preview.maxTokens} allowed)
+        · about <span title="Estimates: one token per character, which is cautious.">{average} tokens</span> each (largest {largest}, at most {preview.maxTokens})
         {preview.limitingModel && (
           <>
             {" "}
@@ -27,11 +27,6 @@ export function SplitPreviewView({ preview, loading }: { preview: SplitPreview |
         )}
         {loading && <span className="muted"> · updating…</span>}
       </p>
-      <p className="muted">
-        Every model translates these same blocks, one block at a time. Token counts are cautious estimates: one token per character, which is more than most
-        models really use.
-      </p>
-
       {preview.problem && <p className="note error-note">{preview.problem}</p>}
       {preview.issues.map((m, i) => (
         <p className="note error-note" key={i} role="alert">
