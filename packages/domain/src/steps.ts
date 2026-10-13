@@ -259,8 +259,13 @@ export const attribute = (name: string, key: string, options: string[], context:
 export const relation = (name: string, key: string, other: string, context: string): Question =>
   choice("relation", "You read fiction closely and only report what the text says.", `According to this passage, does 「${name}」 have this relation to 「${other}」: "${key}"?\n\nPASSAGE:\n${context}`, ["Yes", "No, or not stated"], ", then | and a short quote from the passage that shows it");
 
-export const sameScene = (previous: string, passage: string): Question =>
-  choice("same-scene", "You follow the scenes of a story.", `Here is the scene so far, then the start of the next passage. Does the next passage continue the same scene (the same place and time)?\n\nSCENE SO FAR:\n${previous}\n\nNEXT PASSAGE:\n${passage.slice(0, 500)}`, ["Yes, it continues the scene", "No, a new scene starts"]);
+export const sameScene = (previous: string, previousEnd: string, passage: string): Question =>
+  choice(
+    "same-scene",
+    "You follow the scenes of a story.",
+    `Here is how the story stood before, then the start of the next passage. Does the next passage continue the same scene (the same place and time)?\n\n${previous.trim() ? `SCENE SO FAR:\n${previous}\n\n` : ""}${previousEnd.trim() ? `END OF THE PASSAGE BEFORE:\n${previousEnd.slice(-400)}\n\n` : ""}NEXT PASSAGE:\n${passage.slice(0, 500)}`,
+    ["Yes, it continues the scene", "No, a new scene starts"],
+  );
 
 /** Shortens scene descriptions, without adding anything to them. */
 export const condense = (title: string, scenes: readonly string[], maxWords: number, targetLanguage: string): Question => ({
@@ -271,11 +276,11 @@ export const condense = (title: string, scenes: readonly string[], maxWords: num
   maxTokens: Math.min(500, Math.round(maxWords * 2.5) + 40),
 });
 
-export const sceneText = (passage: string, present: string[], targetLanguage: string): Question => ({
+export const sceneText = (passage: string, present: string[], targetLanguage: string, names: { source: string; target: string }[] = [], strict = false): Question => ({
   id: "scene-text",
   kind: "text",
   system: `You describe scenes of a story in ${targetLanguage}. ${RULE}`,
-  user: `In one sentence of at most 25 words, written in ${targetLanguage}, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
+  user: `In one sentence of at most 25 words, written in ${targetLanguage}, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.${names.length > 0 ? `\n\nWrite names like this, not in the original script: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
   maxTokens: 80,
 });
 

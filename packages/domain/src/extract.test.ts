@@ -137,7 +137,7 @@ describe("reading a passage in layers", () => {
     const rejected = [entry("r", { source: "学園", target: "x", status: "rejected" })];
     const { asker, asked } = scripted((q) => (q.id === "list-names" ? "幽霊\n花子" : q.id === "classify" ? letter(q, "not a name") : null));
     const r = await extractBlock(base(asker, { rejected }));
-    expect(r.entries).toEqual([]);
+    expect(r.entries.filter((e) => e.kind === "term")).toEqual([]);
     const classified = new Set(asked.filter((q) => q.id === "classify").map((q) => aboutName(q)));
     expect([...classified]).toEqual(["花子"]); // 学園 was rejected, 幽霊 is not in the passage
   });
@@ -148,7 +148,7 @@ describe("checking what the model says", () => {
     // This model always picks the first option, whatever it says.
     const lazy = scripted((q) => (q.id === "classify" ? "A" : null));
     const r = await extractBlock(base(lazy.asker, { candidates: ["花子"], listNames: false }));
-    expect(r.entries).toEqual([]);
+    expect(r.entries.filter((e) => e.kind === "term")).toEqual([]);
     expect(r.disputed).toBe(1);
   });
 
@@ -166,8 +166,8 @@ describe("checking what the model says", () => {
     const unsupportedAll = scripted(sensible({ supported: (q) => letter(q, "No") }));
     const r = await extractBlock(base(unsupportedAll.asker));
     expect(r.entries.find((e) => e.source === "花子")!.hint).toBe("");
-    expect(r.entries.some((e) => e.kind === "scene")).toBe(false);
-    expect(r.unsupported).toBe(2); // the girl's description and the scene (the school had none)
+    expect(r.entries.find((e) => e.kind === "scene")!.text).toBe(""); // still a scene, but with no description
+    expect(r.unsupported).toBe(3); // the girl's description, and the scene description on both tries
   });
 
   it("asks for descriptions in the language of the translation, and throws away one that comes back in the language of the passage", async () => {
@@ -211,6 +211,41 @@ describe("scenes and stopping", () => {
     expect(fresh.entries[1]).toMatchObject({ text: "Later, in class.", scope: { block: 2 } });
     const confirmed = await run(true, [{ ...prev, status: "confirmed" as const }]);
     expect(confirmed.entries).toHaveLength(2); // a scene the user accepted is never extended
+  });
+
+  it("tries once more with the English names when the first scene description is in the wrong language", async () => {
+    let scenes = 0;
+    const { asker, asked } = scripted(sensible({ "scene-text": () => (++scenes === 1 ? "花子が学園の門で待っている。" : "Hanako waits at the school gate.") }));
+    const r = await extractBlock(base(asker));
+    const scene = r.entries.find((e) => e.kind === "scene")!;
+    expect(scene.text).toBe("Hanako waits at the school gate.");
+    const [first, second] = asked.filter((q) => q.id === "scene-text");
+    expect(first!.user).toContain("花子 = Hanako"); // the names of the people in the passage are given up front
+    expect(second!.user).toContain("could not be used");
+    expect(r.problems).toEqual([]);
+  });
+
+  it("still makes the scene, without a description, when it cannot be written, so the next block can continue it, and says so", async () => {
+    const { asker } = scripted(sensible({ "scene-text": () => "花子が待っている" }));
+    const r = await extractBlock(base(asker));
+    const scene = r.entries.find((e) => e.kind === "scene")!;
+    expect(scene).toMatchObject({ text: "", status: "suggested", scope: { block: 1, blockHashes: ["h1"] } });
+    expect(r.problems).toEqual(["Block 1: a description of the scene could not be written, so the scene has no description yet. You can write it yourself."]);
+    // The next block can continue that scene even though it has no description, because it is told how the passage before ended.
+    const next = scripted(sensible({ "same-scene": (q) => letter(q, "Yes") }));
+    const r2 = await extractBlock(base(next.asker, { entries: r.entries, passage: "それから二人は教室へ向かった。", previousPassage: PASSAGE, scope: { documentId: "d1", blockHash: "h2", block: 2 }, candidates: [], listNames: false }));
+    expect(r2.entries.filter((e) => e.kind === "scene")).toHaveLength(1);
+    expect(r2.entries.find((e) => e.kind === "scene")!.scope).toMatchObject({ block: 1, blockEnd: 2 });
+    expect(next.asked.find((q) => q.id === "same-scene")!.user).toContain("END OF THE PASSAGE BEFORE");
+    expect(next.asked.find((q) => q.id === "same-scene")!.user).toContain("彼女は笑った");
+  });
+
+  it("says when a name was left out because the model gave no usable English name, and when answers contradicted themselves", async () => {
+    const lazy = scripted((q) => (q.id === "classify" ? "A" : null));
+    const a = await extractBlock(base(lazy.asker, { candidates: ["花子"], listNames: false }));
+    expect(a.problems).toEqual(expect.arrayContaining([expect.stringMatching(/answer was not used in block 1/)]));
+    const noName = await extractBlock(base(scripted(sensible({ "english-name": () => "" })).asker, { candidates: ["花子"], listNames: false }));
+    expect(noName.problems).toEqual(expect.arrayContaining(["「花子」 was left out: the model did not give a usable English name for it."]));
   });
 
   it("stops as soon as asked to, and says so", async () => {

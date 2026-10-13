@@ -89,6 +89,7 @@ const schemas: Record<CommandName, z.ZodType> = {
     documentId: id,
     documentTitle: z.string().max(500),
     block: z.number().int().min(1).max(10_000_000),
+    previousPassage: z.string().max(60_000).optional(),
   }),
   "knowledge.summarize": z.object({
     backend: z.enum(["provider", "practice"]),

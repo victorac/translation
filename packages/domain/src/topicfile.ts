@@ -93,7 +93,7 @@ export function listFiles(ctx: FileContext): FileInfo[] {
     }
   }
   for (const s of ctx.entries.filter((e) => e.kind === "scene").sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))) {
-    out.push({ id: s.id, kind: "scene", group: "scene", groupLabel: "Scenes", title: `Block ${range(s)}`, subtitle: docTitle(ctx.docs, s.scope?.documentId), suggested: s.status === "suggested", ...(s.scope ? { documentId: s.scope.documentId } : {}) });
+    out.push({ id: s.id, kind: "scene", group: "scene", groupLabel: "Scenes", title: `Block ${range(s)}${s.text.trim() === "" ? " (no description)" : ""}`, subtitle: docTitle(ctx.docs, s.scope?.documentId), suggested: s.status === "suggested", ...(s.scope ? { documentId: s.scope.documentId } : {}) });
   }
   for (const s of ctx.entries.filter((e) => e.kind === "summary")) {
     out.push({ id: s.id, kind: "summary", group: "summary", groupLabel: "Summaries", title: docTitle(ctx.docs, s.scope?.documentId), subtitle: "summary", suggested: s.status === "suggested", ...(s.scope ? { documentId: s.scope.documentId } : {}) });

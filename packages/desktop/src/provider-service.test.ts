@@ -465,6 +465,22 @@ describe("suggested knowledge", () => {
     expect(scenes[0]!.scope?.blockHashes).toHaveLength(3);
   });
 
+  it("makes the scene even when its description cannot be written, shows it as needing one, and tells the user", async () => {
+    const lm = await fakeLmStudio({ answer: reader(girl, { sceneText: "花子が待っている" }) });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    const r = await service.analyze(ask({ documentId: docId, documentTitle: "Document 1", block: 1 }));
+    expect(r.notes).toEqual(["Block 1: a description of the scene could not be written, so the scene has no description yet. You can write it yourself."]);
+    expect(service.knowledgeFiles().files.find((f) => f.kind === "scene")).toMatchObject({ title: "Block 1 (no description)", suggested: true });
+    // The next block continues it, because the model is told how the passage before ended.
+    const lm2 = await fakeLmStudio({ answer: reader({}, { sameScene: true, sceneText: "x" }) });
+    provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
+    await service.analyze(ask({ documentId: docId, documentTitle: "Document 1", block: 2, passage: "それから二人は教室へ向かった。", previousPassage: PASSAGE }));
+    expect(service.knowledgeList({ kind: "scene" }).entries).toHaveLength(1);
+    expect(service.knowledgeList({ kind: "scene" }).entries[0]!.scope).toMatchObject({ block: 1, blockEnd: 2 });
+  });
+
   it("writes a summary of a document from its scenes, and keeps one the user confirmed", async () => {
     const lm = await fakeLmStudio({ answer: reader(girl) });
     const { provider, service } = setup();

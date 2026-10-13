@@ -41,6 +41,8 @@ export interface ExtractInput {
   classes: readonly ClassDef[];
   passage: string;
   scope: { documentId: string; blockHash: string; block: number };
+  /** The end of the passage before this one, which helps to tell whether a scene goes on. */
+  previousPassage?: string;
   origin: EntryOrigin;
   /** Names found without a model (by the word analyzer and by their form). */
   candidates: readonly string[];
@@ -56,6 +58,8 @@ export interface ExtractInput {
 }
 
 export interface ExtractResult {
+  /** Things that were left out or could not be done, in plain words, for the user. */
+  problems: string[];
   entries: KnowledgeEntry[];
   added: number;
   asked: number;
@@ -97,6 +101,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
   let stopped = false;
   let disputed = 0;
   let unsupported = 0;
+  const problems: string[] = [];
   const at = deps.now();
   const latin = !/japan|chinese|korean|mandarin|cantonese/i.test(input.targetLanguage);
 
@@ -208,7 +213,10 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     const nameReply = await ask(englishName(c, category, context, input.targetLanguage));
     const target = nameReply === null ? null : parseShortText(nameReply, 60, true);
     // An English name with Japanese characters in it is not a translation.
-    if (!target || (latin && CJK.test(target))) continue;
+    if (!target || (latin && CJK.test(target))) {
+      problems.push(`「${c}」 was left out: the model did not give a usable ${input.targetLanguage} name for it.`);
+      continue;
+    }
     const descReply = await ask(describe(c, context, input.targetLanguage));
     let summary = descReply === null ? "" : (parseShortText(descReply, 200) ?? "");
     // A description in the language of the passage, not the language of the translation, is not kept.
@@ -292,7 +300,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     if (!here) {
       let continues = false;
       if (before && before.status === "suggested") {
-        const same = await pick(sameScene(before.text, passage));
+        const same = await pick(sameScene(before.text, input.previousPassage ?? "", passage));
         continues = same === 0;
       }
       if (continues && before) {
@@ -302,9 +310,24 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
         });
         added++;
       } else if (!stopped) {
-        const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage));
-        const text = reply === null ? null : parseShortText(reply, 300);
-        if (text && !(latin && CJK.test(text)) && (await isSupported(text, "this scene", passage.slice(0, 1500)))) {
+        // The names of everyone in the passage, so that the description does not fall back on the original script.
+        const names = terms()
+          .filter((t) => mentioned.has(t.id))
+          .map((t) => ({ source: t.source, target: t.target }));
+        const describeScene = async (strict: boolean): Promise<string | null> => {
+          const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage, names, strict));
+          const text = reply === null ? null : parseShortText(reply, 300);
+          if (!text) return null;
+          if (latin && CJK.test(text)) {
+            unsupported++;
+            return null;
+          }
+          return (await isSupported(text, "this scene", passage.slice(0, 1500))) ? text : null;
+        };
+        let text = await describeScene(false);
+        if (!text && !stop()) text = await describeScene(true);
+        if (!stopped) {
+          if (!text) problems.push(`Block ${scope.block}: a description of the scene could not be written, so the scene has no description yet. You can write it yourself.`);
           entries.push({
             id: deps.newId(),
             kind: "scene",
@@ -315,7 +338,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
             aliases: [],
             attrs: {},
             attrFlags: [],
-            text,
+            text: text ?? "",
             about: null,
             related: present.map((p) => p.id),
             scope: { documentId: scope.documentId, blockHashes: [scope.blockHash], block: scope.block },
@@ -328,5 +351,6 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       }
     }
   }
-  return { entries, added, asked, stopped, disputed, unsupported };
+  if (disputed > 0) problems.push(`${disputed} ${disputed === 1 ? "answer was" : "answers were"} not used in block ${scope.block}: the model answered differently when the options were in another order.`);
+  return { entries, added, asked, stopped, disputed, unsupported, problems };
 }

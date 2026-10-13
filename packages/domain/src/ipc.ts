@@ -76,6 +76,8 @@ export interface AnalyzeInput {
   documentTitle: string;
   /** Number of the block (starting at 1). */
   block: number;
+  /** The passage before this one, if any: its end helps tell whether a scene goes on. */
+  previousPassage?: string | undefined;
 }
 
 /** Ask a model which of the project's names, hints and notes matter for one block. */
@@ -122,6 +124,8 @@ export interface AnalyzeResult {
   added: number;
   /** True when the user stopped it; nothing was added in that case. */
   canceled: boolean;
+  /** Things that were left out or could not be done, in plain words. */
+  notes: string[];
 }
 
 /** The files of the knowledge base, for the file list. */

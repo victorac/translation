@@ -1343,6 +1343,7 @@ export class WorkspaceService {
         classes: parseClasses(this.classesText).classes,
         passage: input.passage,
         scope: { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block },
+        ...(input.previousPassage ? { previousPassage: input.previousPassage } : {}),
         origin,
         candidates,
         sourceLanguage: input.sourceLanguage,
@@ -1351,12 +1352,12 @@ export class WorkspaceService {
         deps: { newId, now: () => new Date().toISOString() },
         shouldStop: () => abort.signal.aborted,
       });
-      if (abort.signal.aborted) return { added: 0, canceled: true };
+      if (abort.signal.aborted) return { added: 0, canceled: true, notes: [] };
       if (JSON.stringify(result.entries) !== JSON.stringify(this.knowledge.all())) {
         this.knowledge.replaceLive(result.entries);
         this.knowledgeChanged();
       }
-      return { added: result.added, canceled: false };
+      return { added: result.added, canceled: false, notes: result.problems };
     } finally {
       this.analysisAbort = null;
     }

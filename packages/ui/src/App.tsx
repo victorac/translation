@@ -132,6 +132,7 @@ export function App() {
     stopWork.current = false;
     setWorkNote(null);
     let added = 0;
+    const left: string[] = [];
     // Reading again starts from what you accepted: suggestions nobody checked are dropped, and what you rejected stays rejected.
     const begin = await api.invoke("knowledge.beginExtraction", { documentId: snap?.activeDocumentId ?? "" });
     const discarded = begin.ok ? begin.value.discarded : 0;
@@ -149,10 +150,12 @@ export function App() {
           documentId: snap?.activeDocumentId ?? "",
           documentTitle: activeTitle,
           block: i + 1,
+          ...(i > 0 ? { previousPassage: blockTexts[i - 1]! } : {}),
         });
         if (stopWork.current || (r.ok && r.value.canceled)) break;
         if (!r.ok) return setWorkNote(r.error.message);
         added += r.value.added;
+        left.push(...r.value.notes);
       }
       if (stopWork.current) return setWorkNote(`Stopped. ${added} ${added === 1 ? "suggestion was" : "suggestions were"} added so far.`);
       setWork({ what: "summarize", at: 0, of: 0 });
@@ -170,7 +173,7 @@ export function App() {
       // A last look over everything for names that clash and links that lead nowhere.
       const checked = await api.invoke("knowledge.check");
       const flagged = checked.ok ? checked.value.found : 0;
-      setWorkNote(`${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?.${flagged > 0 ? ` ${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:".` : ""} Accept what is right, fix or delete the rest, and read again if you like.`);
+      setWorkNote(`${left.length > 0 ? `Left out or incomplete: ${left.slice(0, 4).join(" ")}${left.length > 4 ? ` …and ${left.length - 4} more.` : ""} ` : ""}${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?.${flagged > 0 ? ` ${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:".` : ""} Accept what is right, fix or delete the rest, and read again if you like.`);
     } finally {
       setWork(null);
     }
