@@ -157,6 +157,14 @@ label.check { flex-direction: row; align-items: flex-start; gap: 0.4rem; color: 
 .grid.dimmed .out { opacity: 0.5; }
 .gh { position: sticky; top: 0; z-index: 4; background: var(--panel); border-bottom: 1px solid var(--border-strong); border-left: 1px solid var(--border); padding: 0.35rem 0.75rem; display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
 .gh.source-head { border-left: none; align-items: center; }
+.gh { position: sticky; }
+.resize-handle { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; touch-action: none; }
+.resize-handle:hover, .resize-handle:focus-visible, .resize-handle:active { background: var(--accent); opacity: 0.45; outline: none; }
+.model-head { cursor: grab; }
+.model-head.dragging { opacity: 0.45; }
+.model-head.drop-target { box-shadow: inset 3px 0 0 var(--accent); }
+.head-close { margin-left: auto; opacity: 0; }
+.model-head:hover .head-close, .model-head:focus-within .head-close { opacity: 1; }
 .gh-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .source-head .segmented { margin-left: auto; }
 .cell { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); position: relative; min-width: 0; height: 100%; }
@@ -265,3 +273,5 @@ details > summary { cursor: pointer; }
 .cm-panels input, .cm-panels button { font-size: 0.85rem; }
 .cm-panels button { background: var(--panel); color: var(--text); background-image: none; }
 .cm-searchMatch { background: color-mix(in srgb, var(--focus) 35%, transparent); }
+
+.rail-reset { margin-left: auto; margin-right: 0.35rem; white-space: nowrap; }

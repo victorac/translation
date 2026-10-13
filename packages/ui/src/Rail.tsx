@@ -32,6 +32,7 @@ export function Rail({
   provider,
   onSettings,
   docs,
+  onResetLayout,
 }: {
   snap: WorkspaceSnapshot | null;
   setup: SetupState;
@@ -44,6 +45,8 @@ export function Rail({
   onRunAgain: (label: string) => void;
   provider: ReturnType<typeof useProvider>;
   onSettings: () => void;
+  /** Set only when the columns were moved or resized; puts them back. */
+  onResetLayout?: (() => void) | undefined;
   docs: {
     onSelect: (id: string) => void;
     onCreate: () => void;
@@ -83,6 +86,11 @@ export function Rail({
       )}
       <div className="rail-head">
         <span className="rail-title">Models</span>
+        {onResetLayout && (
+          <button className="small rail-reset" onClick={onResetLayout} title="Put the columns back in their default order and widths">
+            Reset layout
+          </button>
+        )}
         <Popover
           label="Add a model"
           className="wide"

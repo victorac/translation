@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeGlossary, normalizeSource } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
 import { Grid, type SourceMode } from "./Grid";
+import { useColumnLayout } from "./useColumnLayout";
+import { isCustom } from "./layout";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar } from "./Toolbar";
@@ -20,6 +22,7 @@ export function App() {
   const [tab, setTab] = useState<SettingsTab | null>(null);
   const [mode, setMode] = useState<SourceMode | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const columns = useColumnLayout();
   const [trayOpen, setTrayOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -257,6 +260,7 @@ export function App() {
               return next;
             })
           }
+          onResetLayout={isCustom(columns.layout) ? columns.reset : undefined}
           discovered={discovered}
           viewingLatest={viewingLatest}
           onRunAgain={(label) => void run([label])}
@@ -304,6 +308,9 @@ export function App() {
               mode={effectiveMode}
               onMode={setMode}
               runs={visibleRuns}
+              layout={columns.layout}
+              onLayout={columns.setLayout}
+              onHide={(label) => setHidden((h) => new Set(h).add(label))}
               send={send}
               edited={edited && viewingLatest}
               readOnlyOld={!viewingLatest}
