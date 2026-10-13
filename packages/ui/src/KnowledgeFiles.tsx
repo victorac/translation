@@ -236,6 +236,11 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
                 ))}
               </div>
             )}
+            {byId.get(active)?.suggested && (
+              <button className="small primary" onClick={() => void api.invoke("knowledge.confirm", { ids: [active] })} title="Accept what a model suggested in this file: the topic, its attributes and its notes">
+                Accept this file
+              </button>
+            )}
             {deletable && (
               <button
                 className="small"

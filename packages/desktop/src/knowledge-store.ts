@@ -118,7 +118,7 @@ export class KnowledgeStore {
       notes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'note' AND " + live),
       scenes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'scene' AND " + live),
       summaries: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'summary' AND " + live),
-      suggested: n("SELECT COUNT(*) AS n FROM entries WHERE status = 'suggested'"),
+      suggested: n("SELECT COUNT(*) AS n FROM entries WHERE status = 'suggested' OR (status = 'confirmed' AND kind = 'term' AND attr_flags != '[]')"),
     };
   }
 
@@ -177,12 +177,22 @@ export class KnowledgeStore {
     return n;
   }
 
-  /** Marks entries as looked at. With no ids, every suggested entry is confirmed. */
+  /**
+   * Accepts entries. Accepting a topic accepts its attributes and the facts about it too. With no ids, everything a
+   * model suggested is accepted.
+   */
   confirm(ids?: readonly string[]): number {
     const now = this.deps.now();
+    const all = this.all();
+    const target = ids ? new Set(ids) : new Set(all.map((e) => e.id));
+    for (const e of all) if (e.kind === "note" && e.about && target.has(e.about)) target.add(e.id);
     let n = 0;
-    if (!ids) n = Number(this.db.prepare("UPDATE entries SET status = 'confirmed', updated_at = ? WHERE status = 'suggested'").run(now).changes);
-    else for (const id of ids) n += Number(this.db.prepare("UPDATE entries SET status = 'confirmed', updated_at = ? WHERE id = ? AND status = 'suggested'").run(now, id).changes);
+    for (const id of target) {
+      const e = all.find((x) => x.id === id);
+      if (!e || (e.status !== "suggested" && e.attrFlags.length === 0)) continue;
+      this.db.prepare("UPDATE entries SET status = 'confirmed', attr_flags = '[]', updated_at = ? WHERE id = ?").run(now, id);
+      n++;
+    }
     if (n > 0) this.rev++;
     return n;
   }

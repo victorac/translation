@@ -628,3 +628,27 @@ describe("checking the knowledge base", () => {
     expect(service.knowledgeFile(b).text).not.toContain("Check:");
   });
 });
+
+describe("accepting suggestions", () => {
+  it("accepts a topic together with its suggested attributes and facts, and the notes file accepts the loose notes", () => {
+    const service = new WorkspaceService({ speedMs: 0 });
+    const id = service.knowledgeCreate("character", "花子").id;
+    const text = service.knowledgeFile(id).text.replace("english: 花子", "english: Hanako").replace("gender:", "gender: female ?").replace("## Notes\n", "## Notes\n- Is polite. ?\n");
+    service.knowledgeSetFile(id, text);
+    service.knowledgeSetFile("notes", "# Notes\n\n- Keep honorifics. ?\n");
+    const before = service.knowledgeFiles().files;
+    expect(before.find((f) => f.id === id)!.suggested).toBe(true); // an attribute and a fact are still unchecked
+    expect(before.find((f) => f.id === "notes")!.suggested).toBe(true);
+    expect(service.snapshot().knowledge.suggested).toBeGreaterThan(0);
+
+    service.knowledgeConfirm([id]);
+    service.knowledgeConfirm(["notes"]);
+    const after = service.knowledgeFiles().files;
+    expect(after.find((f) => f.id === id)!.suggested).toBe(false);
+    expect(after.find((f) => f.id === "notes")!.suggested).toBe(false);
+    expect(service.knowledgeFile(id).text).toContain("gender: female\n");
+    expect(service.knowledgeFile(id).text).toContain("- Is polite.\n");
+    expect(service.snapshot().knowledge.suggested).toBe(0);
+  });
+});
+

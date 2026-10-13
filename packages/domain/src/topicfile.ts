@@ -87,7 +87,8 @@ export function listFiles(ctx: FileContext): FileInfo[] {
   const order = [...ctx.classes.map((c) => c.name), ...topics.map((t) => t.category).filter((c) => !ctx.classes.some((k) => k.name === c))];
   for (const group of [...new Set(order)]) {
     for (const t of topics.filter((x) => x.category === group)) {
-      out.push({ id: t.id, kind: "topic", group, groupLabel: classLabel(group), title: nameOf(t), subtitle: t.target, suggested: t.status === "suggested" });
+      const unchecked = t.status === "suggested" || t.attrFlags.length > 0 || ctx.entries.some((n) => n.kind === "note" && n.about === t.id && n.status === "suggested");
+      out.push({ id: t.id, kind: "topic", group, groupLabel: classLabel(group), title: nameOf(t), subtitle: t.target, suggested: unchecked });
     }
   }
   for (const s of ctx.entries.filter((e) => e.kind === "scene").sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))) {

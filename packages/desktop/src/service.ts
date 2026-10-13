@@ -1180,7 +1180,13 @@ export class WorkspaceService {
   }
 
   knowledgeConfirm(ids?: string[]): { confirmed: number } {
-    const confirmed = this.knowledge.confirm(ids);
+    // The notes file stands for every note that is not about a topic.
+    const loose = (() => {
+      const topicIds = new Set(this.knowledge.all().filter((e) => e.kind === "term").map((e) => e.id));
+      return this.knowledge.all().filter((e) => e.kind === "note" && (e.about === null || !topicIds.has(e.about))).map((e) => e.id);
+    })();
+    const expanded = ids?.flatMap((id) => (id === "notes" ? loose : [id]));
+    const confirmed = this.knowledge.confirm(expanded);
     if (confirmed > 0) this.knowledgeChanged();
     return { confirmed };
   }
