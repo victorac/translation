@@ -262,6 +262,15 @@ export const relation = (name: string, key: string, other: string, context: stri
 export const sameScene = (previous: string, passage: string): Question =>
   choice("same-scene", "You follow the scenes of a story.", `Here is the scene so far, then the start of the next passage. Does the next passage continue the same scene (the same place and time)?\n\nSCENE SO FAR:\n${previous}\n\nNEXT PASSAGE:\n${passage.slice(0, 500)}`, ["Yes, it continues the scene", "No, a new scene starts"]);
 
+/** Shortens scene descriptions, without adding anything to them. */
+export const condense = (title: string, scenes: readonly string[], maxWords: number, targetLanguage: string): Question => ({
+  id: "condense",
+  kind: "text",
+  system: `You shorten scene descriptions of a chapter into one summary written in ${targetLanguage}. Use only what the descriptions say. Do not add any detail, name, reason or ending that is not in them. ${RULE}`,
+  user: `Shorten these scene descriptions of the chapter 「${title}」 into one summary of at most ${maxWords} words, keeping every event. Reply with the summary only.\n\nSCENES:\n${scenes.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
+  maxTokens: Math.min(500, Math.round(maxWords * 2.5) + 40),
+});
+
 export const sceneText = (passage: string, present: string[], targetLanguage: string): Question => ({
   id: "scene-text",
   kind: "text",

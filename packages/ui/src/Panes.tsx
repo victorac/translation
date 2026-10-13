@@ -37,6 +37,7 @@ interface Props {
   onCloseKnowledge: () => void;
   knowledgeRev: number;
   knowledgeCounts: { terms: number; notes: number; suggested: number };
+  onRewriteSummary?: ((documentId: string) => void) | undefined;
 }
 
 /** Source and translations as panes that can be resized, dragged next to or above each other, and closed. */
@@ -238,7 +239,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgeFiles rev={p.knowledgeRev} counts={p.knowledgeCounts} />
+          <KnowledgeFiles rev={p.knowledgeRev} counts={p.knowledgeCounts} onRewriteSummary={p.onRewriteSummary} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />

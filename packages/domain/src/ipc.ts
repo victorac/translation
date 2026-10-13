@@ -107,6 +107,8 @@ export interface SummarizeInput {
   targetLanguage: string;
   documentId: string;
   documentTitle: string;
+  /** Replace a summary the user accepted too. */
+  rewrite?: boolean | undefined;
 }
 
 export interface SummarizeResult {

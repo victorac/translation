@@ -14,3 +14,4 @@ export * from "./topicfile.js";
 export * from "./steps.js";
 export * from "./extract.js";
 export * from "./check.js";
+export * from "./summary.js";

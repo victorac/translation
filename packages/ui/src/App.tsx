@@ -176,6 +176,31 @@ export function App() {
     }
   };
 
+  /** Writes the summary of a document again from its scenes, replacing the one there (even one the user accepted). */
+  const rewriteSummary = async (documentId: string) => {
+    const s = setupRef.current;
+    if (!researcher || work || busy) return;
+    const title = snap?.documents.find((d) => d.id === documentId)?.title ?? activeTitle;
+    setWorkNote(null);
+    setWork({ what: "summarize", at: 0, of: 0 });
+    try {
+      const r = await api.invoke("knowledge.summarize", {
+        backend: s.backend,
+        modelId: researcher.name,
+        contextLimit: researcher.contextLimit,
+        maxOutputTokens: researcher.maxOutputTokens,
+        sourceLanguage: s.sourceLanguage,
+        targetLanguage: s.targetLanguage,
+        documentId,
+        documentTitle: title,
+        rewrite: true,
+      });
+      setWorkNote(!r.ok ? r.error.message : r.value.canceled ? "Stopped." : r.value.updated ? "The summary was written again from the scenes. Please check it." : "There are no scenes to write a summary from. Extract knowledge first.");
+    } finally {
+      setWork(null);
+    }
+  };
+
   /** Before translating, the researcher chooses what matters for each block. Returns false if the user stopped it. */
   const prepare = async (): Promise<boolean> => {
     const s = setupRef.current;
@@ -448,6 +473,7 @@ export function App() {
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
                 knowledgeRev={snap.knowledge.rev}
                 knowledgeCounts={snap.knowledge}
+                onRewriteSummary={researcher && !work && !busy ? (id) => void rewriteSummary(id) : undefined}
               />
             ) : (
             <Grid

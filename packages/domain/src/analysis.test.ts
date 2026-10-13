@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSummary, summaryUserMessage } from "./analysis.js";
+import { mergeSummary } from "./analysis.js";
 
 describe("summaries and requests", () => {
   let n = 0;
@@ -17,7 +17,11 @@ describe("summaries and requests", () => {
     expect(kept.entries[0]!.text).toBe("Summary two.");
   });
 
-  it("builds the request as plain text", () => {
-    expect(summaryUserMessage("Chapter 1", ["A.", "B."])).toBe("CHAPTER: Chapter 1\n\nSCENES:\n1. A.\n2. B.");
+  it("replaces a summary the user accepted only when a rewrite is asked for", () => {
+    const mine = [{ ...mergeSummary([], "Mine.", { documentId: "d1" }, origin, deps).entries[0]!, status: "confirmed" as const }];
+    expect(mergeSummary(mine, "New.", { documentId: "d1" }, origin, deps).updated).toBe(false);
+    const rewritten = mergeSummary(mine, "New.", { documentId: "d1" }, origin, deps, true);
+    expect(rewritten.updated).toBe(true);
+    expect(rewritten.entries[0]).toMatchObject({ text: "New.", status: "suggested", origin });
   });
 });

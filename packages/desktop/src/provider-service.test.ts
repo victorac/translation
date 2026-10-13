@@ -48,7 +48,7 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           return;
         }
         const researching = j.messages[0]!.content.includes("prepare background for a translator");
-        const summarizing = j.messages[0]!.content.includes("abridged version of the chapter");
+        const summarizing = j.messages[0]!.content.includes("shorten scene descriptions");
         const reading = researching || summarizing || parseUserMessage(j.messages[1]!.content) === null;
         const source = reading ? "" : parseUserMessage(j.messages[1]!.content)!.sourceBlock;
         if (opts.failBlock && source.includes(opts.failBlock)) {
@@ -475,10 +475,16 @@ describe("suggested knowledge", () => {
     await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
     expect(await service.summarize(sum)).toEqual({ updated: true, canceled: false });
     const summary = service.knowledgeList({ kind: "summary" }).entries[0]!;
-    expect(summary).toMatchObject({ text: "A short summary of the chapter.", status: "suggested", scope: { documentId: docId } });
-    service.knowledgeSetFile(summary.id, service.knowledgeFile(summary.id).text.replace("status: suggested\n", "").replace("A short summary of the chapter.", "My own summary."));
+    // One short scene: the summary is the scene, as written. The model was not asked to write anything.
+    expect(summary).toMatchObject({ text: "A scene.", status: "suggested", scope: { documentId: docId } });
+    expect(bodies(lm).some((b) => b.messages[0]!.content.includes("shorten scene descriptions"))).toBe(false);
+    service.knowledgeSetFile(summary.id, service.knowledgeFile(summary.id).text.replace("status: suggested\n", "").replace("A scene.", "My own summary."));
     expect(await service.summarize(sum)).toEqual({ updated: false, canceled: false });
     expect(service.knowledgeList({ kind: "summary" }).entries[0]!.text).toBe("My own summary.");
+    // A rewrite replaces it, as a suggestion, from the scenes.
+    expect(await service.summarize({ ...sum, rewrite: true })).toEqual({ updated: true, canceled: false });
+    expect(service.knowledgeList({ kind: "summary" }).entries[0]).toMatchObject({ text: "A scene.", status: "suggested" });
+    expect(service.knowledgeFiles().files.find((f) => f.kind === "summary")).toMatchObject({ documentId: docId });
   });
 
   it("explains in plain words when a block cannot be read in the model's context, and does not run while translating", async () => {

@@ -99,6 +99,7 @@ const schemas: Record<CommandName, z.ZodType> = {
     targetLanguage: z.string().max(100),
     documentId: id,
     documentTitle: z.string().max(500),
+    rewrite: z.boolean().optional(),
   }),
   "research.block": z.object({
     backend: z.enum(["provider", "practice"]),

@@ -25,6 +25,9 @@ import {
   type Question,
 } from "./steps.js";
 
+/** Which of `count` options a reply chose, or null. */
+export const classifyReply = parseChoice;
+
 /** Something that can answer one question. It answers null when the user stopped, or when the model gave nothing. */
 export interface Asker {
   ask(q: Question): Promise<string | null>;

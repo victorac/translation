@@ -19,7 +19,7 @@ function loadTabs(): { open: string[]; active: string | null } {
  * The knowledge base as files: a list of topics (and scenes, summaries, notes and classes) you can search, open in tabs
  * and edit as text. Links between files can be followed, and each file shows what links to it.
  */
-export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: number; notes: number; suggested: number } }) {
+export function KnowledgeFiles({ rev, counts, onRewriteSummary }: { rev: number; counts: { terms: number; notes: number; suggested: number }; onRewriteSummary?: ((documentId: string) => void) | undefined }) {
   const [list, setList] = useState<FileList | null>(null);
   const [tabs, setTabs] = useState(loadTabs);
   const [query, setQuery] = useState("");
@@ -235,6 +235,19 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
                   </button>
                 ))}
               </div>
+            )}
+            {byId.get(active)?.kind === "summary" && byId.get(active)?.documentId && onRewriteSummary && (
+              <button
+                className="small"
+                onClick={() => {
+                  const f = byId.get(active)!;
+                  if (!f.suggested && !window.confirm("Replace your summary with a new one written from the scenes?")) return;
+                  onRewriteSummary(f.documentId!);
+                }}
+                title="Write the summary again from the scenes. If the scenes are short, it is just the scenes put together."
+              >
+                Rewrite summary
+              </button>
             )}
             {byId.get(active)?.suggested && (
               <button className="small primary" onClick={() => void api.invoke("knowledge.confirm", { ids: [active] })} title="Accept what a model suggested in this file: the topic, its attributes and its notes">

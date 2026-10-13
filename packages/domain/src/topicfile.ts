@@ -43,6 +43,8 @@ export interface FileInfo {
   title: string;
   subtitle: string;
   suggested: boolean;
+  /** For scenes and summaries: the document they belong to. */
+  documentId?: string;
 }
 
 export interface FileContext {
@@ -91,10 +93,10 @@ export function listFiles(ctx: FileContext): FileInfo[] {
     }
   }
   for (const s of ctx.entries.filter((e) => e.kind === "scene").sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))) {
-    out.push({ id: s.id, kind: "scene", group: "scene", groupLabel: "Scenes", title: `Block ${range(s)}`, subtitle: docTitle(ctx.docs, s.scope?.documentId), suggested: s.status === "suggested" });
+    out.push({ id: s.id, kind: "scene", group: "scene", groupLabel: "Scenes", title: `Block ${range(s)}`, subtitle: docTitle(ctx.docs, s.scope?.documentId), suggested: s.status === "suggested", ...(s.scope ? { documentId: s.scope.documentId } : {}) });
   }
   for (const s of ctx.entries.filter((e) => e.kind === "summary")) {
-    out.push({ id: s.id, kind: "summary", group: "summary", groupLabel: "Summaries", title: docTitle(ctx.docs, s.scope?.documentId), subtitle: "summary", suggested: s.status === "suggested" });
+    out.push({ id: s.id, kind: "summary", group: "summary", groupLabel: "Summaries", title: docTitle(ctx.docs, s.scope?.documentId), subtitle: "summary", suggested: s.status === "suggested", ...(s.scope ? { documentId: s.scope.documentId } : {}) });
   }
   out.push({ id: CLASSES_ID, kind: "classes", group: "classes", groupLabel: "Other", title: "Classes", subtitle: "kinds of topic and their attributes", suggested: false });
   return out;

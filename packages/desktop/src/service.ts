@@ -26,8 +26,8 @@ import {
   knowledgeCap,
   knowledgeReserve,
   mergeSummary,
-  summarySystemPrompt,
-  summaryUserMessage,
+  buildSummary,
+  SUMMARY_DIRECT_TOKENS,
   parseKnowledge,
   parseResearchReply,
   researchBatches,
@@ -1289,9 +1289,33 @@ export class WorkspaceService {
         return letter("No");
       case "scene-text":
         return "Practice mode: this scene description is an example.";
+      case "condense":
+        return "Practice mode: this summary is an example.";
       default:
         return "";
     }
+  }
+
+  /** Something that puts one narrow question to the chosen model (or the practice translator). */
+  private questionAsker(backend: Backend, modelId: string, abort: AbortController): Asker {
+    return {
+      ask: (q: Question) =>
+        this.askModel(
+          {
+            backend,
+            modelId,
+            maxOutputTokens: q.maxTokens,
+            temperature: 0,
+            allowEmpty: true,
+            messages: [
+              { role: "system", content: q.system },
+              { role: "user", content: q.user },
+            ],
+            practiceReply: () => this.practiceAnswer(q),
+          },
+          abort,
+        ),
+    };
   }
 
   /**
@@ -1311,26 +1335,7 @@ export class WorkspaceService {
         );
       }
       const candidates = await findCandidateNames(input.passage);
-      const asker: Asker = {
-        ask: async (q) => {
-          const reply = await this.askModel(
-            {
-              backend: input.backend,
-              modelId: input.modelId,
-              maxOutputTokens: q.maxTokens,
-              temperature: 0,
-              allowEmpty: true,
-              messages: [
-                { role: "system", content: q.system },
-                { role: "user", content: q.user },
-              ],
-              practiceReply: () => this.practiceAnswer(q),
-            },
-            abort,
-          );
-          return reply;
-        },
-      };
+      const asker = this.questionAsker(input.backend, input.modelId, abort);
       const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle, block: input.block };
       const result = await extractBlock({
         entries: this.knowledge.all(),
@@ -1357,7 +1362,10 @@ export class WorkspaceService {
     }
   }
 
-  /** Writes an abridged version of a document from the scene descriptions found in it (in several steps if there are many). */
+  /**
+   * Makes the summary of a document: its scene descriptions in order, shortened by the model only when they are too long,
+   * and checked against the scenes so it cannot add anything. A summary the user accepted is kept unless a rewrite is asked for.
+   */
   async summarize(input: SummarizeInput): Promise<SummarizeResult> {
     const abort = this.beginSideRequest();
     try {
@@ -1367,47 +1375,20 @@ export class WorkspaceService {
         .sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))
         .map((e) => e.text);
       const done = this.knowledge.all().find((e) => e.kind === "summary" && e.scope?.documentId === input.documentId && e.status === "confirmed");
-      if (scenes.length === 0 || done) return { updated: false, canceled: false };
-      const system = summarySystemPrompt(input.sourceLanguage, input.targetLanguage);
-      const reply = Math.min(input.maxOutputTokens, 400);
-      const room = input.contextLimit - estimateTokens(system) - reply - DEFAULTS.messageOverheadTokens - 60;
-      if (room < 120) throw new UserError("context_overflow", "The model's context is too small to write a summary. Raise the context size for this model.");
-      const ask = (title: string, parts: string[]) =>
-        this.askModel(
-          {
-            backend: input.backend,
-            modelId: input.modelId,
-            maxOutputTokens: reply,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: summaryUserMessage(title, parts) },
-            ],
-            practiceReply: () => `Practice mode: this summary is an example, built from ${parts.length} scene descriptions.`,
-          },
-          abort,
-        );
-      // Group the scenes so each group fits, summarize each group, then summarize the summaries.
-      let level = scenes;
-      for (let pass = 0; pass < 3; pass++) {
-        const groups: string[][] = [];
-        let used = 0;
-        for (const s of level) {
-          const cost = estimateTokens(s) + 6;
-          if (groups.length === 0 || used + cost > room) (groups.push([s]), (used = cost));
-          else (groups.at(-1)!.push(s), (used += cost));
-        }
-        const parts: string[] = [];
-        for (const g of groups) {
-          const r = await ask(input.documentTitle, g);
-          if (r === null) return { updated: false, canceled: true };
-          parts.push(r.trim());
-        }
-        level = parts;
-        if (groups.length === 1) break;
-      }
-      const text = level.join(" ").trim();
+      if (scenes.length === 0 || (done && !input.rewrite)) return { updated: false, canceled: false };
+      const room = input.contextLimit - 400 - Math.min(input.maxOutputTokens, 500) - DEFAULTS.messageOverheadTokens - 100;
+      if (room < 120 && estimateTokens(scenes.join(" ")) > SUMMARY_DIRECT_TOKENS) throw new UserError("context_overflow", "The model's context is too small to shorten the summary. Raise the context size for this model.");
+      const built = await buildSummary({
+        scenes,
+        title: input.documentTitle,
+        targetLanguage: input.targetLanguage,
+        asker: this.questionAsker(input.backend, input.modelId, abort),
+        room,
+        shouldStop: () => abort.signal.aborted,
+      });
+      if (built.canceled || abort.signal.aborted) return { updated: false, canceled: true };
       const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle };
-      const merged = mergeSummary(this.knowledge.all(), text, { documentId: input.documentId }, origin, { newId, now: () => new Date().toISOString() });
+      const merged = mergeSummary(this.knowledge.all(), built.text, { documentId: input.documentId }, origin, { newId, now: () => new Date().toISOString() }, input.rewrite === true);
       if (merged.updated) {
         this.knowledge.replaceLive(merged.entries);
         this.knowledgeChanged();
