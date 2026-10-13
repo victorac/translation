@@ -126,7 +126,7 @@ export class ProjectService {
       path: this.meta.path,
       dirty: this.isDirty(),
       lastSavedAt: this.meta.lastSavedAt,
-      recovery: p ? { updatedAt: p.file.project.updatedAt, blocks: p.file.source.blocks.length, models: p.file.runs.length } : null,
+      recovery: p ? { updatedAt: p.file.project.updatedAt, blocks: p.file.versions.at(-1)!.source.blocks.length, models: p.file.versions.at(-1)!.runs.filter((r) => !r.archived).length } : null,
       openProblem: this.openProblem ? { message: this.openProblem.message, canOpenBackup: this.openProblem.backupOf !== null } : null,
       notice: this.autosaveError ?? this.notice,
     };
@@ -243,7 +243,7 @@ export class ProjectService {
 
   private runExport(input: ExportInput) {
     if (!this.workspace.hasRevision) throw new UserError("nothing_to_export", "There is nothing to export yet.");
-    const state = this.workspace.exportState();
+    const state = this.workspace.exportViewed();
     return buildExport(state.revision, state.runs, {
       format: input.format,
       runIds: input.runIds,
@@ -301,8 +301,7 @@ export class ProjectService {
   }
 
   private load(file: ProjectFile, path: string | null): void {
-    const runs = file.runs.map((r) => settleLoadedRun(r));
-    this.workspace.restore(file, runs);
+    this.workspace.restore(file.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })));
     this.meta = { id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };
     this.changes = 1;
     this.savedChanges = 1;
@@ -312,27 +311,27 @@ export class ProjectService {
     this.notice = null;
     const used = file.providerLabel;
     const current = this.options.provider?.view().baseUrl;
-    if (file.backend === "provider" && used && current && used !== current) {
+    const runs = file.versions.flatMap((v) => v.runs);
+    if (runs.some((r) => r.providerRefId === "main") && used && current && used !== current) {
       this.notice = `This project was made with the server at ${used}. Retries will use your current server at ${current}.`;
     }
-    if (file.backend === "practice") this.notice = "This project used the practice translator.";
+    if (runs.length > 0 && runs.every((r) => r.providerRefId === "practice")) this.notice = "This project used the practice translator.";
   }
 
   private buildFile(): ProjectFile {
-    const state = this.workspace.exportState();
+    const versions = this.workspace.exportAll();
     const now = this.now().toISOString();
     this.meta.id ??= this.newId();
     this.meta.createdAt ??= now;
+    const usesServer = versions.some((v) => v.runs.some((r) => r.providerRefId === "main"));
     return buildProjectFile({
       id: this.meta.id,
       title: this.view().title,
       createdAt: this.meta.createdAt,
       updatedAt: now,
       version: this.changes,
-      backend: state.backend,
-      ...(state.backend === "provider" && this.options.provider ? { providerLabel: this.options.provider.view().baseUrl } : {}),
-      source: state.revision,
-      runs: state.runs,
+      ...(usesServer && this.options.provider ? { providerLabel: this.options.provider.view().baseUrl } : {}),
+      versions,
     });
   }
 

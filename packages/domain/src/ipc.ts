@@ -72,6 +72,8 @@ export interface StartJobInput {
   prompts: PromptPreset[];
   /** How big each block should be. The models' own limits can make blocks smaller. */
   blockSize: BlockSize;
+  /** Names of existing model runs to replace with a fresh run using the current settings. */
+  rerun: string[];
   demo: DemoOptions;
 }
 
@@ -136,6 +138,9 @@ export interface CommandMap {
   "run.retryUnfinished": { runId: string };
   "run.retranslateDownstream": { runId: string };
   "run.resolveWaiting": { runId: string; resolution: "retry" | "skip" };
+  "run.archive": { runId: string };
+  "run.restore": { runId: string };
+  "version.view": { versionId: string };
   "demo.loadModel": undefined;
   "project.save": { saveAs: boolean };
   "project.open": { useBackup: boolean };
@@ -175,6 +180,9 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "run.retryUnfinished",
   "run.retranslateDownstream",
   "run.resolveWaiting",
+  "run.archive",
+  "run.restore",
+  "version.view",
   "demo.loadModel",
   "project.save",
   "project.open",
@@ -232,7 +240,10 @@ export interface BlockCellView {
 
 export interface RunView {
   id: string;
+  versionId: string;
   label: string;
+  /** The settings the run was made with, so the window can show and edit them. */
+  settings: { modelId: string; contextLimit: number; maxOutputTokens: number; temperature: number; promptId: string; useGlossary: boolean };
   /** The translation style this model used. */
   promptName: string;
   state: RunState;
@@ -247,9 +258,28 @@ export interface BlockView {
   boundaryKind: BoundaryKind;
 }
 
+export interface VersionView {
+  id: string;
+  /** 1 for the first text, 2 for the next, and so on. */
+  number: number;
+  blocks: number;
+  models: number;
+  createdAt: string;
+}
+
 export interface WorkspaceSnapshot {
-  revision: { id: string; sourceLanguage: string; targetLanguage: string; blocks: BlockView[] } | null;
+  /** The version being looked at (the newest unless the user picked an older one). */
+  revision: { id: string; sourceLanguage: string; targetLanguage: string; blocks: BlockView[]; text: string } | null;
+  /** Every version of the text, oldest first. */
+  versions: VersionView[];
+  /** The text of the newest version (which may differ from the one being viewed). */
+  latestText: string | null;
+  viewingId: string | null;
+  latestId: string | null;
+  /** Model runs of the version being looked at (not the ones the user removed). */
   runs: RunView[];
+  /** Model runs the user removed from this version, which can be brought back. */
+  archived: { runId: string; label: string }[];
   job: { id: string; state: string; stopReason?: string } | null;
   /** Which translator the current workspace uses. */
   backend: Backend | null;

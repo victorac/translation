@@ -3,3 +3,4 @@ export * from "./prompts.js";
 export * from "./glossary.js";
 export * from "./split.js";
 export { BLOCK_SIZES, type BlockSize } from "./defaults.js";
+export { normalizeSource } from "./normalize.js";

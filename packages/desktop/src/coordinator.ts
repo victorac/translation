@@ -57,8 +57,8 @@ export interface CoordinatorDeps {
    * the disk is full), the job stops instead of translating more work it cannot save.
    */
   checkpoint?: () => Promise<void>;
-  /** Quality checks on finished text: everything (default), glossary terms only, or none. */
-  checks?: "all" | "terms" | "none";
+  /** Quality checks on finished text: everything (default), glossary terms only, or none. Can depend on the run. */
+  checks?: "all" | "terms" | "none" | ((run: ModelRun) => "all" | "terms" | "none");
 }
 
 export type JobState = "queued" | "running" | "waiting" | "completed" | "completed_with_issues" | "canceled" | "interrupted";
@@ -218,6 +218,19 @@ export class Coordinator {
     this.revision(run.revisionId);
     this.runs.set(run.id, structuredClone(run));
     this.runtime.set(run.id, { cancelRequested: false, skipRequested: false });
+  }
+
+  /** Hides a model run from view, cancelling any work it still has queued. Its results are kept. */
+  archiveRun(runId: string): void {
+    const run = this.run(runId);
+    this.cancel({ kind: "run", runId });
+    run.archived = true;
+    this.emit({ type: "stateChanged", runId, payload: { archived: true } });
+  }
+
+  unarchiveRun(runId: string): void {
+    this.run(runId).archived = false;
+    this.emit({ type: "stateChanged", runId, payload: { archived: false } });
   }
 
   /** A copy, safe to read or compare in tests and UI code. */
@@ -660,7 +673,8 @@ export class Coordinator {
    * untranslated text. They only flag the block for review (with reasons); the user can accept it.
    */
   private runChecks(run: ModelRun, revision: SourceRevision, index: number, attempt: Attempt): void {
-    const mode = this.deps.checks ?? "all";
+    const configured = this.deps.checks ?? "all";
+    const mode = typeof configured === "function" ? configured(run) : configured;
     if (mode === "none") return;
     const notes = checkTranslation({
       source: blockText(revision, revision.blocks[index]!),

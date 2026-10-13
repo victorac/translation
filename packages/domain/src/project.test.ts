@@ -39,10 +39,8 @@ const makeFile = (): ProjectFile =>
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-02T00:00:00Z",
       version: 3,
-      backend: "provider",
       providerLabel: "http://localhost:1234/v1",
-      source: revision,
-      runs: [makeRun()],
+      versions: [{ source: revision, backend: "provider", runs: [makeRun()] }],
     }),
   );
 
@@ -55,7 +53,7 @@ const errorOf = (f: unknown) => {
 describe("project file", () => {
   it("round-trips exactly, including Unicode, edits and glossary", () => {
     const f = makeFile();
-    f.runs[0]!.outputs[revision.blocks[0]!.id]!.versions.push({
+    f.versions[0]!.runs[0]!.outputs[revision.blocks[0]!.id]!.versions.push({
       id: "vm",
       blockId: revision.blocks[0]!.id,
       kind: "manual",
@@ -63,7 +61,7 @@ describe("project file", () => {
       createdAt: "2026-01-03T00:00:00Z",
       baseVersionId: "v0",
     });
-    f.runs[0]!.outputs[revision.blocks[0]!.id]!.currentVersionId = "vm";
+    f.versions[0]!.runs[0]!.outputs[revision.blocks[0]!.id]!.currentVersionId = "vm";
     const r = load(f);
     expect(r.ok).toBe(true);
     expect(r.ok && r.file).toEqual(f);
@@ -72,7 +70,7 @@ describe("project file", () => {
   it("contains no secrets or paths, only the documented fields", () => {
     const text = serializeProject(makeFile());
     expect(text).not.toMatch(/apiKey|api_key|password|credential|Bearer/i);
-    expect(JSON.parse(text)).toMatchObject({ format: "ltw-project", schemaVersion: 1 });
+    expect(JSON.parse(text)).toMatchObject({ format: "ltw-project", schemaVersion: 2 });
   });
 
   it("rejects things that are not projects, with plain messages", () => {
@@ -80,19 +78,19 @@ describe("project file", () => {
     expect(errorOf({ hello: "world" })).toMatchObject({ code: "not_project" });
     expect(errorOf("[]")).toMatchObject({ code: "not_project" });
     expect(errorOf("null")).toMatchObject({ code: "not_project" });
-    const newer = { ...makeFile(), schemaVersion: 2 };
+    const newer = { ...makeFile(), schemaVersion: 3 };
     expect(errorOf(newer)).toMatchObject({ code: "newer_schema", message: expect.stringContaining("newer version") });
   });
 
   it("rejects wrong shapes with details", () => {
     const f = makeFile() as unknown as Record<string, unknown>;
-    delete f["source"];
+    delete (f["versions"] as { source?: unknown }[])[0]!.source;
     const e = errorOf(f)!;
     expect(e.code).toBe("invalid");
     expect(e.details.join(" ")).toContain("source");
-    expect(errorOf({ ...makeFile(), backend: "cloud" })?.code).toBe("invalid");
+    expect(errorOf({ ...makeFile(), versions: [{ ...makeFile().versions[0]!, backend: "cloud" }] })?.code).toBe("invalid");
     const badState = makeFile();
-    (badState.runs[0]!.outputs[revision.blocks[0]!.id] as { state: string }).state = "done!";
+    (badState.versions[0]!.runs[0]!.outputs[revision.blocks[0]!.id] as { state: string }).state = "done!";
     expect(errorOf(badState)?.code).toBe("invalid");
   });
 
@@ -102,17 +100,17 @@ describe("project file", () => {
       mutate(f);
       return errorOf(f);
     };
-    const out = (f: ProjectFile, i = 0) => f.runs[0]!.outputs[revision.blocks[i]!.id]!;
+    const out = (f: ProjectFile, i = 0) => f.versions[0]!.runs[0]!.outputs[revision.blocks[i]!.id]!;
 
     it("source text no longer matches its hash", () => {
-      expect(corrupt((f) => (f.source.exactText = f.source.exactText.replace("二", "2")))).toMatchObject({ code: "corrupt" });
+      expect(corrupt((f) => (f.versions[0]!.source.exactText = f.versions[0]!.source.exactText.replace("二", "2")))).toMatchObject({ code: "corrupt" });
     });
     it("a block's text no longer matches its hash", () => {
-      expect(corrupt((f) => (f.source.blocks[1]!.textHash = "0".repeat(64)))?.details.join(" ")).toMatch(/hash/);
+      expect(corrupt((f) => (f.versions[0]!.source.blocks[1]!.textHash = "0".repeat(64)))?.details.join(" ")).toMatch(/hash/);
     });
     it("a result slot is missing, extra, or points at another block", () => {
-      expect(corrupt((f) => delete f.runs[0]!.outputs[revision.blocks[2]!.id])?.message).toMatch(/one result slot per source block/);
-      expect(corrupt((f) => (f.runs[0]!.outputs["ghost"] = { ...pendingOutput(0), blockId: "ghost" }))?.code).toBe("corrupt");
+      expect(corrupt((f) => delete f.versions[0]!.runs[0]!.outputs[revision.blocks[2]!.id])?.message).toMatch(/one result slot per source block/);
+      expect(corrupt((f) => (f.versions[0]!.runs[0]!.outputs["ghost"] = { ...pendingOutput(0), blockId: "ghost" }))?.code).toBe("corrupt");
       expect(corrupt((f) => (out(f).blockId = "other"))?.code).toBe("corrupt");
     });
     it("references to missing versions or attempts", () => {
@@ -128,11 +126,11 @@ describe("project file", () => {
       expect(corrupt((f) => (out(f).attempts[0]!.sourceHash = "different"))?.message).toMatch(/different source text/);
     });
     it("a model that belongs to another source version", () => {
-      expect(corrupt((f) => (f.runs[0]!.revisionId = "other"))?.message).toMatch(/different source version/);
+      expect(corrupt((f) => (f.versions[0]!.runs[0]!.revisionId = "other"))?.message).toMatch(/different source version/);
     });
     it("reports the first problem in the message and keeps a list for diagnostics", () => {
       const e = corrupt((f) => {
-        f.source.blocks[0]!.textHash = "x";
+        f.versions[0]!.source.blocks[0]!.textHash = "x";
         out(f).currentVersionId = "nope";
       })!;
       expect(e.details.length).toBeGreaterThanOrEqual(2);
@@ -183,5 +181,56 @@ describe("settleLoadedRun", () => {
     run.outputs[revision.blocks[2]!.id] = doneOutput(2, "Three.");
     run.state = "completed";
     expect(settleLoadedRun(run).state).toBe("completed");
+  });
+});
+
+describe("versions and files from the first release", () => {
+  const v1Text = () => {
+    const f = makeFile();
+    const v = f.versions[0]!;
+    const { versions: _versions, ...rest } = f as unknown as Record<string, unknown>;
+    return JSON.stringify({ ...rest, schemaVersion: 1, backend: v.backend, source: v.source, runs: v.runs });
+  };
+
+  it("opens a file saved by the first release and turns it into one version", () => {
+    const r = parseProject(v1Text());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.file.schemaVersion).toBe(2);
+    expect(r.file.versions).toHaveLength(1);
+    expect(r.file.versions[0]!.runs[0]!.label).toBe("qwen");
+    expect(r.file.versions[0]!.source.exactText).toBe(revision.exactText);
+  });
+
+  it("still checks an old file thoroughly", () => {
+    const f = JSON.parse(v1Text());
+    f.source.exactText = f.source.exactText.replace("二", "2");
+    expect(parseProject(JSON.stringify(f))).toMatchObject({ ok: false, error: { code: "corrupt" } });
+    expect(parseProject(JSON.stringify({ ...f, source: undefined }))).toMatchObject({ ok: false, error: { code: "invalid" } });
+  });
+
+  it("holds several versions of the text, each with its own results", () => {
+    const second = createRevision({ text: "新しい本文です。", sourceLanguage: "Japanese", targetLanguage: "English", parentId: revision.id });
+    const f = makeFile();
+    f.versions.push({
+      source: second,
+      backend: "practice",
+      runs: [{ ...makeRun(), id: "run2", revisionId: second.id, outputs: Object.fromEntries(second.blocks.map((b) => [b.id, { blockId: b.id, state: "pending" as const, attempts: [], versions: [] }])) }],
+    });
+    const r = load(f);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.file.versions.map((v) => v.source.id)).toEqual([revision.id, second.id]);
+  });
+
+  it("rejects ids that are shared between versions", () => {
+    const f = makeFile();
+    f.versions.push(structuredClone(f.versions[0]!));
+    const e = errorOf(f)!;
+    expect(e.code).toBe("corrupt");
+    expect(e.details.join(" ")).toMatch(/used more than once/);
+  });
+
+  it("requires at least one version", () => {
+    expect(errorOf({ ...makeFile(), versions: [] })?.code).toBe("invalid");
   });
 });

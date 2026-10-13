@@ -88,6 +88,7 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   glossary: [],
   prompts: [],
   blockSize: "normal",
+  rerun: [],
   demo: { speed: "fast", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });

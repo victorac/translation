@@ -187,6 +187,10 @@ export class FakeProvider implements TranslationProvider {
     return this;
   }
 
+  isUnavailable(modelId: string): boolean {
+    return this.unavailable.has(modelId);
+  }
+
   setUnavailable(modelId: string, unavailable: boolean): void {
     if (unavailable) this.unavailable.add(modelId);
     else this.unavailable.delete(modelId);

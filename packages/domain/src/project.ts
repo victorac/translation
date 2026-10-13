@@ -9,20 +9,29 @@ import type { Attempt, BlockOutput, BlockState, ModelRun } from "./state.js";
  * results (including retries and edits) and the settings used. It never contains API keys.
  */
 export const PROJECT_FORMAT = "ltw-project";
-export const PROJECT_SCHEMA_VERSION = 1;
+export const PROJECT_SCHEMA_VERSION = 2;
 export const PROJECT_EXTENSION = ".ltw.json";
 /** Files larger than this are refused before reading (guards memory, not a normal case). */
 export const MAX_PROJECT_BYTES = 256 * 1024 * 1024;
+
+/** One version of the source text and everything translated from it. */
+export interface ProjectVersion {
+  source: SourceRevision;
+  backend: Backend;
+  /** Includes runs the user removed from view (archived), so nothing is lost. */
+  runs: ModelRun[];
+  /** When this version of the text was made. Missing in files from the first release. */
+  createdAt?: string;
+}
 
 export interface ProjectFile {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   project: { id: string; title: string; createdAt: string; updatedAt: string; version: number };
-  backend: Backend;
   /** Informational: the server address the project was made with. */
   providerLabel?: string;
-  source: SourceRevision;
-  runs: ModelRun[];
+  /** Oldest first. Editing the text and running again adds a version; older ones stay. */
+  versions: ProjectVersion[];
 }
 
 // ---- shape checks (what a file must look like before anything else is trusted) ----
@@ -118,14 +127,26 @@ const sourceSchema = z.object({
     .max(5000),
 });
 
+const projectHead = z.object({ id, title: z.string().max(500), createdAt: iso, updatedAt: iso, version: count });
+const versionSchema_ = z.object({ source: sourceSchema, backend: z.enum(["provider", "practice"]), runs: z.array(runSchema).max(24), createdAt: iso.optional() });
+
 const fileSchema = z.object({
   format: z.literal(PROJECT_FORMAT),
-  schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
-  project: z.object({ id, title: z.string().max(500), createdAt: iso, updatedAt: iso, version: count }),
+  schemaVersion: z.literal(2),
+  project: projectHead,
+  providerLabel: z.string().max(2000).optional(),
+  versions: z.array(versionSchema_).min(1).max(50),
+});
+
+/** Files written by the first release: one source text, no history. Converted on load. */
+const fileSchemaV1 = z.object({
+  format: z.literal(PROJECT_FORMAT),
+  schemaVersion: z.literal(1),
+  project: projectHead,
   backend: z.enum(["provider", "practice"]),
   providerLabel: z.string().max(2000).optional(),
   source: sourceSchema,
-  runs: z.array(runSchema).max(8),
+  runs: z.array(runSchema).max(24),
 });
 
 export type ProjectLoadErrorCode = "not_json" | "not_project" | "newer_schema" | "invalid" | "corrupt";
@@ -163,49 +184,67 @@ export function parseProject(text: string, hash: (t: string) => string = sha256H
   if (typeof head.schemaVersion === "number" && head.schemaVersion > PROJECT_SCHEMA_VERSION) {
     return fail("newer_schema", `This project was saved by a newer version of the app (file format ${head.schemaVersion}). Update the app to open it.`);
   }
-  const shape = fileSchema.safeParse(json);
-  if (!shape.success) {
-    return fail(
-      "invalid",
-      "This project file is missing information or has unexpected content, so it cannot be opened safely.",
-      shape.error.issues.slice(0, 8).map((i) => `${i.path.join(".") || "(file)"}: ${i.message}`),
-    );
+  const shapeIssues = (issues: { path: PropertyKey[]; message: string }[]) =>
+    issues.slice(0, 8).map((i) => `${i.path.map(String).join(".") || "(file)"}: ${i.message}`);
+  let file: ProjectFile;
+  if (head.schemaVersion === 1) {
+    const v1 = fileSchemaV1.safeParse(json);
+    if (!v1.success) return fail("invalid", "This project file is missing information or has unexpected content, so it cannot be opened safely.", shapeIssues(v1.error.issues));
+    const { source, runs, backend, project, providerLabel } = v1.data as unknown as {
+      source: SourceRevision;
+      runs: ModelRun[];
+      backend: Backend;
+      project: ProjectFile["project"];
+      providerLabel?: string;
+    };
+    file = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, project, ...(providerLabel !== undefined ? { providerLabel } : {}), versions: [{ source, backend, runs }] };
+  } else {
+    const shape = fileSchema.safeParse(json);
+    if (!shape.success) return fail("invalid", "This project file is missing information or has unexpected content, so it cannot be opened safely.", shapeIssues(shape.error.issues));
+    file = shape.data as unknown as ProjectFile;
   }
-  const file = shape.data as unknown as ProjectFile;
 
   const problems: string[] = [];
-  for (const p of verifyRevision(file.source, hash)) problems.push(p.message);
-  const blockIds = new Set(file.source.blocks.map((b) => b.id));
-  const runIds = new Set<string>();
-  for (const run of file.runs) {
-    const at = `Model "${run.label}"`;
-    if (runIds.has(run.id)) problems.push(`${at}: duplicate run id.`);
-    runIds.add(run.id);
-    if (run.revisionId !== file.source.id) problems.push(`${at} belongs to a different source version.`);
-    const outputIds = Object.keys(run.outputs);
-    if (outputIds.length !== blockIds.size || outputIds.some((k) => !blockIds.has(k))) {
-      problems.push(`${at} does not have exactly one result slot per source block.`);
-    }
-    for (const [key, out] of Object.entries(run.outputs)) {
-      if (out.blockId !== key) problems.push(`${at}: result slot ${key} points at another block.`);
-      const attemptIds = new Set(out.attempts.map((a) => a.id));
-      const versionIds = new Set(out.versions.map((v) => v.id));
-      if (attemptIds.size !== out.attempts.length) problems.push(`${at}: duplicate attempt ids.`);
-      if (versionIds.size !== out.versions.length) problems.push(`${at}: duplicate version ids.`);
-      out.attempts.forEach((a, i) => {
-        if (a.ordinal !== i + 1) problems.push(`${at}: attempts are out of order.`);
-      });
-      for (const v of out.versions) {
-        if (v.blockId !== key) problems.push(`${at}: a version belongs to another block.`);
-        if (v.attemptId !== undefined && !attemptIds.has(v.attemptId)) problems.push(`${at}: a version refers to a missing attempt.`);
-        if (v.baseVersionId !== undefined && !versionIds.has(v.baseVersionId)) problems.push(`${at}: a version refers to a missing earlier version.`);
+  const seenIds = new Set<string>();
+  const unique = (kind: string, ident: string) => {
+    if (seenIds.has(ident)) problems.push(`${kind} id ${ident} is used more than once.`);
+    seenIds.add(ident);
+  };
+  for (const version of file.versions) {
+    const source = version.source;
+    for (const p of verifyRevision(source, hash)) problems.push(p.message);
+    unique("Text version", source.id);
+    for (const b of source.blocks) unique("Block", b.id);
+    const blockIds = new Set(source.blocks.map((b) => b.id));
+    for (const run of version.runs) {
+      const at = `Model "${run.label}"`;
+      unique("Model run", run.id);
+      if (run.revisionId !== source.id) problems.push(`${at} belongs to a different source version.`);
+      const outputIds = Object.keys(run.outputs);
+      if (outputIds.length !== blockIds.size || outputIds.some((k) => !blockIds.has(k))) {
+        problems.push(`${at} does not have exactly one result slot per source block.`);
       }
-      if (out.currentVersionId !== undefined && !versionIds.has(out.currentVersionId)) problems.push(`${at}: the current text is missing.`);
-      if (out.candidate && (!versionIds.has(out.candidate.versionId) || !attemptIds.has(out.candidate.attemptId))) {
-        problems.push(`${at}: a pending new version is missing.`);
-      }
-      for (const a of out.attempts) {
-        if (a.sourceHash !== file.source.blocks.find((b) => b.id === key)?.textHash) problems.push(`${at}: an attempt was made for different source text.`);
+      for (const [key, out] of Object.entries(run.outputs)) {
+        if (out.blockId !== key) problems.push(`${at}: result slot ${key} points at another block.`);
+        const attemptIds = new Set(out.attempts.map((a) => a.id));
+        const versionIds = new Set(out.versions.map((v) => v.id));
+        if (attemptIds.size !== out.attempts.length) problems.push(`${at}: duplicate attempt ids.`);
+        if (versionIds.size !== out.versions.length) problems.push(`${at}: duplicate version ids.`);
+        out.attempts.forEach((a, i) => {
+          if (a.ordinal !== i + 1) problems.push(`${at}: attempts are out of order.`);
+        });
+        for (const v of out.versions) {
+          if (v.blockId !== key) problems.push(`${at}: a version belongs to another block.`);
+          if (v.attemptId !== undefined && !attemptIds.has(v.attemptId)) problems.push(`${at}: a version refers to a missing attempt.`);
+          if (v.baseVersionId !== undefined && !versionIds.has(v.baseVersionId)) problems.push(`${at}: a version refers to a missing earlier version.`);
+        }
+        if (out.currentVersionId !== undefined && !versionIds.has(out.currentVersionId)) problems.push(`${at}: the current text is missing.`);
+        if (out.candidate && (!versionIds.has(out.candidate.versionId) || !attemptIds.has(out.candidate.attemptId))) {
+          problems.push(`${at}: a pending new version is missing.`);
+        }
+        for (const a of out.attempts) {
+          if (a.sourceHash !== source.blocks.find((b) => b.id === key)?.textHash) problems.push(`${at}: an attempt was made for different source text.`);
+        }
       }
     }
   }
@@ -251,19 +290,15 @@ export function buildProjectFile(input: {
   createdAt: string;
   updatedAt: string;
   version: number;
-  backend: Backend;
   providerLabel?: string;
-  source: SourceRevision;
-  runs: ModelRun[];
+  versions: ProjectVersion[];
 }): ProjectFile {
   return {
     format: PROJECT_FORMAT,
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
-    backend: input.backend,
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
-    source: input.source,
-    runs: input.runs,
+    versions: input.versions,
   };
 }
 

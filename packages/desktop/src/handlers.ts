@@ -42,6 +42,7 @@ const startInput = z.object({
       .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
       .max(100),
     blockSize: z.enum(["small", "normal", "large"]),
+    rerun: z.array(z.string().max(500)).max(20),
     demo: z.object({
       speed: z.enum(["fast", "normal", "slow"]),
       smallBlocks: z.boolean(),
@@ -80,6 +81,9 @@ const schemas: Record<CommandName, z.ZodType> = {
   "run.retryUnfinished": run,
   "run.retranslateDownstream": run,
   "run.resolveWaiting": z.object({ runId: id, resolution: z.enum(["retry", "skip"]) }),
+  "run.archive": run,
+  "run.restore": run,
+  "version.view": z.object({ versionId: id }),
 };
 
 /**
@@ -116,6 +120,9 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "run.retryUnfinished": (p) => service.retryUnfinished(p.runId),
     "run.retranslateDownstream": (p) => service.retranslateDownstream(p.runId),
     "run.resolveWaiting": (p) => service.resolveWaiting(p.runId, p.resolution),
+    "run.archive": (p) => service.archiveRun(p.runId),
+    "run.restore": (p) => service.restoreArchivedRun(p.runId),
+    "version.view": (p) => service.viewVersion(p.versionId),
     "source.preview": (p) => service.previewSplit(p),
     "export.preview": (p) => needProject().exportPreview(p),
     "export.write": (p) => needProject().exportFile(p),

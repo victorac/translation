@@ -15,6 +15,7 @@ const input = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   glossary: [],
   prompts: [],
   blockSize: "normal",
+  rerun: [],
   demo,
   ...over,
 });
@@ -208,7 +209,7 @@ describe("glossary and prompt styles", () => {
     const s = new WorkspaceService({ speedMs: 0 });
     s.start(input({ models: [model("alpha", { promptId: "mine" })], prompts: [style], glossary: GLOSSARY }));
     await s.whenIdle();
-    const state = s.exportState();
+    const state = s.exportViewed();
     expect(state.runs[0]!.prompt).toEqual({ id: "mine", name: "My style", template: style.template, appendFraming: true });
     expect(state.runs[0]!.glossary).toEqual(GLOSSARY);
   });
@@ -291,5 +292,147 @@ describe("previewing how the text will be split", () => {
     const ok = await h("1", "source.preview", input({ text: TEXT }));
     expect(ok).toMatchObject({ ok: true, value: { blocks: expect.any(Array) } });
     expect(await h("2", "source.preview", { ...input(), blockSize: "huge" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+  });
+});
+
+describe("versions of the text and what Run does", () => {
+  const PARAS2 = TEXT + "\n\n四番目の段落です。追加された部分です。";
+
+  const done = async (s: WorkspaceService) => {
+    await s.whenIdle();
+    return s.snapshot();
+  };
+  const attemptsOf = (snap: ReturnType<WorkspaceService["snapshot"]>, label: string) => Object.values(snap.runs.find((r) => r.label === label)!.blocks).map((c) => c.attempts);
+
+  it("Run on text that is already fully translated says there is nothing to do", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input());
+    await done(s);
+    expect(() => s.start(input())).toThrow(/Everything is already translated/);
+    expect(s.snapshot().versions).toHaveLength(1);
+  });
+
+  it("editing the text and running again makes a new version and keeps the old results", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha"), model("beta")] }));
+    const first = await done(s);
+    const firstId = first.revision!.id;
+
+    s.start(input({ text: PARAS2, models: [model("alpha"), model("beta")] }));
+    const second = await done(s);
+    expect(second.versions.map((v) => v.number)).toEqual([1, 2]);
+    expect(second.latestId).toBe(second.viewingId);
+    expect(second.revision!.id).not.toBe(firstId);
+    expect(second.revision!.text).toBe(PARAS2);
+    expect(second.runs.map((r) => r.label)).toEqual(["alpha", "beta"]);
+    expect(second.job?.state).toBe("completed");
+
+    const old = s.viewVersion(firstId);
+    expect(old.viewingId).toBe(firstId);
+    expect(old.revision!.text).toBe(TEXT);
+    expect(old.runs.map((r) => r.label)).toEqual(["alpha", "beta"]);
+    expect(Object.values(old.runs[0]!.blocks).every((c) => c.state === "succeeded" && c.text !== null)).toBe(true);
+    expect(old.runs.every((r) => r.versionId === firstId)).toBe(true);
+    expect(s.viewVersion(second.revision!.id).revision!.text).toBe(PARAS2);
+  });
+
+  it("the new version points back at the one it came from, and results never mix", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input());
+    await done(s);
+    s.start(input({ text: PARAS2 }));
+    await done(s);
+    const state = s.exportAll();
+    expect(state[1]!.source.parentId).toBe(state[0]!.source.id);
+    const ids = (v: (typeof state)[number]) => new Set(v.source.blocks.map((b) => b.id));
+    for (const run of state[1]!.runs) for (const k of Object.keys(run.outputs)) expect(ids(state[0]!).has(k)).toBe(false);
+  });
+
+  it("with the same text, adding a model runs only the new one", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha")] }));
+    await done(s);
+    s.start(input({ models: [model("alpha"), model("beta")] }));
+    const snap = await done(s);
+    expect(snap.versions).toHaveLength(1);
+    expect(snap.runs.map((r) => r.label)).toEqual(["alpha", "beta"]);
+    expect(attemptsOf(snap, "alpha").every((n) => n === 1)).toBe(true); // alpha was not run again
+    expect(attemptsOf(snap, "beta").every((n) => n === 1)).toBe(true);
+    expect(Object.values(snap.runs[1]!.blocks).every((c) => c.state === "succeeded")).toBe(true);
+  });
+
+  it("with the same text, Run finishes unfinished blocks and leaves finished ones alone", async () => {
+    const s = new WorkspaceService({ speedMs: 20 });
+    s.start(input({ text: PARAS2 }));
+    for (let i = 0; i < 400 && !Object.values(s.snapshot().runs[0]?.blocks ?? {}).some((c) => c.state === "succeeded"); i++) await new Promise((r) => setTimeout(r, 5));
+    s.cancel({ kind: "job" });
+    await s.whenIdle();
+    const mid = s.snapshot();
+    const finished = Object.entries(mid.runs[0]!.blocks).filter(([, c]) => c.state === "succeeded").map(([id]) => id);
+    expect(finished.length).toBeGreaterThan(0);
+    expect(finished.length).toBeLessThan(Object.keys(mid.runs[0]!.blocks).length);
+    s.start(input({ text: PARAS2 }));
+    const snap = await done(s);
+    expect(snap.versions).toHaveLength(1);
+    expect(Object.values(snap.runs[0]!.blocks).every((c) => c.state === "succeeded")).toBe(true);
+    for (const id of finished) expect(snap.runs[0]!.blocks[id]!.attempts).toBe(1);
+  });
+
+  it("a model named in rerun is replaced by a fresh run; the old one is kept out of view and can come back", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha")] }));
+    const first = await done(s);
+    const oldRunId = first.runs[0]!.id;
+    s.start(input({ models: [model("alpha", { temperature: 1 })], rerun: ["alpha"] }));
+    const snap = await done(s);
+    expect(snap.runs).toHaveLength(1);
+    expect(snap.runs[0]!.id).not.toBe(oldRunId);
+    expect(snap.archived).toEqual([{ runId: oldRunId, label: "alpha" }]);
+    expect(() => s.restoreArchivedRun(oldRunId)).toThrow(/already shown/);
+    s.archiveRun(snap.runs[0]!.id);
+    const after = s.restoreArchivedRun(oldRunId);
+    expect(after.runs.map((r) => r.id)).toEqual([oldRunId]);
+    expect(Object.values(after.runs[0]!.blocks).every((c) => c.text !== null)).toBe(true);
+  });
+
+  it("removing a model hides it, keeps its results in the saved data, and cancels its queued work", async () => {
+    const s = new WorkspaceService({ speedMs: 20 });
+    s.start(input({ text: PARAS2, models: [model("alpha"), model("beta")] }));
+    for (let i = 0; i < 400 && !s.snapshot().runs.some((r) => Object.values(r.blocks).some((c) => c.state === "running")); i++) await new Promise((r) => setTimeout(r, 5));
+    const beta = s.snapshot().runs[1]!;
+    const snap = s.archiveRun(beta.id);
+    expect(snap.runs.map((r) => r.label)).toEqual(["alpha"]);
+    expect(snap.archived.map((a) => a.label)).toEqual(["beta"]);
+    await s.whenIdle();
+    const stored = s.exportAll()[0]!.runs;
+    expect(stored.map((r) => [r.label, r.archived])).toEqual([["alpha", false], ["beta", true]]);
+    expect(Object.values(stored[1]!.outputs).every((o) => o.state !== "running")).toBe(true);
+  });
+
+  it("cannot start while something is running, and unknown versions or runs are refused plainly", async () => {
+    const s = new WorkspaceService({ speedMs: 20 });
+    s.start(input());
+    expect(() => s.start(input({ text: "別の本文。" }))).toThrow(/already running/);
+    expect(() => s.viewVersion("nope")).toThrow(/does not exist/);
+    expect(() => s.archiveRun("nope")).toThrow(/does not exist/);
+    s.cancel({ kind: "job" });
+    await s.whenIdle();
+  });
+
+  it("the window's commands cover versions and removing models", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    const h = createHandler(s);
+    await h("1", "job.start", input());
+    await s.whenIdle();
+    await h("2", "job.start", input({ text: PARAS2 }));
+    await s.whenIdle();
+    const snap = s.snapshot();
+    const first = snap.versions[0]!.id;
+    expect(await h("3", "version.view", { versionId: first })).toMatchObject({ ok: true, value: { viewingId: first } });
+    expect(await h("4", "version.view", { versionId: 5 })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    const runId = s.snapshot().runs[0]!.id;
+    expect(await h("5", "run.archive", { runId })).toMatchObject({ ok: true, value: { runs: [] } });
+    expect(await h("6", "run.restore", { runId })).toMatchObject({ ok: true, value: { runs: [expect.objectContaining({ id: runId })] } });
+    expect(await h("7", "run.archive", { runId: "ghost" })).toMatchObject({ ok: false, error: { code: "unknown_run" } });
   });
 });

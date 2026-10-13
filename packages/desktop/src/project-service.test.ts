@@ -22,6 +22,7 @@ const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
   glossary: [],
   prompts: [],
   blockSize: "normal",
+  rerun: [],
   demo: { speed: "fast", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
   ...over,
 });
@@ -537,5 +538,82 @@ describe("exporting", () => {
     expect(await h("3", "export.write", body)).toMatchObject({ ok: true, value: { path: join(dir, "via.md") } });
     expect(await h("4", "export.write", { ...body, format: "pdf" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
     expect(await createHandler(a.workspace)("5", "export.write", body)).toMatchObject({ ok: false, error: { code: "no_project" } });
+  });
+});
+
+describe("versions in saved projects", () => {
+  it("saves every version and reopens them all, with the newest in view", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    const firstId = a.workspace.snapshot().revision!.id;
+    a.workspace.start(job({ models: [model("alpha")], text: job().text + "\n\n追加の段落です。" }));
+    await a.workspace.whenIdle();
+    answers.save = join(dir, "two.ltw.json");
+    await a.save(false);
+
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "two.ltw.json");
+    await b.open(false);
+    const snap = b.workspace.snapshot();
+    expect(snap.versions.map((v) => v.number)).toEqual([1, 2]);
+    expect(snap.viewingId).toBe(snap.latestId);
+    expect(snap.revision!.text).toContain("追加の段落");
+    expect(b.workspace.viewVersion(firstId).revision!.text).not.toContain("追加の段落");
+    expect(b.workspace.snapshot().runs[0]!.blocks).toEqual(a.workspace.viewVersion(firstId).runs[0]!.blocks);
+  });
+
+  it("keeps removed models in the file", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha"), model("beta")] }));
+    a.workspace.archiveRun(a.workspace.snapshot().runs[1]!.id);
+    answers.save = join(dir, "arch.ltw.json");
+    await a.save(false);
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "arch.ltw.json");
+    await b.open(false);
+    const snap = b.workspace.snapshot();
+    expect(snap.runs.map((r) => r.label)).toEqual(["alpha"]);
+    expect(snap.archived.map((r) => r.label)).toEqual(["beta"]);
+    b.workspace.restoreArchivedRun(snap.archived[0]!.runId);
+    expect(Object.values(b.workspace.snapshot().runs[1]!.blocks).every((c) => c.text !== null)).toBe(true);
+  });
+
+  it("opens a project saved by the first release, and editing its text adds a second version", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    const v = a.workspace.exportAll()[0]!;
+    const old = { format: "ltw-project", schemaVersion: 1, project: { id: "p", title: "Old", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", version: 1 }, backend: v.backend, source: v.source, runs: v.runs };
+    writeFileSync(join(dir, "old.ltw.json"), JSON.stringify(old));
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "old.ltw.json");
+    await b.open(false);
+    const snap = b.workspace.snapshot();
+    expect(b.view().openProblem).toBeNull();
+    expect(snap.versions).toHaveLength(1);
+    expect(snap.runs[0]!.label).toBe("alpha");
+    b.workspace.start(job({ models: [model("alpha")], text: "全く別の本文です。" }));
+    await b.workspace.whenIdle();
+    expect(b.workspace.snapshot().versions).toHaveLength(2);
+  });
+
+  it("exports the version being viewed", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")], text: "古い本文です。" }));
+    const oldId = a.workspace.snapshot().revision!.id;
+    a.workspace.start(job({ models: [model("alpha")], text: "新しい本文です。" }));
+    await a.workspace.whenIdle();
+    const exportOf = async (name: string) => {
+      answers.export = join(dir, name);
+      const runId = a.workspace.snapshot().runs[0]!.id;
+      await a.exportFile({ format: "text", runIds: [runId], textVersion: "current", allowPartial: false, formulaSafe: true });
+      return readFileSync(join(dir, name), "utf8");
+    };
+    expect(await exportOf("new.txt")).toContain("新しい本文");
+    a.workspace.viewVersion(oldId);
+    expect(await exportOf("old.txt")).toContain("古い本文");
   });
 });

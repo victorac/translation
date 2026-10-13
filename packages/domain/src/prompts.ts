@@ -108,3 +108,16 @@ export function snapshotPrompt(p: PromptPreset): PromptSnapshot {
 }
 
 export const STANDARD_PROMPT: PromptPreset = BUILTIN_PROMPTS[0]!;
+
+/**
+ * The name a model run goes by: the model, plus the style when it is not the standard one, plus a note
+ * when the glossary is off. The same model with another style or glossary setting is a different run.
+ */
+export function runLabel(
+  m: { name: string; promptId: string; useGlossary: boolean },
+  styles: readonly Pick<PromptPreset, "id" | "name">[],
+  glossaryEntries: number,
+): string {
+  const style = styles.find((p) => p.id === m.promptId);
+  return [m.name.trim(), style && style.id !== STANDARD_PROMPT_ID ? style.name : null, !m.useGlossary && glossaryEntries > 0 ? "no glossary" : null].filter(Boolean).join(" · ");
+}
