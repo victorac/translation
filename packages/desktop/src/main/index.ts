@@ -102,6 +102,7 @@ function createWindow(): void {
           providerSettingsOk: prov.ok === true && prov.value.baseUrl === 'http://localhost:1234/v1' && prov.value.hasApiKey === false,
           pageHasNoNode: typeof require === 'undefined' && typeof process === 'undefined',
           pageRendered: (document.getElementById('root')?.children.length ?? 0) > 0,
+          editorRendered: !!document.querySelector('.cm-editor .cm-content'),
           title: document.title,
         };
       })()`);

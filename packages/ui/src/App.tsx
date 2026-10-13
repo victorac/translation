@@ -299,6 +299,8 @@ export function App() {
               text={setup.text}
               onText={onText}
               title={snap.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Source"}
+              previewBlocks={split.preview?.blocks ?? null}
+              editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
               mode={effectiveMode}
               onMode={setMode}
               runs={visibleRuns}

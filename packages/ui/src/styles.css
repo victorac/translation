@@ -165,8 +165,6 @@ label.check { flex-direction: row; align-items: flex-start; gap: 0.4rem; color: 
 .cell-slot { min-width: 0; }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .source-cell .text { font-size: 1.03rem; line-height: 1.7; }
-.source-editor { resize: none; border: none; border-right: 1px solid var(--border); border-radius: 0; background: var(--bg); padding: 0.75rem 1rem; font-size: 1.03rem; line-height: 1.7; min-height: 12rem; height: 100%; }
-.source-editor:focus-visible { outline-offset: -2px; }
 .cell-actions { position: absolute; top: 0.2rem; right: 0.3rem; display: flex; opacity: 0; transition: opacity 0.1s; background: var(--panel); border-radius: var(--radius); }
 .cell:hover .cell-actions, .cell:focus-within .cell-actions { opacity: 1; }
 @media (hover: none) { .cell-actions { opacity: 1; } }
@@ -250,3 +248,20 @@ details > summary { cursor: pointer; }
 .rail-item.doc.active { background: var(--accent-soft); }
 .rail-item.doc.active .rail-name { font-weight: 600; }
 .rename { flex: 1; min-width: 0; padding: 0.1rem 0.3rem; }
+
+/* ---- the source editor with block labels ---- */
+.source-editor-slot { min-height: 12rem; border-right: 1px solid var(--border); min-width: 0; display: flex; }
+.source-editor { flex: 1; min-width: 0; display: flex; }
+.source-editor .cm-editor { flex: 1; min-width: 0; }
+.cm-block-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem; margin: 0.6rem 0 0.1rem; padding: 0.1rem 0.5rem; font-size: 0.74rem; color: var(--muted); border-top: 1px dashed var(--border-strong); user-select: none; }
+.cm-block-label:first-child { margin-top: 0; }
+.cm-block-label.inline { display: inline; margin: 0 0.25rem; padding: 0 0.35rem; border: 1px dashed var(--border-strong); border-radius: 4px; background: var(--sunken); }
+.cm-block-label.inline.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.cm-block-label.warn { color: var(--warn); }
+.cm-block-n { font-weight: 700; }
+.cm-block-warn { font-weight: 600; }
+.cm-blk-b { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.cm-panels { background: var(--panel); color: var(--text); border-color: var(--border); }
+.cm-panels input, .cm-panels button { font-size: 0.85rem; }
+.cm-panels button { background: var(--panel); color: var(--text); background-image: none; }
+.cm-searchMatch { background: color-mix(in srgb, var(--focus) 35%, transparent); }

@@ -1,5 +1,7 @@
 import type { RunView, WorkspaceSnapshot } from "@ltw/domain";
+import type { PreviewBlock } from "./blockMarkers";
 import { Cell } from "./Cell";
+import { SourceEditor } from "./SourceEditor";
 import { countCells } from "./status";
 import type { useWorkspace } from "./useWorkspace";
 
@@ -21,6 +23,8 @@ export function Grid({
   edited,
   readOnlyOld,
   title,
+  previewBlocks,
+  editorKey,
 }: {
   snap: WorkspaceSnapshot;
   text: string;
@@ -35,6 +39,10 @@ export function Grid({
   readOnlyOld: boolean;
   /** The open document's name. */
   title: string;
+  /** How the text in the editor would be split right now. */
+  previewBlocks: readonly PreviewBlock[] | null;
+  /** Changes when the editor should start fresh (another document or project), which also resets its undo history. */
+  editorKey: string;
 }) {
   const blocks = snap.revision?.blocks ?? [];
   const hasBlocks = blocks.length > 0;
@@ -78,15 +86,15 @@ export function Grid({
         })}
 
         {(mode === "text" || !hasBlocks) && !readOnlyOld ? (
-          <textarea
-            className="source-editor"
-            style={{ gridRow: `2 / span ${rows + 1}`, gridColumn: 1 }}
-            aria-label="Source text"
-            placeholder="Paste or type the text here, add a model, then press Run."
-            value={text}
-            onChange={(e) => onText(e.target.value)}
-            spellCheck={false}
-          />
+          <div className="source-editor-slot" style={{ gridRow: `2 / span ${rows + 1}`, gridColumn: 1 }}>
+            <SourceEditor
+              key={editorKey}
+              value={text}
+              onChange={onText}
+              blocks={previewBlocks}
+              placeholder="Paste or type the text here, add a model, then press Run."
+            />
+          </div>
         ) : null}
 
         {hasBlocks &&
