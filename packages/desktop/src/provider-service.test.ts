@@ -379,6 +379,26 @@ describe("suggested knowledge", () => {
     expect(sent.messages[1]!.content).toContain("PASSAGE:\n「え、だって花子");
   });
 
+  it("fits a long block in a small context by reserving only the reply it needs, and trims what is already known to make room", async () => {
+    const lm = await fakeLmStudio({ analysisReply: reply });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    for (let i = 0; i < 40; i++) service.knowledgeSave({ kind: "term", source: `名${i}`, target: `Name${i}`, hint: "a hint that takes some room in the list", text: "", about: null });
+    // The model's reply limit is for translations (1536); reading for knowledge only needs a short reply.
+    const r = await service.analyze(ask({ passage: "あ".repeat(600), contextLimit: 4096, maxOutputTokens: 1536 }));
+    expect(r.canceled).toBe(false);
+    const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { max_tokens: number; messages: { content: string }[] }).at(-1)!;
+    expect(sent.max_tokens).toBe(700);
+    expect(sent.messages[1]!.content).toContain("PASSAGE:\n" + "あ".repeat(600));
+  });
+
+  it("says how much room a block needs when it cannot fit at all", async () => {
+    const lm = await fakeLmStudio({ analysisReply: reply });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await expect(service.analyze(ask({ passage: "あ".repeat(3000), contextLimit: 4096 }))).rejects.toThrow(/needs about \d+ tokens.*set to 4096/);
+  });
+
   it("tells the next passage what the scene before it was, and removing a person removes their facts", async () => {
     const lm = await fakeLmStudio({ analysisReply: reply });
     const { provider, service } = setup();
@@ -413,7 +433,7 @@ describe("suggested knowledge", () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    await expect(service.analyze(ask({ contextLimit: 512, maxOutputTokens: 500 }))).rejects.toThrow(/does not fit/);
+    await expect(service.analyze(ask({ contextLimit: 512, maxOutputTokens: 500 }))).rejects.toThrow(/needs about/);
     service.start(job());
     await expect(service.analyze(ask())).rejects.toThrow(/Wait for the translations/);
     await service.whenIdle();
@@ -485,6 +505,6 @@ describe("choosing the background for each block", () => {
     for (let i = 0; i < 80; i++) save(service, `名${i}`, `Name${i}`, "a fairly long hint so that the list takes room in the request");
     await service.researchBlock(ask("本文。", { contextLimit: 1400 }));
     expect(bodies(lm).length).toBeGreaterThan(1);
-    await expect(service.researchBlock(ask("本文。".repeat(300), { contextLimit: 600, maxOutputTokens: 300 }))).rejects.toThrow(/does not fit/);
+    await expect(service.researchBlock(ask("本文。".repeat(300), { contextLimit: 600, maxOutputTokens: 300 }))).rejects.toThrow(/do not fit/);
   });
 });

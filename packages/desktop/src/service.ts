@@ -94,6 +94,8 @@ import type { ProviderService } from "./provider-service.js";
 
 export { UserError };
 
+/** The most a model needs to write when reading a passage for knowledge: a few short lines. */
+const ANALYSIS_REPLY_TOKENS = 700;
 const SPEED_MS = { fast: 4, normal: 35, slow: 140 } as const;
 /** Model runs per version of the text, not counting ones the user removed. */
 const MAX_MODELS = 8;
@@ -1162,19 +1164,27 @@ export class WorkspaceService {
     const abort = this.beginSideRequest();
     try {
       const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && e.scope.block === input.block - 1);
-      const messages = [
-        { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
-        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(knowledgeCap(input.contextLimit)), previousScene: previous?.text }, input.passage) },
-      ];
-      const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
-      if (needed > input.contextLimit) {
-        throw new UserError("context_overflow", "This part of the text does not fit the model's context. Raise the context size for this model, or use smaller blocks.");
+      const system = analysisSystemPrompt(input.sourceLanguage, input.targetLanguage);
+      // The reply is a handful of short lines, so it needs far less room than a translation does.
+      const replyTokens = Math.min(input.maxOutputTokens, ANALYSIS_REPLY_TOKENS);
+      const fixed = estimateTokens(system) + estimateTokens(input.passage) + estimateTokens(previous?.text ?? "") + replyTokens + DEFAULTS.messageOverheadTokens + 60;
+      const roomForKnown = input.contextLimit - fixed;
+      if (roomForKnown < 0) {
+        throw new UserError(
+          "context_overflow",
+          `This block needs about ${fixed} tokens to be read for knowledge, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size for this model (in its settings), or use smaller blocks.`,
+        );
       }
+      // What is already known helps the model avoid repeating itself, but it gives way to the passage when room is short.
+      const messages = [
+        { role: "system" as const, content: system },
+        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), previousScene: previous?.text }, input.passage) },
+      ];
       const reply = await this.askModel(
         {
           backend: input.backend,
           modelId: input.modelId,
-          maxOutputTokens: input.maxOutputTokens,
+          maxOutputTokens: replyTokens,
           messages,
           practiceReply: () =>
             input.passage.includes("彼")
@@ -1292,7 +1302,7 @@ export class WorkspaceService {
       const system = researchSystemPrompt(input.sourceLanguage, input.targetLanguage);
       const replyTokens = Math.min(input.maxOutputTokens, 256); // the reply is only a list of numbers
       const room = input.contextLimit - estimateTokens(system) - estimateTokens(input.passage) - replyTokens - DEFAULTS.messageOverheadTokens - 40;
-      if (room < 60) throw new UserError("context_overflow", "This part of the text does not fit the model's context together with the notes. Raise the context size for this model, or use smaller blocks.");
+      if (room < 60) throw new UserError("context_overflow", `This block and the knowledge base do not fit the context of ${input.modelId}, which is set to ${input.contextLimit}. Raise the context size for this model (in its settings), or use smaller blocks.`);
       const chosen: string[] = [];
       for (const batch of researchBatches(pending, room)) {
         const reply = await this.askModel(
