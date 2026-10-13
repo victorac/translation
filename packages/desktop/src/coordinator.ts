@@ -107,6 +107,7 @@ export interface AddRunInput {
   config?: Partial<RunConfig>;
   glossary?: GlossaryEntry[];
   notes?: string | undefined;
+  knowledge?: boolean | undefined;
   prompt?: PromptSnapshot;
 }
 
@@ -210,6 +211,7 @@ export class Coordinator {
       ...(input.prompt ? { prompt: input.prompt } : {}),
       glossary: input.glossary ?? [],
       ...(input.notes ? { notes: input.notes } : {}),
+      ...(input.knowledge ? { knowledge: true } : {}),
       state: "queued",
       archived: false,
       outputs: Object.fromEntries(
@@ -232,11 +234,12 @@ export class Coordinator {
    * Brings a run's settings up to date (glossary, style, temperature, limits), so its next attempts use them.
    * Results already produced keep the settings they were made with. Not possible while the run is working.
    */
-  updateRunSettings(runId: string, next: { glossary: GlossaryEntry[]; notes?: string | undefined; prompt: PromptSnapshot; config: Partial<RunConfig> }): boolean {
+  updateRunSettings(runId: string, next: { glossary: GlossaryEntry[]; notes?: string | undefined; knowledge?: boolean | undefined; prompt: PromptSnapshot; config: Partial<RunConfig> }): boolean {
     const run = this.run(runId);
     if (run.state === "running" || run.state === "waiting" || this.active?.runId === runId) return false;
     run.glossary = structuredClone(next.glossary);
     run.notes = next.notes?.trim() ? next.notes.trim() : undefined;
+    run.knowledge = next.knowledge ? true : undefined;
     run.prompt = structuredClone(next.prompt);
     run.config = { ...run.config, ...next.config };
     return true;

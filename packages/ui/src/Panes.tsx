@@ -36,13 +36,14 @@ interface Props {
   showKnowledge: boolean;
   onCloseKnowledge: () => void;
   knowledgeRev: number;
+  documentId: string;
 }
 
 /** Source and translations as panes that can be resized, dragged next to or above each other, and closed. */
 export function Panes(props: Props) {
   const { runs, tree, onTree, linked } = props;
   const hasBlocks = (props.snap.revision?.blocks.length ?? 0) > 0;
-  const views = [SOURCE_KEY, ...(props.showKnowledge ? [KNOWLEDGE_KEY] : []), ...(hasBlocks ? runs.map((r) => r.label) : [])];
+  const views = [SOURCE_KEY, ...(hasBlocks ? runs.map((r) => r.label) : []), ...(props.showKnowledge ? [KNOWLEDGE_KEY] : [])];
   const effective = reconcile(tree, views);
   const root = useRef<HTMLDivElement>(null);
   const syncing = useRef(false);
@@ -237,7 +238,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgeTable rev={p.knowledgeRev} />
+          <KnowledgeTable rev={p.knowledgeRev} documentId={p.documentId} documentTitle={p.title} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />
@@ -255,7 +256,10 @@ function Leaf(
         ) : (
           run &&
           blocks.map((b) => (
-            <div className="cell-slot" key={b.id} data-block={b.index}>
+            <div className="cell-slot numbered" key={b.id} data-block={b.index}>
+              <span className="block-no" aria-hidden="true">
+                {b.index + 1}
+              </span>
               <Cell
                 cell={run.blocks[b.id]!}
                 label={run.label}

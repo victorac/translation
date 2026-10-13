@@ -37,6 +37,9 @@ describe("pane tree", () => {
     const t = defaultTree(["s", "a", "b"]);
     expect(viewsOf(reconcile(t, ["s", "b"]))).toEqual(["s", "b"]);
     expect(viewsOf(reconcile(t, ["s", "a", "b", "c"]))).toEqual(["s", "a", "b", "c"]);
+    // A view listed last stays at the far right when others are added.
+    expect(viewsOf(reconcile(defaultTree(["s", "m1", "kb"]), ["s", "m1", "m2", "kb"]))).toEqual(["s", "m1", "m2", "kb"]);
+    expect(viewsOf(reconcile(defaultTree(["m1", "kb"]), ["s", "m1", "kb"]))).toEqual(["s", "m1", "kb"]);
     expect(viewsOf(reconcile(null, ["x", "y"]))).toEqual(["x", "y"]);
     expect(viewsOf(reconcile(p("gone"), ["x"]))).toEqual(["x"]);
   });

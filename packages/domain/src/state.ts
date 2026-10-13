@@ -105,6 +105,8 @@ export interface ModelRun {
   glossary: GlossaryEntry[];
   /** Background about the story and its people, sent with every block. Missing in older saved projects. */
   notes?: string | undefined;
+  /** The project had a knowledge base when this run was set up, so room is kept for scenes, summaries and notes. */
+  knowledge?: boolean | undefined;
   state: RunState;
   archived: boolean;
   outputs: Record<string, BlockOutput>;

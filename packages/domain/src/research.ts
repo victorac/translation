@@ -63,9 +63,12 @@ export interface ResearchRecord {
   at: string;
 }
 
+/** The entries a researcher chooses from: terms, and notes that are not attached to a term. Facts travel with their term; scenes and summaries are tied to blocks and documents. */
+export const isCandidate = (e: KnowledgeEntry): boolean => e.kind === "term" || (e.kind === "note" && e.about === null);
+
 /** The entries that still need to be considered for a passage: ones never seen, or changed since. */
 export function entriesToConsider(entries: readonly KnowledgeEntry[], record: ResearchRecord | undefined): KnowledgeEntry[] {
-  const candidates = entries.filter((e) => !e.pinned);
+  const candidates = entries.filter(isCandidate);
   if (!record) return candidates;
   const seen = new Set(record.seen);
   return candidates.filter((e) => !seen.has(e.id) || e.updatedAt > record.at);
@@ -76,13 +79,5 @@ export function updateRecord(record: ResearchRecord | undefined, entries: readon
   const redone = new Set(considered.map((e) => e.id));
   const alive = new Set(entries.map((e) => e.id));
   const kept = (record?.ids ?? []).filter((id) => alive.has(id) && !redone.has(id));
-  return { ids: [...new Set([...kept, ...chosen])], seen: entries.filter((e) => !e.pinned).map((e) => e.id), at };
-}
-
-/** The background for a block: what was chosen for it plus everything pinned. Null if nobody has looked at the block yet. */
-export function chosenEntries(entries: readonly KnowledgeEntry[], record: ResearchRecord | undefined): KnowledgeEntry[] | null {
-  const pinned = entries.filter((e) => e.pinned);
-  if (!record) return entries.length === 0 ? [] : null;
-  const ids = new Set(record.ids);
-  return [...entries.filter((e) => ids.has(e.id) && !e.pinned), ...pinned];
+  return { ids: [...new Set([...kept, ...chosen])], seen: entries.filter(isCandidate).map((e) => e.id), at };
 }

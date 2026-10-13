@@ -131,6 +131,7 @@ const ECHO_PATTERNS = [
   /"(source_block|translation_status)"\s*:/,
   /^\s*(SOURCE_BLOCK|GLOSSARY)\s*:/m,
   /^\s*CONTEXT \(reference only/m,
+  /^\s*(SCENE|STORY SO FAR|NOTES) \(/m,
 ];
 
 /**

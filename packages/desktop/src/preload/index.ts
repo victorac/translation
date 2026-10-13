@@ -40,6 +40,7 @@ const COMMANDS = new Set([
   "notes.analyze",
   "notes.cancel",
   "research.block",
+  "knowledge.summarize",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

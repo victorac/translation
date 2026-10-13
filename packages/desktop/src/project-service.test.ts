@@ -785,8 +785,8 @@ describe("names, hints and notes in saved projects", () => {
   it("saves the knowledge with the project, reopens it, and brings an older project's glossary over once", async () => {
     const { dir, answers, make } = env();
     const a = make();
-    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", text: "", pinned: false });
-    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", pinned: false });
+    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", text: "", about: null });
+    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", about: null });
     await a.workspace.researchBlock({ backend: "practice", modelId: "x", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage: "魔王が来た。" });
     expect(Object.keys(a.workspace.exportProject().knowledge.research)).toHaveLength(1);
     answers.save = join(dir, "kb.ltw.json");

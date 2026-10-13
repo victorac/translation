@@ -36,11 +36,8 @@ export function removeView(t: PaneNode, view: string): PaneNode | null {
   return a === t.a && b === t.b ? t : { ...t, a, b };
 }
 
-/** Moves `view` so it sits at one edge of `target`. */
-export function placeView(t: PaneNode, view: string, target: string, edge: Edge): PaneNode {
-  if (view === target) return t;
-  const rest = removeView(t, view);
-  if (rest === null || !viewsOf(rest).includes(target)) return t;
+/** Puts `view` at one edge of `target` (the view must not be in the tree yet). */
+function insertBeside(t: PaneNode, view: string, target: string, edge: Edge): PaneNode {
   const axis = edge === "left" || edge === "right" ? "row" : "column";
   const first = edge === "left" || edge === "top";
   const insert = (n: PaneNode): PaneNode => {
@@ -50,10 +47,21 @@ export function placeView(t: PaneNode, view: string, target: string, edge: Edge)
     }
     return { ...n, a: insert(n.a), b: insert(n.b) };
   };
-  return insert(rest);
+  return insert(t);
 }
 
-/** Keeps the layout in step with the views that exist now: drops the ones that are gone, adds new ones on the right. */
+/** Moves `view` so it sits at one edge of `target`. */
+export function placeView(t: PaneNode, view: string, target: string, edge: Edge): PaneNode {
+  if (view === target) return t;
+  const rest = removeView(t, view);
+  if (rest === null || !viewsOf(rest).includes(target)) return t;
+  return insertBeside(rest, view, target, edge);
+}
+
+/**
+ * Keeps the layout in step with the views that exist now: drops the ones that are gone, and puts a new view next to
+ * the view that comes before it in `views` (so a view listed last, such as the knowledge base, stays at the far right).
+ */
 export function reconcile(t: PaneNode | null, views: readonly string[]): PaneNode {
   if (views.length === 0) throw new RangeError("A layout needs at least one view.");
   if (t === null) return defaultTree(views);
@@ -62,13 +70,14 @@ export function reconcile(t: PaneNode | null, views: readonly string[]): PaneNod
   for (const v of viewsOf(t)) if (!want.has(v) && next) next = removeView(next, v);
   if (next === null) return defaultTree(views);
   const have = new Set(viewsOf(next));
-  for (const v of views) {
-    if (have.has(v)) continue;
-    const count = have.size;
-    next = { kind: "split", axis: "row", ratio: count / (count + 1), a: next, b: pane(v) };
+  views.forEach((v, i) => {
+    if (have.has(v)) return;
+    const before = views.slice(0, i).reverse().find((x) => have.has(x));
+    const after = views.slice(i + 1).find((x) => have.has(x));
+    next = before ? insertBeside(next!, v, before, "right") : insertBeside(next!, v, after!, "left");
     have.add(v);
-  }
-  return next;
+  });
+  return next!;
 }
 
 export function setRatio(t: PaneNode, path: Path, ratio: number): PaneNode {

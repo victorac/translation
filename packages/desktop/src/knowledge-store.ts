@@ -1,5 +1,5 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { entryProblems, newId, type EntryCounts, type EntryDeps, type EntryInput, type EntryOrigin, type EntryQuery, type KnowledgeEntry } from "@ltw/domain";
+import { entryProblems, newId, normalizeEntry, type EntryCounts, type EntryDeps, type EntryInput, type EntryOrigin, type EntryQuery, type KnowledgeEntry } from "@ltw/domain";
 import { UserError } from "./errors.js";
 
 interface Row {
@@ -9,7 +9,9 @@ interface Row {
   source: string;
   target: string;
   hint: string;
-  pinned: number;
+  about: string | null;
+  related: string;
+  scope: string | null;
   text: string;
   origin: string;
   status: string;
@@ -18,12 +20,14 @@ interface Row {
 
 const toEntry = (r: Row): KnowledgeEntry => ({
   id: r.id,
-  kind: r.kind === "note" ? "note" : "term",
+  kind: (["term", "note", "scene", "summary"].includes(r.kind) ? r.kind : "term") as KnowledgeEntry["kind"],
   source: r.source,
   target: r.target,
   hint: r.hint,
   text: r.text,
-  pinned: r.pinned === 1,
+  about: r.about,
+  related: JSON.parse(r.related) as string[],
+  scope: r.scope ? (JSON.parse(r.scope) as KnowledgeEntry["scope"]) : null,
   origin: JSON.parse(r.origin) as EntryOrigin,
   status: r.status === "suggested" ? "suggested" : "confirmed",
   updatedAt: r.updated_at,
@@ -42,22 +46,21 @@ export class KnowledgeStore {
   constructor(private readonly deps: EntryDeps = { newId, now: () => new Date().toISOString() }) {
     this.db.exec(`CREATE TABLE entries (
       id TEXT PRIMARY KEY, seq INTEGER NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, hint TEXT NOT NULL,
-      pinned INTEGER NOT NULL, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
+      about TEXT, related TEXT NOT NULL, scope TEXT, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
   }
 
   private insert(e: KnowledgeEntry, seq: number = ++this.seq): void {
     this.db
-      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, pinned, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(e.id, seq, e.kind, e.source, e.target, e.hint, e.pinned ? 1 : 0, e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
+      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, about, related, scope, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(e.id, seq, e.kind, e.source, e.target, e.hint, e.about, JSON.stringify(e.related), e.scope ? JSON.stringify(e.scope) : null, e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
   }
 
   /** Replaces everything, for example when a project is opened. Does not count as a change. */
   load(entries: readonly KnowledgeEntry[]): void {
     this.db.exec("DELETE FROM entries");
     this.seq = 0;
-    // Files from before pinned entries existed do not have the field.
-    for (const e of entries) this.insert({ ...e, pinned: e.pinned === true });
+    for (const e of entries) this.insert(normalizeEntry(e));
     this.rev++;
   }
 
@@ -89,6 +92,8 @@ export class KnowledgeStore {
     return {
       terms: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'term'"),
       notes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'note'"),
+      scenes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'scene'"),
+      summaries: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'summary'"),
       suggested: n("SELECT COUNT(*) AS n FROM entries WHERE status = 'suggested'"),
     };
   }
@@ -105,16 +110,18 @@ export class KnowledgeStore {
   save(input: EntryInput): KnowledgeEntry {
     const problems = entryProblems(input);
     if (problems.length > 0) throw new UserError("bad_entry", problems[0]!);
-    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), text: input.text.trim(), pinned: input.pinned };
+    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), text: input.text.trim(), about: input.kind === "note" ? input.about : null };
     const before = input.id ? this.get(input.id) : undefined;
     if (input.id && !before) throw new UserError("no_entry", "That entry no longer exists.");
     if (!before && clean.kind === "term" && this.all().some((e) => e.kind === "term" && e.source === clean.source)) {
       throw new UserError("duplicate_entry", `"${clean.source}" is already listed. Edit that entry instead.`);
     }
-    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.text, before.pinned]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.text, clean.pinned]);
+    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.text, before.about]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.text, clean.about]);
     const entry: KnowledgeEntry = {
       id: before?.id ?? this.deps.newId(),
       ...clean,
+      related: before?.related ?? [],
+      scope: before?.scope ?? (input.kind === "summary" && input.documentId ? { documentId: input.documentId } : null),
       origin: before ? (unchanged ? before.origin : before.origin.by === "model" ? { ...before.origin, by: "user" } : before.origin) : { by: "user" },
       status: "confirmed",
       updatedAt: this.deps.now(),
@@ -126,10 +133,20 @@ export class KnowledgeStore {
     return entry;
   }
 
+  /** Removes entries. Facts about a removed term go with it, and scenes stop listing it as present. */
   remove(ids: readonly string[]): number {
+    const gone = new Set(ids);
+    for (const e of this.all()) if (e.kind === "note" && e.about !== null && gone.has(e.about)) gone.add(e.id);
     let n = 0;
-    for (const id of ids) n += Number(this.db.prepare("DELETE FROM entries WHERE id = ?").run(id).changes);
-    if (n > 0) this.rev++;
+    for (const id of gone) n += Number(this.db.prepare("DELETE FROM entries WHERE id = ?").run(id).changes);
+    if (n > 0) {
+      for (const e of this.all()) {
+        if (e.kind === "scene" && e.related.some((r) => gone.has(r))) {
+          this.db.prepare("UPDATE entries SET related = ? WHERE id = ?").run(JSON.stringify(e.related.filter((r) => !gone.has(r))), e.id);
+        }
+      }
+      this.rev++;
+    }
     return n;
   }
 

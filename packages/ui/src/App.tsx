@@ -117,7 +117,7 @@ export function App() {
 
   // The researcher model reads the text for knowledge, and before translating it chooses the background for each block.
   const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
-  const [work, setWork] = useState<{ what: "extract" | "choose"; at: number; of: number } | null>(null);
+  const [work, setWork] = useState<{ what: "extract" | "choose" | "summarize"; at: number; of: number } | null>(null);
   const [workNote, setWorkNote] = useState<string | null>(null);
   const stopWork = useRef(false);
   const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
@@ -143,6 +143,7 @@ export function App() {
           sourceLanguage: s.sourceLanguage,
           targetLanguage: s.targetLanguage,
           passage: blockTexts[i]!,
+          documentId: snap?.activeDocumentId ?? "",
           documentTitle: activeTitle,
           block: i + 1,
         });
@@ -150,7 +151,20 @@ export function App() {
         if (!r.ok) return setWorkNote(r.error.message);
         added += r.value.added;
       }
-      setWorkNote(added === 0 ? "Nothing new was found." : `Added ${added} ${added === 1 ? "suggestion" : "suggestions"} to the knowledge base. Please check them; the model can be wrong.`);
+      if (stopWork.current) return setWorkNote(`Stopped. ${added} ${added === 1 ? "suggestion was" : "suggestions were"} added so far.`);
+      setWork({ what: "summarize", at: 0, of: 0 });
+      const s2 = await api.invoke("knowledge.summarize", {
+        backend: s.backend,
+        modelId: researcher.name,
+        contextLimit: researcher.contextLimit,
+        maxOutputTokens: researcher.maxOutputTokens,
+        sourceLanguage: s.sourceLanguage,
+        targetLanguage: s.targetLanguage,
+        documentId: snap?.activeDocumentId ?? "",
+        documentTitle: activeTitle,
+      });
+      if (!s2.ok) return setWorkNote(`${added} suggestions were added, but the summary could not be written: ${s2.error.message}`);
+      setWorkNote(`Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base. Please check them; the model can be wrong.`);
     } finally {
       setWork(null);
     }
@@ -368,7 +382,7 @@ export function App() {
           {work && (
             <div className="strip">
               <span>
-                {work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block {work.at} of {work.of}…
+                {work.what === "summarize" ? "Writing the summary…" : `${work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block ${work.at} of ${work.of}…`}
               </span>
               <button
                 className="small"
@@ -427,6 +441,7 @@ export function App() {
                 showKnowledge={columns.showKnowledge}
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
                 knowledgeRev={snap.knowledge.rev}
+                documentId={snap.activeDocumentId}
               />
             ) : (
             <Grid

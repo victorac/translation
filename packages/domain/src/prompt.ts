@@ -1,7 +1,7 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
 import { relevantEntries, targetVariants } from "./glossary.js";
-import { backupMaterial, fitMaterial, knowledgeCap, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
+import { backupMaterial, fitMaterial, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
 import { blockText, type SourceRevision } from "./revision.js";
@@ -77,6 +77,8 @@ export function configHash(run: ModelRun): string {
 
 const SOURCE_LABEL = "SOURCE_BLOCK:";
 const GLOSSARY_LABEL = "GLOSSARY:";
+const SUMMARY_LABEL = "STORY SO FAR (a summary of the whole chapter; reference only, do not translate):";
+const SCENE_LABEL = "SCENE (what is happening around this block; reference only, do not translate):";
 const NOTES_LABEL = "NOTES (background about the story and its people; use it to work out who is speaking and who is addressed; do not translate):";
 const CONTEXT_LABEL = "CONTEXT (reference only, do not translate):";
 const UNAVAILABLE = "(not available)";
@@ -86,8 +88,10 @@ const UNAVAILABLE = "(not available)";
  * because some models write structured input back out instead of translating it. The text to translate is last,
  * so the natural continuation is its translation.
  */
-export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes: readonly string[] = []): string {
+export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes: readonly string[] = [], extras: { summary?: string | undefined; scene?: string | undefined } = {}): string {
   const parts: string[] = [];
+  if (extras.summary) parts.push(`${SUMMARY_LABEL}\n${extras.summary}`);
+  if (extras.scene) parts.push(`${SCENE_LABEL}\n${extras.scene}`);
   if (notes.length > 0) parts.push(`${NOTES_LABEL}\n${notes.map((n) => `- ${n}`).join("\n")}`);
   if (glossary.length > 0) {
     const lines = glossary.map((g) => {
@@ -156,7 +160,7 @@ export function buildPrompt(
   const block = revision.blocks[blockIndex]!;
   const system = systemPromptFor(run, revision.sourceLanguage, revision.targetLanguage);
   // Set aside room for knowledge (terms, hints, notes). Each request carries only what applies to its own block.
-  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), knowledgeReserve(run.glossary, run.notes ?? "", run.config.contextLimit)));
+  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), knowledgeReserve(run.glossary, run.notes ?? "", run.config.contextLimit, run.knowledge === true)));
 
   const base = { configHash: configHash(run), sourceHash: block.textHash };
   if (!budget.fits || block.estimatedTokens > budget.room) {
@@ -175,9 +179,10 @@ export function buildPrompt(
 
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
-  const kb = fitMaterial(material ?? backupMaterial(run.glossary, run.notes ?? "", text), knowledgeCap(run.config.contextLimit));
+  const reserve = knowledgeReserve(run.glossary, run.notes ?? "", run.config.contextLimit, run.knowledge === true);
+  const kb = fitMaterial(material ?? backupMaterial(run.glossary, run.notes ?? "", text), reserve);
   const glossary = kb.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const user = renderUserMessage(glossary, context, text, kb.notes);
+  const user = renderUserMessage(glossary, context, text, kb.notes, { summary: kb.summary, scene: kb.scene });
   return {
     messages: [
       { role: "system", content: system },
@@ -208,6 +213,8 @@ export function blockSettingsHash(revision: SourceRevision, blockIndex: number, 
       p: run.prompt ? sha256Hex(`${run.prompt.appendFraming}\n${run.prompt.template}`) : "standard-v1",
       g: glossary,
       ...(notes.length > 0 ? { n: notes } : {}),
+      ...(chosen.scene ? { sc: chosen.scene } : {}),
+      ...(chosen.summary ? { su: chosen.summary } : {}),
     }),
   );
 }

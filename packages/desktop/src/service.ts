@@ -2,14 +2,17 @@ import {
   allPrompts,
   analysisSystemPrompt,
   blockText,
-  chosenEntries,  entriesFromLegacy,
+  blockMaterial,
+  entriesFromLegacy,
   entriesFromText,
   entriesToConsider,
   fitMaterial,
   knowledgeCap,
   knowledgeReserve,
-  materialFromEntries,
+  mergeSummary,
   mergeSuggestions,
+  summarySystemPrompt,
+  summaryUserMessage,
   parseKnowledge,
   parseResearchReply,
   researchBatches,
@@ -47,6 +50,9 @@ import {
   type AnalyzeResult,
   type BlockCellView,
   type BlockMaterial,
+  type KnownTerm,
+  type SummarizeInput,
+  type SummarizeResult,
   type BlockOutput,
   type CancelInput,
   type DemoOptions,
@@ -159,6 +165,8 @@ interface RunPlan {
   style: PromptPreset;
   glossary: GlossaryEntry[];
   notes: string;
+  /** The project has a knowledge base, so room is kept in requests for what it adds. */
+  knowledge: boolean;
 }
 
 /**
@@ -259,6 +267,11 @@ export class WorkspaceService {
     return this.snapshot();
   }
 
+  private hasKnowledge(): boolean {
+    const c = this.knowledge.counts();
+    return c.terms + c.notes + c.scenes + c.summaries > 0;
+  }
+
   /** What a run draws on: anything passed in with the request, plus the project's knowledge (which wins for the same word). */
   private effectiveKnowledge(glossaryInput: readonly GlossaryEntry[], notesInput: string | undefined): { glossary: GlossaryEntry[]; notes: string } {
     const stored = splitEntries(this.knowledge.all());
@@ -301,6 +314,7 @@ export class WorkspaceService {
         style,
         glossary: glossary.entries,
         notes: merged.notes,
+        knowledge: this.hasKnowledge(),
       };
     });
     if (new Set(plans.map((p) => p.label)).size !== plans.length) {
@@ -419,6 +433,7 @@ export class WorkspaceService {
     coordinator.updateRunSettings(runId, {
       glossary: plan.glossary,
       notes: plan.notes,
+      knowledge: plan.knowledge,
       prompt: snapshotPrompt(plan.style),
       config: { contextLimit: plan.contextLimit, maxOutputTokens: plan.maxOutputTokens, temperature: plan.temperature },
     });
@@ -449,7 +464,7 @@ export class WorkspaceService {
   private isOutdated(revision: SourceRevision, index: number, output: BlockOutput | undefined, current: Pick<ModelRun, "modelId" | "glossary" | "notes" | "prompt" | "config">): boolean {
     if (!output) return false;
     const attempt = producingAttempt(output);
-    return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current, this.materialFor(blockText(revision, revision.blocks[index]!)));
+    return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current, this.materialFor(blockText(revision, revision.blocks[index]!), this.documentOfRevision(revision.id)));
   }
 
   /** Re-checks one block after something happened to it (an attempt finished, a new version was accepted). */
@@ -482,6 +497,7 @@ export class WorkspaceService {
       prompt: snapshotPrompt(p.style),
       glossary: p.glossary,
       notes: p.notes,
+      knowledge: p.knowledge,
     }).id;
   }
 
@@ -490,13 +506,13 @@ export class WorkspaceService {
   }
 
   /** What one model run needs to know to work out how large a block may be. */
-  private budgetInput(p: { label: string; contextLimit: number; maxOutputTokens: number; style: { template: string; appendFraming: boolean }; glossary: GlossaryEntry[]; notes: string }, input: Pick<StartJobInput, "sourceLanguage" | "targetLanguage">) {
+  private budgetInput(p: { label: string; contextLimit: number; maxOutputTokens: number; style: { template: string; appendFraming: boolean }; glossary: GlossaryEntry[]; notes: string; knowledge: boolean }, input: Pick<StartJobInput, "sourceLanguage" | "targetLanguage">) {
     return {
       label: p.label,
       contextLimit: p.contextLimit,
       outputReserve: p.maxOutputTokens,
       systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
-      glossaryTokens: knowledgeReserve(p.glossary, p.notes, p.contextLimit),
+      glossaryTokens: knowledgeReserve(p.glossary, p.notes, p.contextLimit, p.knowledge),
     };
   }
 
@@ -534,7 +550,7 @@ export class WorkspaceService {
       .filter((m) => m.name.trim() !== "")
       .map((m) => {
         const style = styles.find((p) => p.id === m.promptId) ?? styles[0]!;
-        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles), style, glossary, notes: merged.notes };
+        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles), style, glossary, notes: merged.notes, knowledge: this.hasKnowledge() };
       });
     const limits = this.sizeLimits(input);
     const plan = planChunking(plans.map((p) => this.budgetInput(p, input)), limits);
@@ -995,7 +1011,7 @@ export class WorkspaceService {
       },
       // The practice translator only echoes text, so only the glossary check is meaningful for it.
       checks: (run) => (run.providerRefId === "practice" ? "terms" : "all"),
-      material: (_run, blockText) => this.materialFor(blockText),
+      material: (run, blockText) => this.materialFor(blockText, this.documentOfRevision(run.revisionId)),
       ...(this.options.checkpoint ? { checkpoint: this.options.checkpoint } : {}),
     });
     coordinator.onEvent((e) => this.onCoordinatorEvent(e));
@@ -1123,14 +1139,32 @@ export class WorkspaceService {
     return reply;
   }
 
-  /** Asks a model to read one passage and suggest names, hints and notes. They are added as suggestions. */
+  /** The known people and terms with their facts, as many as fit in `capTokens`. */
+  private knownTerms(capTokens: number): KnownTerm[] {
+    const entries = this.knowledge.all();
+    const out: KnownTerm[] = [];
+    let left = capTokens;
+    for (const t of entries.filter((e) => e.kind === "term")) {
+      const known = { source: t.source, target: t.target, hint: t.hint, facts: entries.filter((e) => e.kind === "note" && e.about === t.id).map((e) => e.text) };
+      const cost = estimateTokens([t.source, t.target, t.hint, ...known.facts].join(" "));
+      if (cost > left) break;
+      left -= cost;
+      out.push(known);
+    }
+    return out;
+  }
+
+  /**
+   * Asks a model to read one passage and add what it finds to the knowledge base as suggestions: people and terms,
+   * facts about them, and a description of the scene. Facts are attached to the person they are about.
+   */
   async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     const abort = this.beginSideRequest();
     try {
-      const known = splitEntries(this.knowledge.all());
+      const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && e.scope.block === input.block - 1);
       const messages = [
         { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
-        { role: "user" as const, content: analysisUserMessage(fitMaterial({ glossary: known.glossary, notes: parseKnowledge(known.notes).notes.map((n) => n.text) }, knowledgeCap(input.contextLimit)), input.passage) },
+        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(knowledgeCap(input.contextLimit)), previousScene: previous?.text }, input.passage) },
       ];
       const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
       if (needed > input.contextLimit) {
@@ -1142,18 +1176,83 @@ export class WorkspaceService {
           modelId: input.modelId,
           maxOutputTokens: input.maxOutputTokens,
           messages,
-          practiceReply: () => (input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: Practice mode: these notes are examples." : "NONE"),
+          practiceReply: () =>
+            input.passage.includes("彼")
+              ? "PERSON: 彼 = He # practice mode: an example, not written by a model\nFACT: 彼 | Practice mode: this fact is an example.\nSCENE: 彼 | Practice mode: this scene description is an example."
+              : "SCENE: Practice mode: this scene description is an example.",
         },
         abort,
       );
       if (reply === null) return { added: 0, canceled: true };
       const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle, block: input.block };
-      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, { newId, now: () => new Date().toISOString() });
-      if (merged.added > 0) {
+      const scope = { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block };
+      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, scope, { newId, now: () => new Date().toISOString() });
+      if (merged.added > 0 || JSON.stringify(merged.entries) !== JSON.stringify(this.knowledge.all())) {
         this.knowledge.replaceWith(merged.entries);
         this.knowledgeChanged();
       }
       return { added: merged.added, canceled: false };
+    } finally {
+      this.analysisAbort = null;
+    }
+  }
+
+  /** Writes an abridged version of a document from the scene descriptions found in it (in several steps if there are many). */
+  async summarize(input: SummarizeInput): Promise<SummarizeResult> {
+    const abort = this.beginSideRequest();
+    try {
+      const scenes = this.knowledge
+        .all()
+        .filter((e) => e.kind === "scene" && e.scope?.documentId === input.documentId)
+        .sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))
+        .map((e) => e.text);
+      const done = this.knowledge.all().find((e) => e.kind === "summary" && e.scope?.documentId === input.documentId && e.status === "confirmed");
+      if (scenes.length === 0 || done) return { updated: false, canceled: false };
+      const system = summarySystemPrompt(input.sourceLanguage, input.targetLanguage);
+      const reply = Math.min(input.maxOutputTokens, 400);
+      const room = input.contextLimit - estimateTokens(system) - reply - DEFAULTS.messageOverheadTokens - 60;
+      if (room < 120) throw new UserError("context_overflow", "The model's context is too small to write a summary. Raise the context size for this model.");
+      const ask = (title: string, parts: string[]) =>
+        this.askModel(
+          {
+            backend: input.backend,
+            modelId: input.modelId,
+            maxOutputTokens: reply,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: summaryUserMessage(title, parts) },
+            ],
+            practiceReply: () => `Practice mode: this summary is an example, built from ${parts.length} scene descriptions.`,
+          },
+          abort,
+        );
+      // Group the scenes so each group fits, summarize each group, then summarize the summaries.
+      let level = scenes;
+      for (let pass = 0; pass < 3; pass++) {
+        const groups: string[][] = [];
+        let used = 0;
+        for (const s of level) {
+          const cost = estimateTokens(s) + 6;
+          if (groups.length === 0 || used + cost > room) (groups.push([s]), (used = cost));
+          else (groups.at(-1)!.push(s), (used += cost));
+        }
+        const parts: string[] = [];
+        for (const g of groups) {
+          const r = await ask(input.documentTitle, g);
+          if (r === null) return { updated: false, canceled: true };
+          parts.push(r.trim());
+        }
+        level = parts;
+        if (groups.length === 1) break;
+      }
+      const text = level.join(" ").trim();
+      const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle };
+      const merged = mergeSummary(this.knowledge.all(), text, { documentId: input.documentId }, origin, { newId, now: () => new Date().toISOString() });
+      if (merged.updated) {
+        this.knowledge.replaceWith(merged.entries);
+        this.knowledgeChanged();
+      }
+      return { updated: merged.updated, canceled: false };
     } finally {
       this.analysisAbort = null;
     }
@@ -1165,11 +1264,14 @@ export class WorkspaceService {
   private research = new Map<string, ResearchRecord>();
 
   /** The background chosen for a block, or undefined if no one has looked through the knowledge for it (a backup is used then). */
-  private materialFor(blockText: string): BlockMaterial | undefined {
-    const entries = this.knowledge.all();
-    if (entries.length === 0) return undefined;
-    const chosen = chosenEntries(entries, this.research.get(sha256Hex(blockText)));
-    return chosen === null ? undefined : materialFromEntries(chosen);
+  private materialFor(blockText: string, documentId: string | null): BlockMaterial | undefined {
+    const hash = sha256Hex(blockText);
+    return blockMaterial(this.knowledge.all(), this.research.get(hash)?.ids ?? null, hash, documentId) ?? undefined;
+  }
+
+  /** Which document a version of the text belongs to. */
+  private documentOfRevision(revisionId: string): string | null {
+    return this.docs.find((d) => d.versions.some((v) => v.revision.id === revisionId))?.id ?? null;
   }
 
   /**

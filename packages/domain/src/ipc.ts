@@ -71,6 +71,7 @@ export interface AnalyzeInput {
   targetLanguage: string;
   passage: string;
   /** Where the passage is from, so what the model finds can say where it came from. */
+  documentId: string;
   documentTitle: string;
   /** Number of the block (starting at 1). */
   block: number;
@@ -90,8 +91,26 @@ export interface ResearchInput {
 export interface ResearchResult {
   /** False when nothing needed asking (nothing is known yet, or this block was already looked through). */
   asked: boolean;
-  /** How many entries are now chosen for this block, not counting pinned ones. */
+  /** How many entries are now chosen for this block. */
   chosen: number;
+  canceled: boolean;
+}
+
+/** Ask a model to write an abridged version of a document from the scene descriptions found in it. */
+export interface SummarizeInput {
+  backend: Backend;
+  modelId: string;
+  contextLimit: number;
+  maxOutputTokens: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  documentId: string;
+  documentTitle: string;
+}
+
+export interface SummarizeResult {
+  /** False when there was nothing to summarize, or the user had already confirmed a summary. */
+  updated: boolean;
   canceled: boolean;
 }
 
@@ -224,6 +243,7 @@ export interface CommandMap {
   "notes.analyze": AnalyzeInput;
   "notes.cancel": undefined;
   "research.block": ResearchInput;
+  "knowledge.summarize": SummarizeInput;
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
   "knowledge.remove": { ids: string[] };
@@ -236,12 +256,13 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
   "research.block": ResearchResult;
+  "knowledge.summarize": SummarizeResult;
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
   "knowledge.remove": { removed: number };
@@ -288,6 +309,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "notes.analyze",
   "notes.cancel",
   "research.block",
+  "knowledge.summarize",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

@@ -48,14 +48,15 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           return;
         }
         const researching = j.messages[0]!.content.includes("prepare background for a translator");
-        const reading = researching || j.messages[0]!.content.includes("help a translator prepare");
+        const summarizing = j.messages[0]!.content.includes("abridged version of the chapter");
+        const reading = researching || summarizing || j.messages[0]!.content.includes("help a translator prepare");
         const source = reading ? "" : parseUserMessage(j.messages[1]!.content)!.sourceBlock;
         if (opts.failBlock && source.includes(opts.failBlock)) {
           res.writeHead(400, { "content-type": "application/json" }).end('{"error":{"message":"Trying to keep the first 9000 tokens when context overflows"}}');
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = reading ? (researching ? (opts.researchReply ?? "NONE") : (opts.analysisReply ?? "NONE")) : `EN(${j.model}): ${fakeEnglish(source)}`;
+        const text = reading ? (summarizing ? "A short summary of the chapter." : researching ? (opts.researchReply ?? "NONE") : (opts.analysisReply ?? "NONE")) : `EN(${j.model}): ${fakeEnglish(source)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -346,7 +347,7 @@ describe("storage", () => {
   });
 });
 
-describe("suggested notes", () => {
+describe("suggested knowledge", () => {
   const ask = (over = {}) => ({
     backend: "provider" as const,
     modelId: "qwen2.5-7b-instruct",
@@ -355,25 +356,57 @@ describe("suggested notes", () => {
     sourceLanguage: "Japanese",
     targetLanguage: "English",
     passage: "「え、だって花子、昨日は休みだったんだろ？」",
+    documentId: "doc1",
     documentTitle: "Chapter 1",
     block: 3,
     ...over,
   });
+  const reply = "PERSON: 花子 = Hanako # girl\nFACT: 花子 | Is addressed by her first name.\nSCENE: 花子 | Taro asks Hanako why she was absent yesterday.";
 
-  it("asks the model to read a passage and returns the people and notes it found", async () => {
-    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: The speaker is talking to Hanako." });
+  it("reads a passage and adds terms, facts attached to their person, and a scene tied to the block", async () => {
+    const lm = await fakeLmStudio({ analysisReply: reply });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const r = await service.analyze(ask());
-    expect(r).toEqual({ added: 2, canceled: false });
+    expect(r).toEqual({ added: 3, canceled: false });
     const origin = { by: "model", model: "qwen2.5-7b-instruct", documentTitle: "Chapter 1", block: 3 };
-    expect(service.knowledgeList({}).entries).toMatchObject([
-      { kind: "term", source: "花子", target: "Hanako", hint: "girl", status: "suggested", origin },
-      { kind: "note", text: "The speaker is talking to Hanako.", status: "suggested", origin },
-    ]);
-    expect(service.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1, suggested: 2 });
+    const [term, fact, scene] = service.knowledgeList({}).entries;
+    expect(term).toMatchObject({ kind: "term", source: "花子", target: "Hanako", hint: "girl", status: "suggested", origin });
+    expect(fact).toMatchObject({ kind: "note", about: term!.id, text: "Is addressed by her first name." });
+    expect(scene).toMatchObject({ kind: "scene", related: [term!.id], scope: { documentId: "doc1", block: 3 }, text: "Taro asks Hanako why she was absent yesterday." });
+    expect(service.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1, scenes: 1, suggested: 3 });
     const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] }).at(-1)!;
     expect(sent.messages[1]!.content).toContain("PASSAGE:\n「え、だって花子");
+  });
+
+  it("tells the next passage what the scene before it was, and removing a person removes their facts", async () => {
+    const lm = await fakeLmStudio({ analysisReply: reply });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await service.analyze(ask({ block: 1 }));
+    await service.analyze(ask({ block: 2, passage: "次の文。" }));
+    const bodies = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
+    expect(bodies[1]!.messages[1]!.content).toContain("The passage before this one: Taro asks Hanako");
+    expect(bodies[1]!.messages[1]!.content).toContain("花子 = Hanako # girl\n  fact: Is addressed by her first name.");
+    const person = service.knowledgeList({ kind: "term" }).entries[0]!;
+    service.knowledgeRemove([person.id]);
+    expect(service.knowledgeList({}).entries.map((e) => e.kind)).toEqual(["scene", "scene"]);
+    expect(service.knowledgeList({ kind: "scene" }).entries.every((e) => e.related.length === 0)).toBe(true);
+  });
+
+  it("writes a summary of a document from its scenes, and keeps one the user confirmed", async () => {
+    const lm = await fakeLmStudio({ analysisReply: reply });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const sum = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", documentId: "doc1", documentTitle: "Chapter 1" };
+    expect(await service.summarize(sum)).toEqual({ updated: false, canceled: false }); // no scenes yet
+    await service.analyze(ask());
+    expect(await service.summarize(sum)).toEqual({ updated: true, canceled: false });
+    const summary = service.knowledgeList({ kind: "summary" }).entries[0]!;
+    expect(summary).toMatchObject({ text: "A short summary of the chapter.", status: "suggested", scope: { documentId: "doc1" } });
+    service.knowledgeSave({ id: summary.id, kind: "summary", source: "", target: "", hint: "", text: "My own summary.", about: null });
+    expect(await service.summarize(sum)).toEqual({ updated: false, canceled: false });
+    expect(service.knowledgeList({ kind: "summary" }).entries[0]!.text).toBe("My own summary.");
   });
 
   it("explains a problem in plain words and does not run while translating", async () => {
@@ -389,7 +422,7 @@ describe("suggested notes", () => {
 
 describe("choosing the background for each block", () => {
   const ask = (passage: string, over = {}) => ({ backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage, ...over });
-  const save = (service: ReturnType<typeof setup>["service"], source: string, target: string, hint = "") => service.knowledgeSave({ kind: "term", source, target, hint, text: "", pinned: false });
+  const save = (service: ReturnType<typeof setup>["service"], source: string, target: string, hint = "") => service.knowledgeSave({ kind: "term", source, target, hint, text: "", about: null });
   const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
 
   it("lets a model choose, so a person who is only implied still reaches the translation", async () => {
@@ -423,16 +456,26 @@ describe("choosing the background for each block", () => {
     expect(last).not.toContain("魔王");
   });
 
-  it("sends pinned entries with every block without asking", async () => {
-    const lm = await fakeLmStudio({ researchReply: "NONE" });
+  it("gives a block its own scene, the summary, the people present and the facts about them", async () => {
+    const lm = await fakeLmStudio({ researchReply: "NONE", analysisReply: "PERSON: 花子 = Hanako # girl\nFACT: 花子 | Speaks politely.\nSCENE: 花子 | Hanako greets someone at the gate." });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "Keep honorifics.", pinned: true });
-    const r = await service.researchBlock(ask("本文。"));
-    expect(r.asked).toBe(false);
-    service.start(job({ text: "本文。" }));
+    const text = "「おはよう」";
+    const base = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English" };
+    service.start(job({ text })); // creates the document the knowledge is about
     await service.whenIdle();
-    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- Keep honorifics.");
+    const doc = service.snapshot().activeDocumentId;
+    await service.analyze({ ...base, passage: text, documentId: doc, documentTitle: "Document 1", block: 1 });
+    await service.summarize({ ...base, documentId: doc, documentTitle: "Document 1" });
+    await service.researchBlock({ ...base, passage: text });
+    const before = bodies(lm).length;
+    service.start(job({ text, rerun: ["qwen2.5-7b-instruct"] }));
+    await service.whenIdle();
+    const sent = bodies(lm).slice(before).at(-1)!.messages[1]!.content;
+    expect(sent).toContain("SCENE (what is happening around this block; reference only, do not translate):\nHanako greets someone at the gate.");
+    expect(sent).toContain("STORY SO FAR");
+    expect(sent).toContain("- Hanako: Speaks politely.");
+    expect(parseUserMessage(sent)!.glossary).toEqual([{ source: "花子", target: "Hanako" }]); // present in the scene, though the text never names her
   });
 
   it("splits a long list over several requests and reports a model that is too small", async () => {

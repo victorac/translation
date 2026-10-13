@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KnowledgeEntry } from "./entries.js";
-import { chosenEntries, entriesToConsider, entryLine, parseResearchReply, researchBatches, researchUserMessage, updateRecord } from "./research.js";
+import { entriesToConsider, entryLine, parseResearchReply, researchBatches, researchUserMessage, updateRecord } from "./research.js";
 
 const e = (id: string, over: Partial<KnowledgeEntry> = {}): KnowledgeEntry => ({
   id,
@@ -9,14 +9,15 @@ const e = (id: string, over: Partial<KnowledgeEntry> = {}): KnowledgeEntry => ({
   target: id.toUpperCase(),
   hint: "",
   text: "",
-  pinned: false,
+  about: null,
+  related: [],
+  scope: null,
   origin: { by: "user" },
   status: "confirmed",
   updatedAt: "2026-01-01T00:00:00.000Z",
   ...over,
 });
 const note = (id: string, text: string, over: Partial<KnowledgeEntry> = {}) => e(id, { kind: "note", source: "", target: "", text, ...over });
-
 describe("research prompt and reply", () => {
   it("shows entries as a numbered list before the passage", () => {
     const m = researchUserMessage("本文", [e("a", { hint: "girl" }), note("n", "She speaks politely.")]);
@@ -42,18 +43,20 @@ describe("research prompt and reply", () => {
 });
 
 describe("what is remembered about a passage", () => {
-  const all = [e("a"), e("b"), note("n", "x"), e("p", { pinned: true })];
+  const fact = note("f", "A fact about a.", { about: "a" });
+  const scene = e("sc", { kind: "scene", text: "A scene.", scope: { documentId: "d", blockHash: "h" } });
+  const all = [e("a"), e("b"), note("n", "x"), fact, scene];
 
-  it("considers everything the first time, except pinned entries", () => {
+  it("considers terms and loose notes, not facts attached to a term, scenes or summaries", () => {
     expect(entriesToConsider(all, undefined).map((x) => x.id)).toEqual(["a", "b", "n"]);
   });
 
   it("later considers only entries that are new or changed", () => {
-    const rec = updateRecord(undefined, all, all, ["a"], "2026-02-01T00:00:00.000Z");
+    const rec = updateRecord(undefined, all, all.filter((x) => ["a", "b", "n"].includes(x.id)), ["a"], "2026-02-01T00:00:00.000Z");
     expect(rec).toEqual({ ids: ["a"], seen: ["a", "b", "n"], at: "2026-02-01T00:00:00.000Z" });
     expect(entriesToConsider(all, rec)).toEqual([]);
-    const later = [...all, e("c"), { ...all[1]!, updatedAt: "2026-03-01T00:00:00.000Z" }].filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i);
-    later[1] = { ...all[1]!, updatedAt: "2026-03-01T00:00:00.000Z" };
+    const later = [...all, e("c"), { ...e("b"), updatedAt: "2026-03-01T00:00:00.000Z" }].filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i);
+    later[1] = { ...e("b"), updatedAt: "2026-03-01T00:00:00.000Z" };
     expect(entriesToConsider(later, rec).map((x) => x.id)).toEqual(["b", "c"]);
   });
 
@@ -62,12 +65,5 @@ describe("what is remembered about a passage", () => {
     const changed = [e("a", { updatedAt: "t1" })];
     const next = updateRecord(rec, changed, changed, [], "t2");
     expect(next.ids).toEqual([]); // "a" was reconsidered and not chosen; "b" no longer exists
-  });
-
-  it("gives a block what was chosen plus what is pinned, or says nobody looked yet", () => {
-    const rec = { ids: ["b", "n"], seen: ["a", "b", "n"], at: "t" };
-    expect(chosenEntries(all, rec)!.map((x) => x.id)).toEqual(["b", "n", "p"]);
-    expect(chosenEntries(all, undefined)).toBeNull();
-    expect(chosenEntries([], undefined)).toEqual([]);
   });
 });
