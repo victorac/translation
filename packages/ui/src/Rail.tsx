@@ -1,9 +1,11 @@
 import type { ModelSetting, RunView, WorkspaceSnapshot } from "@ltw/domain";
+import { ConnectionStatus } from "./ConnectionStatus";
 import { Menu, Popover } from "./Popover";
 import { ModelEditor } from "./ModelEditor";
 import { IconButton } from "./Cell";
 import { countCells } from "./status";
-import { labelOf, type SetupState } from "./setup";
+import { labelOf, newModel, type SetupState } from "./setup";
+import type { useProvider } from "./useProvider";
 import type { useWorkspace } from "./useWorkspace";
 
 type Send = ReturnType<typeof useWorkspace>["send"];
@@ -26,6 +28,8 @@ export function Rail({
   discovered,
   viewingLatest,
   onRunAgain,
+  provider,
+  onSettings,
 }: {
   snap: WorkspaceSnapshot | null;
   setup: SetupState;
@@ -36,6 +40,8 @@ export function Rail({
   discovered: string[];
   viewingLatest: boolean;
   onRunAgain: (label: string) => void;
+  provider: ReturnType<typeof useProvider>;
+  onSettings: () => void;
 }) {
   const runs = snap?.runs ?? [];
   const busy = snap?.busy ?? false;
@@ -68,18 +74,46 @@ export function Rail({
           )}
         >
           {(close) => (
-            <ModelEditor
-              initial={null}
-              setup={setup}
-              discovered={discovered}
-              takenLabels={takenLabels(-1)}
-              existingRun={false}
-              onSave={(m) => {
-                onSetup({ ...setup, models: [...setup.models, m] });
-                close();
-              }}
-              onCancel={close}
-            />
+            <>
+              {discovered.length > 0 && (
+                <div className="quick-add">
+                  <span className="hint">From the server — click to add</span>
+                  <ul className="chips">
+                    {discovered.map((id) => {
+                      const taken = takenLabels(-1).has(labelOf(newModel(id), setup));
+                      return (
+                        <li key={id}>
+                          <button
+                            className="chip"
+                            disabled={taken}
+                            onClick={() => {
+                              onSetup({ ...setup, models: [...setup.models, newModel(id)] });
+                              close();
+                            }}
+                          >
+                            {taken ? "✓ " : "+ "}
+                            {id}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <span className="hint">…or type a name below</span>
+                </div>
+              )}
+              <ModelEditor
+                initial={null}
+                setup={setup}
+                discovered={discovered}
+                takenLabels={takenLabels(-1)}
+                existingRun={false}
+                onSave={(m) => {
+                  onSetup({ ...setup, models: [...setup.models, m] });
+                  close();
+                }}
+                onCancel={close}
+              />
+            </>
           )}
         </Popover>
       </div>
@@ -178,6 +212,8 @@ export function Rail({
           </ul>
         </details>
       )}
+      <div className="rail-spacer" />
+      <ConnectionStatus backend={setup.backend} provider={provider} onSettings={onSettings} />
     </nav>
   );
 }

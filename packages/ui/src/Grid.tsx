@@ -43,7 +43,7 @@ export function Grid({
 
   return (
     <div className="grid-scroll">
-      <div className={edited ? "grid dimmed" : "grid"} style={{ gridTemplateColumns: template }}>
+      <div className={edited ? "grid dimmed" : "grid"} style={{ gridTemplateColumns: template, gridTemplateRows: `auto repeat(${rows}, auto) minmax(0, 1fr)` }}>
         <div className="gh source-head" style={{ gridRow: 1, gridColumn: 1 }}>
           <span className="gh-title">Source</span>
           {hasBlocks && <span className="hint">{blocks.length} blocks</span>}
@@ -77,7 +77,7 @@ export function Grid({
         {(mode === "text" || !hasBlocks) && !readOnlyOld ? (
           <textarea
             className="source-editor"
-            style={{ gridRow: `2 / span ${rows}`, gridColumn: 1 }}
+            style={{ gridRow: `2 / span ${rows + 1}`, gridColumn: 1 }}
             aria-label="Source text"
             placeholder="Paste or type the text here, add a model, then press Run."
             value={text}

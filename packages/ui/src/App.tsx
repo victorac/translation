@@ -138,7 +138,8 @@ export function App() {
   const confirmDiscard = (what: string): boolean => !snap?.project.dirty || window.confirm(`This project has unsaved changes. ${what} will discard them. Continue?`);
   const project = snap?.project;
   const visibleRuns = (snap?.runs ?? []).filter((r) => !hidden.has(r.label));
-  const discovered = provider.test?.ok ? provider.test.models : [];
+  // Embedding models cannot translate; leave them out of the suggestions (they can still be typed in).
+  const discovered = provider.test?.ok ? provider.test.models.filter((id) => !/embed/i.test(id)) : [];
 
   return (
     <div className="app">
@@ -244,6 +245,8 @@ export function App() {
           discovered={discovered}
           viewingLatest={viewingLatest}
           onRunAgain={(label) => void run([label])}
+          provider={provider}
+          onSettings={() => setTab("server")}
         />
 
         <main className="center">

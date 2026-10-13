@@ -86,7 +86,7 @@ export function ModelEditor({
         </label>
         <label title="The most text the model may write for one block. Thinking models need room for their thinking too.">
           Reply limit
-          <input type="number" min={16} step={128} value={m.maxOutputTokens} onChange={(e) => set({ maxOutputTokens: Math.floor(Number(e.target.value)) })} />
+          <input type="number" min={128} step={128} value={m.maxOutputTokens} onChange={(e) => set({ maxOutputTokens: Math.floor(Number(e.target.value)) })} />
         </label>
         <label>
           Temp.
