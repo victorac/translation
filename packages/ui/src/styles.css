@@ -308,3 +308,15 @@ details > summary { cursor: pointer; }
 .panes, .pane-split { align-items: stretch; }
 .pane-head:hover .head-close, .pane-head:focus-within .head-close { opacity: 1; }
 .pane-divider, .pane-head { user-select: none; }
+.kb-editor { height: 100%; min-height: 12rem; min-width: 0; flex: 1; display: flex; }
+.kb-editor .cm-editor { flex: 1; min-width: 0; }
+.cm-kb-comment { color: var(--muted); }
+.cm-kb-source { font-weight: 600; }
+.cm-kb-sep { color: var(--muted); }
+.cm-kb-hint { color: var(--muted); font-style: italic; }
+.cm-kb-keys { color: var(--accent); }
+.cm-kb-note { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cm-kb-problem { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.cm-kb-msg { color: var(--danger); font-size: 0.85em; }
+.kb-pane { display: flex; flex-direction: column; gap: 0.4rem; min-height: 0; flex: 1; }
+.kb-meta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; }

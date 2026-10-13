@@ -8,6 +8,7 @@ import {
   currentVersion,
   newId as defaultNewId,
   PROMPT_VERSION,
+  stripThinking,
   usableText,
   type Attempt,
   type BlockOutput,
@@ -654,12 +655,14 @@ export class Coordinator {
     }
     this.active = null;
     attempt.endedAt = this.now();
-    attempt.rawOutput = draft;
+    // A model may write its thinking into the reply; that is never part of the translation.
+    const finalText = stripThinking(draft);
+    attempt.rawOutput = finalText;
 
     if (terminal?.type === "finish") {
       if (terminal.usage) attempt.usage = terminal.usage;
       attempt.finishReason = terminal.reason;
-      if (draft.trim() === "") {
+      if (finalText.trim() === "") {
         this.failAttempt(j, run, out, attempt, {
           code: "invalid_response",
           message: emptyReplyMessage(terminal.reason, terminal.usage?.outputTokens ?? undefined, terminal.reasoningSeen === true, run.config.maxOutputTokens),
@@ -667,7 +670,7 @@ export class Coordinator {
         this.setBlockState(run.id, out, "failed");
         return { kind: "done" };
       }
-      if (looksLikeEcho(draft)) {
+      if (looksLikeEcho(finalText)) {
         // The model wrote the request back instead of translating. Keeping it would also poison the next block's context.
         this.failAttempt(j, run, out, attempt, {
           code: "echoed_request",

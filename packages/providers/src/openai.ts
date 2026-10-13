@@ -111,6 +111,9 @@ export class OpenAICompatibleProvider implements TranslationProvider {
         temperature: request.temperature,
         max_tokens: request.maxOutputTokens,
         stream: request.stream,
+        // Translation does not need the model to think first. Servers that read this switch (llama.cpp, vLLM, and the
+        // engines behind LM Studio) turn thinking off for models that have it; others ignore the field.
+        chat_template_kwargs: { enable_thinking: false },
       });
       const res = await this.send("POST", endpointUrl(target.baseUrl, "chat/completions"), body, config, run, request.stream);
       if (!res.ok) {

@@ -185,7 +185,7 @@ describe("glossary and prompt styles", () => {
     expect(run.label).toBe("alpha");
     expect(Object.values(run.blocks)[0]!.text).toContain("paragraph");
     expect(run.outdated).toBe(0);
-    s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }), notes: "Hanako is a girl who speaks politely." });
+    s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }), notes: "> Hanako is a girl who speaks politely." });
     expect(s.snapshot().runs[0]!.outdated).toBeGreaterThan(0);
   });
 

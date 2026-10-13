@@ -1,3 +1,4 @@
+import type { KnowledgeNote } from "./knowledge.js";
 import type { ProjectSettings } from "./project.js";
 import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
@@ -69,14 +70,13 @@ export interface AnalyzeInput {
   sourceLanguage: string;
   targetLanguage: string;
   passage: string;
-  /** What is already known, so the model does not repeat it. */
-  glossary: GlossaryEntry[];
-  notes: string;
+  /** The project's knowledge text; only what applies to this passage is sent, so the model does not repeat it. */
+  knowledge: string;
 }
 
 export interface AnalyzeResult {
   characters: GlossaryEntry[];
-  notes: string[];
+  notes: KnowledgeNote[];
   /** True when the user stopped it; nothing was found in that case. */
   canceled: boolean;
 }
@@ -92,6 +92,8 @@ export interface StartJobInput {
   glossary: GlossaryEntry[];
   /** Background about the story and its people, sent with every block. */
   notes?: string | undefined;
+  /** The knowledge text the terms and notes came from; kept so the project can show it as it was written. */
+  knowledge?: string | undefined;
   /** The user's own translation styles (the built-in ones are always available). */
   prompts: PromptPreset[];
   /** How big each block should be. The models' own limits can make blocks smaller. */
@@ -131,7 +133,7 @@ export interface ConnectionTestResult {
 }
 
 /** The choices that decide how blocks are translated. Sent whenever they change, so retries use them. */
-export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "notes" | "prompts" | "blockSize">;
+export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "notes" | "knowledge" | "prompts" | "blockSize">;
 
 export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
 

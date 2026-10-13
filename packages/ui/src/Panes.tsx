@@ -3,7 +3,9 @@ import type { RunView, WorkspaceSnapshot } from "@ltw/domain";
 import type { PreviewBlock } from "./blockMarkers";
 import { Cell } from "./Cell";
 import type { SourceMode } from "./Grid";
-import { SOURCE_KEY } from "./layout";
+import { KNOWLEDGE_KEY, SOURCE_KEY } from "./layout";
+import { KnowledgePanel } from "./KnowledgePanel";
+import type { SetupState } from "./setup";
 import { placeView, reconcile, setRatio, type Edge, type PaneNode, type Path } from "./paneTree";
 import { SourceEditor } from "./SourceEditor";
 import { countCells } from "./status";
@@ -31,13 +33,19 @@ interface Props {
   onTree: (t: PaneNode) => void;
   onHide: (label: string) => void;
   linked: boolean;
+  /** Show the names-and-notes pane. */
+  showKnowledge: boolean;
+  onCloseKnowledge: () => void;
+  setup: SetupState;
+  onKnowledge: (text: string) => void;
+  passages: readonly string[];
 }
 
 /** Source and translations as panes that can be resized, dragged next to or above each other, and closed. */
 export function Panes(props: Props) {
   const { runs, tree, onTree, linked } = props;
   const hasBlocks = (props.snap.revision?.blocks.length ?? 0) > 0;
-  const views = [SOURCE_KEY, ...(hasBlocks ? runs.map((r) => r.label) : [])];
+  const views = [SOURCE_KEY, ...(props.showKnowledge ? [KNOWLEDGE_KEY] : []), ...(hasBlocks ? runs.map((r) => r.label) : [])];
   const effective = reconcile(tree, views);
   const root = useRef<HTMLDivElement>(null);
   const syncing = useRef(false);
@@ -167,7 +175,8 @@ function Leaf(
 ) {
   const { view, snap } = p;
   const isSource = view === SOURCE_KEY;
-  const run = isSource ? null : p.runs.find((r) => r.label === view) ?? null;
+  const isKb = view === KNOWLEDGE_KEY;
+  const run = isSource || isKb ? null : p.runs.find((r) => r.label === view) ?? null;
   const blocks = snap.revision?.blocks ?? [];
   const hasBlocks = blocks.length > 0;
   const c = run ? countCells(snap, run.id) : null;
@@ -185,7 +194,7 @@ function Leaf(
       onDragEnd={p.onFinish}
       title="Drag to place this pane beside or above another"
     >
-      <span className="gh-title">{isSource ? p.title : run?.label ?? view}</span>
+      <span className="gh-title">{isSource ? p.title : isKb ? "Names & notes" : run?.label ?? view}</span>
       {isSource && hasBlocks && <span className="hint">{blocks.length} blocks</span>}
       {isSource && p.edited && <span className="tag warn-tag">edited</span>}
       {c && (
@@ -205,7 +214,7 @@ function Leaf(
         </div>
       )}
       {!isSource && (
-        <button className="small head-close" draggable={false} aria-label={`Close ${view}`} title="Close this pane (bring it back from the side panel)" onClick={() => p.onHide(view)}>
+        <button className="small head-close" draggable={false} aria-label={`Close ${isKb ? "names and notes" : view}`} title="Close this pane (bring it back from the Layout menu or the side panel)" onClick={() => (isKb ? p.onCloseKnowledge() : p.onHide(view))}>
           ×
         </button>
       )}
@@ -215,7 +224,7 @@ function Leaf(
   return (
     <section
       className="pane"
-      aria-label={isSource ? "Source" : view}
+      aria-label={isSource ? "Source" : isKb ? "Names and notes" : view}
       onDragOver={(e) => {
         if (!p.dragging || p.dragging === view) return;
         e.preventDefault();
@@ -230,7 +239,9 @@ function Leaf(
     >
       {head}
       <div className="pane-body">
-        {isSource ? (
+        {isKb ? (
+          <KnowledgePanel setup={p.setup} passages={p.passages} onKnowledge={p.onKnowledge} />
+        ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />
           ) : (

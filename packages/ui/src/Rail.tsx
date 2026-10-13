@@ -47,7 +47,7 @@ export function Rail({
   provider: ReturnType<typeof useProvider>;
   onSettings: () => void;
   /** How the workspace is arranged, and ways to change it. */
-  layoutControl: { mode: "aligned" | "panes"; linked: boolean; onMode: (m: "aligned" | "panes") => void; onLinked: (l: boolean) => void; onReset: () => void };
+  layoutControl: { mode: "aligned" | "panes"; linked: boolean; onMode: (m: "aligned" | "panes") => void; onLinked: (l: boolean) => void; showKnowledge: boolean; onShowKnowledge: (s: boolean) => void; onReset: () => void };
   docs: {
     onSelect: (id: string) => void;
     onCreate: () => void;
@@ -97,6 +97,7 @@ export function Rail({
               { label: `${layoutControl.mode === "aligned" ? "✓ " : ""}Aligned columns`, onSelect: () => layoutControl.onMode("aligned") },
               { label: `${layoutControl.mode === "panes" ? "✓ " : ""}Free panes`, onSelect: () => layoutControl.onMode("panes") },
               { label: `${layoutControl.linked ? "✓ " : ""}Link scrolling (panes)`, onSelect: () => layoutControl.onLinked(!layoutControl.linked), disabled: layoutControl.mode !== "panes", separated: true },
+              { label: `${layoutControl.showKnowledge ? "✓ " : ""}Names & notes pane`, onSelect: () => layoutControl.onShowKnowledge(!layoutControl.showKnowledge), disabled: layoutControl.mode !== "panes" },
               { label: "Reset layout", onSelect: layoutControl.onReset },
             ]}
           />

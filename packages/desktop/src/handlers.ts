@@ -39,6 +39,7 @@ const startInput = z.object({
       .array(z.object({ source: z.string().max(1000), target: z.string().max(1000), note: z.string().max(1000).optional() }))
       .max(2000),
     notes: z.string().max(20_000).optional(),
+    knowledge: z.string().max(400_000).optional(),
     prompts: z
       .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
       .max(100),
@@ -52,7 +53,7 @@ const startInput = z.object({
     }),
   });
 
-const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, notes: true, prompts: true, blockSize: true });
+const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, notes: true, knowledge: true, prompts: true, blockSize: true });
 
 const schemas: Record<CommandName, z.ZodType> = {
   "workspace.snapshot": z.undefined(),
@@ -85,8 +86,7 @@ const schemas: Record<CommandName, z.ZodType> = {
     sourceLanguage: z.string().max(100),
     targetLanguage: z.string().max(100),
     passage: z.string().min(1).max(60_000),
-    glossary: z.array(z.object({ source: z.string().max(1000), target: z.string().max(1000), note: z.string().max(1000).optional() })).max(2000),
-    notes: z.string().max(20_000),
+    knowledge: z.string().max(400_000),
   }),
   "notes.cancel": z.undefined(),
   "job.cancel": z.discriminatedUnion("kind", [

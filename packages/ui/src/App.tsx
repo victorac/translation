@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeGlossary, normalizeSource } from "@ltw/domain/pure";
+import { normalizeGlossary, normalizeSource, splitKnowledge } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
 import { Grid, type SourceMode } from "./Grid";
 import { Panes } from "./Panes";
@@ -94,7 +94,7 @@ export function App() {
   // ---- what Run would do, and why it might not ----
   const startInput = useMemo(() => toStartInput(setup), [setup]);
   const split = useSplitPreview(startInput);
-  const glossaryProblem = normalizeGlossary(setup.glossary).problems[0] ?? null;
+  const glossaryProblem = normalizeGlossary(splitKnowledge(setup.knowledge).glossary).problems[0] ?? null;
   const splitProblem = split.preview ? (split.preview.problem ?? split.preview.issues[0] ?? null) : null;
   const runHint =
     setup.text.trim() === ""
@@ -260,7 +260,7 @@ export function App() {
               return next;
             })
           }
-          layoutControl={{ mode: columns.mode, linked: columns.linked, onMode: columns.setMode, onLinked: columns.setLinked, onReset: columns.reset }}
+          layoutControl={{ mode: columns.mode, linked: columns.linked, onMode: columns.setMode, onLinked: columns.setLinked, showKnowledge: columns.showKnowledge, onShowKnowledge: columns.setShowKnowledge, onReset: columns.reset }}
           discovered={discovered}
           viewingLatest={viewingLatest}
           onRunAgain={(label) => void run([label])}
@@ -316,6 +316,11 @@ export function App() {
                 onTree={columns.setTree}
                 onHide={(label) => setHidden((h) => new Set(h).add(label))}
                 linked={columns.linked}
+                showKnowledge={columns.showKnowledge}
+                onCloseKnowledge={() => columns.setShowKnowledge(false)}
+                setup={setup}
+                onKnowledge={(knowledge) => setSetup((s) => ({ ...s, knowledge }))}
+                passages={split.preview?.blocks.map((b) => b.text) ?? []}
               />
             ) : (
             <Grid

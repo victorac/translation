@@ -354,17 +354,16 @@ describe("suggested notes", () => {
     sourceLanguage: "Japanese",
     targetLanguage: "English",
     passage: "「え、だって花子、昨日は休みだったんだろ？」",
-    glossary: [],
-    notes: "",
+    knowledge: "",
     ...over,
   });
 
   it("asks the model to read a passage and returns the people and notes it found", async () => {
-    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: The speaker is talking to Hanako." });
+    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: 花子 | The speaker is talking to Hanako." });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const r = await service.analyze(ask());
-    expect(r).toEqual({ characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: ["The speaker is talking to Hanako."], canceled: false });
+    expect(r).toEqual({ characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: [{ keys: ["花子"], text: "The speaker is talking to Hanako." }], canceled: false });
     const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] }).at(-1)!;
     expect(sent.messages[1]!.content).toContain("PASSAGE:\n「え、だって花子");
   });

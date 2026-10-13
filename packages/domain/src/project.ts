@@ -36,6 +36,8 @@ export interface ProjectSettings {
   glossary: GlossaryEntry[];
   /** Background about the story and its people, sent with every block. */
   notes?: string | undefined;
+  /** The knowledge text (terms, hints, notes) as the user wrote it. Missing in older projects. */
+  knowledge?: string | undefined;
   /** The user's own translation styles. */
   prompts: PromptPreset[];
 }
@@ -175,6 +177,7 @@ const settingsSchema = z.object({
   models: z.array(modelSettingSchema).max(24),
   glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional() })).max(10_000),
   notes: z.string().max(20_000).optional(),
+  knowledge: z.string().max(400_000).optional(),
   prompts: z
     .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
     .max(100),

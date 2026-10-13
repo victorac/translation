@@ -114,6 +114,7 @@ describe("streaming generation", () => {
       temperature: 0.2,
       max_tokens: 1536,
       stream: true,
+      chat_template_kwargs: { enable_thinking: false },
     });
     expect(s.requests[0]!.headers.accept).toBe("text/event-stream");
   });

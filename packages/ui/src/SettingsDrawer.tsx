@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Backend, BlockSize, DemoOptions, SplitPreview } from "@ltw/domain";
 import { Connection } from "./Connection";
-import { GlossaryPanel } from "./GlossaryPanel";
+import { KnowledgePanel } from "./KnowledgePanel";
 import { PromptsPanel } from "./PromptsPanel";
 import { SplitPreviewView } from "./SplitPreviewView";
 import { newModel, type SetupState } from "./setup";
@@ -56,7 +56,7 @@ export function SettingsDrawer({
           {tabs.map((t) => (
             <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "tab active" : "tab"} onClick={() => onTab(t.id)}>
               {t.label}
-              {t.id === "glossary" && setup.glossary.length > 0 && <span className="count">{setup.glossary.length}</span>}
+              
               {t.id === "styles" && setup.prompts.length > 0 && <span className="count">{setup.prompts.length}</span>}
             </button>
           ))}
@@ -102,7 +102,7 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {tab === "glossary" && <GlossaryPanel value={setup.glossary} onChange={(glossary) => set({ glossary })} notes={setup.notes} onNotes={(notes) => set({ notes })} setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} />}
+        {tab === "glossary" && <KnowledgePanel setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} onKnowledge={(knowledge) => set({ knowledge })} />}
 
         {tab === "styles" && (
           <PromptsPanel

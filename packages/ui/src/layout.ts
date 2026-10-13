@@ -7,6 +7,7 @@ export interface ColumnLayout {
 }
 
 export const SOURCE_KEY = "~source";
+export const KNOWLEDGE_KEY = "~knowledge";
 export const MIN_WIDTH = 240;
 export const MAX_WIDTH = 1400;
 export const EMPTY_LAYOUT: ColumnLayout = { order: [], widths: {} };

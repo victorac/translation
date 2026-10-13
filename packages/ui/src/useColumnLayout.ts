@@ -11,6 +11,7 @@ interface Saved {
   mode: LayoutMode;
   tree: PaneNode | null;
   linked: boolean;
+  showKnowledge: boolean;
 }
 
 function loadColumns(): ColumnLayout {
@@ -24,9 +25,9 @@ function loadColumns(): ColumnLayout {
 function loadPanes(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(PANES_KEY) ?? "null") as Partial<Saved> | null;
-    return { mode: raw?.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw?.tree), linked: raw?.linked !== false };
+    return { mode: raw?.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw?.tree), linked: raw?.linked !== false, showKnowledge: raw?.showKnowledge === true };
   } catch {
-    return { mode: "aligned", tree: null, linked: true };
+    return { mode: "aligned", tree: null, linked: true, showKnowledge: false };
   }
 }
 
@@ -58,5 +59,7 @@ export function useColumnLayout() {
     setTree: (tree: PaneNode) => setPanes((p) => ({ ...p, tree })),
     linked: panes.linked,
     setLinked: (linked: boolean) => setPanes((p) => ({ ...p, linked })),
+    showKnowledge: panes.showKnowledge,
+    setShowKnowledge: (showKnowledge: boolean) => setPanes((p) => ({ ...p, showKnowledge })),
   };
 }

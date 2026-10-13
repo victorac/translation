@@ -1,6 +1,10 @@
 import {
   allPrompts,
   analysisSystemPrompt,
+  knowledgeCap,
+  knowledgeForBlock,
+  knowledgeReserve,
+  splitKnowledge,
   analysisUserMessage,
   parseAnalysisReply,
   blockSettingsHash,
@@ -23,6 +27,7 @@ import {
   RevisionError,
   runLabel,
   snapshotPrompt,
+  stripThinking,
   validatePrompt,
   type Backend,
   type AnalyzeInput,
@@ -293,6 +298,7 @@ export class WorkspaceService {
         models: input.models,
         glossary: input.glossary,
         notes: input.notes ?? "",
+        ...(input.knowledge !== undefined ? { knowledge: input.knowledge } : {}),
         prompts: input.prompts,
       };
       changed = this.settings !== null && JSON.stringify(this.settings) !== JSON.stringify(next);
@@ -456,7 +462,7 @@ export class WorkspaceService {
       contextLimit: p.contextLimit,
       outputReserve: p.maxOutputTokens,
       systemTokens: estimateTokens(renderPrompt(p.style, input.sourceLanguage, input.targetLanguage)),
-      glossaryTokens: estimateTokens(JSON.stringify(p.glossary)) + estimateTokens(p.notes),
+      glossaryTokens: knowledgeReserve(p.glossary, p.notes, p.contextLimit),
     };
   }
 
@@ -978,9 +984,10 @@ export class WorkspaceService {
   async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     if (this.snapshot().busy) throw new UserError("busy", "Wait for the translations to finish, then try again.");
     if (this.analysisAbort) throw new UserError("busy", "Already reading the text.");
+    const known = splitKnowledge(input.knowledge);
     const messages = [
       { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
-      { role: "user" as const, content: analysisUserMessage({ glossary: input.glossary, notes: input.notes }, input.passage) },
+      { role: "user" as const, content: analysisUserMessage(knowledgeForBlock(known.glossary, known.notes, input.passage, knowledgeCap(input.contextLimit)), input.passage) },
     ];
     const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
     if (needed > input.contextLimit) {
@@ -992,7 +999,7 @@ export class WorkspaceService {
       let reply = "";
       if (input.backend === "practice") {
         await new Promise((r) => setTimeout(r, this.options.speedMs ?? 150));
-        reply = input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: Practice mode: these notes are examples." : "NONE";
+        reply = input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: 彼 | Practice mode: these notes are examples." : "NONE";
       } else {
         const provider = this.options.provider;
         if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
@@ -1020,6 +1027,7 @@ export class WorkspaceService {
         }
       }
       if (abort.signal.aborted) return { characters: [], notes: [], canceled: true };
+      reply = stripThinking(reply);
       if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
       return { ...parseAnalysisReply(reply), canceled: false };
     } finally {

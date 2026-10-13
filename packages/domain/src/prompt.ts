@@ -1,6 +1,7 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
 import { relevantEntries, targetVariants } from "./glossary.js";
+import { knowledgeCap, knowledgeForBlock, knowledgeReserve, parseKnowledge, relevantNotes } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
 import { blockText, type SourceRevision } from "./revision.js";
@@ -85,9 +86,9 @@ const UNAVAILABLE = "(not available)";
  * because some models write structured input back out instead of translating it. The text to translate is last,
  * so the natural continuation is its translation.
  */
-export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes = ""): string {
+export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes: readonly string[] = []): string {
   const parts: string[] = [];
-  if (notes.trim() !== "") parts.push(`${NOTES_LABEL}\n${notes.trim()}`);
+  if (notes.length > 0) parts.push(`${NOTES_LABEL}\n${notes.map((n) => `- ${n}`).join("\n")}`);
   if (glossary.length > 0) {
     const lines = glossary.map((g) => {
       const [first, ...others] = targetVariants(g.target);
@@ -147,9 +148,8 @@ export function systemPromptFor(run: Pick<ModelRun, "prompt">, sourceLanguage: s
 export function buildPrompt(revision: SourceRevision, blockIndex: number, run: ModelRun, previousOutput: BlockOutput | undefined): BuiltPrompt {
   const block = revision.blocks[blockIndex]!;
   const system = systemPromptFor(run, revision.sourceLanguage, revision.targetLanguage);
-  // Budget for the whole glossary (an upper bound); each request only carries the entries it needs.
-  const fullGlossary = run.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), estimateTokens(JSON.stringify(fullGlossary)) + estimateTokens(run.notes ?? "")));
+  // Set aside room for knowledge (terms, hints, notes). Each request carries only what applies to its own block.
+  const budget = modelBudget(runBudgetInput(run, estimateTokens(system), knowledgeReserve(run.glossary, run.notes ?? "", run.config.contextLimit)));
 
   const base = { configHash: configHash(run), sourceHash: block.textHash };
   if (!budget.fits || block.estimatedTokens > budget.room) {
@@ -168,8 +168,9 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
 
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
-  const glossary = relevantEntries(run.glossary, text).map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const user = renderUserMessage(glossary, context, text, run.notes ?? "");
+  const kb = knowledgeForBlock(run.glossary, run.notes ?? "", text, knowledgeCap(run.config.contextLimit));
+  const glossary = kb.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
+  const user = renderUserMessage(glossary, context, text, kb.notes);
   return {
     messages: [
       { role: "system", content: system },
@@ -191,13 +192,14 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
 export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary" | "notes">): string {
   const text = blockText(revision, revision.blocks[blockIndex]!);
   const glossary = relevantEntries(run.glossary, text).map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target]));
+  const notes = relevantNotes(parseKnowledge(run.notes ?? "").notes, text).map((n) => n.text);
   return sha256Hex(
     JSON.stringify({
       m: run.modelId,
       t: run.config.temperature,
       p: run.prompt ? sha256Hex(`${run.prompt.appendFraming}\n${run.prompt.template}`) : "standard-v1",
       g: glossary,
-      ...(run.notes?.trim() ? { n: run.notes.trim() } : {}),
+      ...(notes.length > 0 ? { n: notes } : {}),
     }),
   );
 }
