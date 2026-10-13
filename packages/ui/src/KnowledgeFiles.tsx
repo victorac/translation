@@ -246,13 +246,13 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
                 className="small"
                 onClick={() => {
                   const f = byId.get(active)!;
-                  if (window.confirm(`Delete "${f.title}"?${f.suggested ? " It will not be suggested again." : ""}`)) {
+                  if (window.confirm(f.suggested ? `Reject "${f.title}"? It will not be suggested again.` : `Delete "${f.title}"?`)) {
                     closeFile(active);
                     void api.invoke("knowledge.delete", { id: active });
                   }
                 }}
               >
-                Delete this file
+                {byId.get(active)?.suggested ? "Reject this file" : "Delete this file"}
               </button>
             )}
           </div>

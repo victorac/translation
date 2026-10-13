@@ -13,6 +13,7 @@ import {
   related,
   sameAs,
   splitSentences,
+  standsAlone,
   windowAround,
   type WordToken,
 } from "./steps.js";
@@ -59,6 +60,16 @@ describe("candidate names", () => {
     expect(mergeCandidates(text, ["学園", "彼", "花子", "ひらがな", "幽霊", "花子", "「花子」"], ["x"])).toEqual(["花子", "学園"]);
     // 桜台 only appears inside 桜台学園, so it is not a candidate of its own; 花子 also appears by itself, so it is.
     expect(mergeCandidates("桜台学園の花子。佐藤花子が来た。", ["桜台学園", "桜台", "佐藤花子", "花子"])).toEqual(["桜台学園", "花子", "佐藤花子"]);
+  });
+
+  it("does not take a piece of a longer word for a name (ボブ in ボブカット is a haircut)", () => {
+    const text = "花子はボブカットで、花子様と山田家を訪ねた。ボブは来なかった。";
+    expect(standsAlone(text, "ボブ")).toBe(true); // it also stands alone in the last sentence
+    expect(standsAlone("彼女はボブカットだ。", "ボブ")).toBe(false);
+    expect(mergeCandidates("彼女はボブカットだ。花子は笑った。", ["ボブ", "花子"])).toEqual(["花子"]);
+    expect(mergeCandidates(text, ["花子", "山田"])).toEqual(["花子", "山田"]); // an honorific or 家 after a name is fine
+    expect(standsAlone("佐藤花子が来た。", "花子")).toBe(false);
+    expect(standsAlone("佐藤花子が来た。花子は笑った。", "花子")).toBe(true);
   });
 
   it("sees when two written forms may be the same thing", () => {

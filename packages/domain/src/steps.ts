@@ -113,6 +113,27 @@ export function patternCandidates(text: string): string[] {
 
 const STOP = new Set(["彼", "彼女", "私", "僕", "ぼく", "俺", "お前", "あなた", "自分", "みんな", "誰", "何", "ここ", "そこ", "あそこ", "今日", "明日", "昨日", "先生", "先輩"]);
 
+const KANJI_OR_KATAKANA = /[\u4E00-\u9FFF\u3005\u30A0-\u30FF\u30FC]/;
+const FOLLOWING = ["さん", "くん", "君", "ちゃん", "様", "さま", "殿", "氏", "先輩", "先生", "家", "一族", "学園", "学院", "高校", "学校", "大学", "組", "団", "城", "村", "町", "島", "王国", "帝国"];
+
+/**
+ * Does the word stand on its own somewhere in the text, rather than only as part of a longer word? ボブ inside ボブカット
+ * (a bob cut) is not a name; 花子 in 花子は is. A name may be followed by an honorific or a word like 家 or 学園.
+ */
+export function standsAlone(text: string, word: string): boolean {
+  let from = 0;
+  for (;;) {
+    const i = text.indexOf(word, from);
+    if (i < 0) return false;
+    const before = text[i - 1] ?? "";
+    const after = text.slice(i + word.length, i + word.length + 3);
+    const joinedBefore = before !== "" && KANJI_OR_KATAKANA.test(before) && KANJI_OR_KATAKANA.test(word[0]!);
+    const joinedAfter = after !== "" && KANJI_OR_KATAKANA.test(after[0]!) && !FOLLOWING.some((f) => after.startsWith(f));
+    if (!joinedBefore && !joinedAfter) return true;
+    from = i + 1;
+  }
+}
+
 /** Puts candidate names from several sources together: first appearance first, no repeats, nothing that cannot be a name. */
 export function mergeCandidates(text: string, ...sources: (readonly string[])[]): string[] {
   const seen = new Set<string>();
@@ -122,6 +143,7 @@ export function mergeCandidates(text: string, ...sources: (readonly string[])[])
     if (c.length < 2 || c.length > 20 || seen.has(c)) continue;
     if (!HAS_LETTER.test(c) || ALL_KANA.test(c) || STOP.has(c) || /\s/.test(c)) continue;
     if (!text.includes(c)) continue; // a name the passage does not contain was made up
+    if (!standsAlone(text, c)) continue; // only ever part of a longer word, such as ボブ in ボブカット
     seen.add(c);
     list.push(c);
   }
