@@ -76,6 +76,25 @@ export interface AnalyzeInput {
   block: number;
 }
 
+/** Ask a model which of the project's names, hints and notes matter for one block. */
+export interface ResearchInput {
+  backend: Backend;
+  modelId: string;
+  contextLimit: number;
+  maxOutputTokens: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  passage: string;
+}
+
+export interface ResearchResult {
+  /** False when nothing needed asking (nothing is known yet, or this block was already looked through). */
+  asked: boolean;
+  /** How many entries are now chosen for this block, not counting pinned ones. */
+  chosen: number;
+  canceled: boolean;
+}
+
 export interface AnalyzeResult {
   /** How many entries were added to (or filled in) the project's knowledge. */
   added: number;
@@ -204,6 +223,7 @@ export interface CommandMap {
   "source.preview": StartJobInput;
   "notes.analyze": AnalyzeInput;
   "notes.cancel": undefined;
+  "research.block": ResearchInput;
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
   "knowledge.remove": { ids: string[] };
@@ -216,11 +236,12 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
+  "research.block": ResearchResult;
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
   "knowledge.remove": { removed: number };
@@ -266,6 +287,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "source.preview",
   "notes.analyze",
   "notes.cancel",
+  "research.block",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

@@ -115,8 +115,45 @@ export function App() {
     setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
     snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
 
+  // Before translating, a model looks through the project's names and notes for each block and picks what matters for it.
+  const [preparing, setPreparing] = useState<{ at: number; of: number } | null>(null);
+  const [prepareNote, setPrepareNote] = useState<string | null>(null);
+  const stopPreparing = useRef(false);
+  const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
+  /** Returns false if the user stopped it. A problem is reported and translating goes on with a backup. */
+  const prepare = async (): Promise<boolean> => {
+    const s = setupRef.current;
+    const model = s.models[0];
+    const blocks = split.preview?.blocks ?? [];
+    if (!model || blocks.length === 0 || known === 0) return true;
+    stopPreparing.current = false;
+    setPrepareNote(null);
+    try {
+      for (let i = 0; i < blocks.length; i++) {
+        setPreparing({ at: i + 1, of: blocks.length });
+        const r = await api.invoke("research.block", {
+          backend: s.backend,
+          modelId: model.name,
+          contextLimit: model.contextLimit,
+          maxOutputTokens: model.maxOutputTokens,
+          sourceLanguage: s.sourceLanguage,
+          targetLanguage: s.targetLanguage,
+          passage: blocks[i]!.text,
+        });
+        if (stopPreparing.current || (r.ok && r.value.canceled)) return false;
+        if (!r.ok) {
+          setPrepareNote(`Could not choose the notes for every block: ${r.error.message} The remaining blocks use name matching as a backup.`);
+          return true;
+        }
+      }
+      return true;
+    } finally {
+      setPreparing(null);
+    }
+  };
+
   const run = async (rerun: string[] = []) => {
-    if (busy || (rerun.length === 0 && !canRun)) return;
+    if (busy || preparing || (rerun.length === 0 && !canRun)) return;
     let labels = rerun;
     if (labels.length === 0 && !needsRun) {
       // Nothing is missing, but the user asked: translate everything again rather than refusing.
@@ -124,6 +161,7 @@ export function App() {
       labels = setupRef.current.models.map((m) => labelOf(m, setupRef.current));
     }
     setMode(null);
+    if (!(await prepare())) return;
     await send("job.start", toStartInput(setupRef.current, labels));
   };
 
@@ -278,6 +316,30 @@ export function App() {
         />
 
         <main className="center">
+          {preparing && (
+            <div className="strip">
+              <span>
+                Choosing the notes for block {preparing.at} of {preparing.of}…
+              </span>
+              <button
+                className="small"
+                onClick={() => {
+                  stopPreparing.current = true;
+                  void api.invoke("notes.cancel");
+                }}
+              >
+                Stop
+              </button>
+            </div>
+          )}
+          {prepareNote && (
+            <div className="strip">
+              <span>{prepareNote}</span>
+              <button className="small" onClick={() => setPrepareNote(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
           {snap && hasVersion && !viewingLatest && (
             <div className="strip">
               <span>Looking at an earlier version of the text.</span>

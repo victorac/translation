@@ -1,13 +1,23 @@
 import {
   allPrompts,
   analysisSystemPrompt,
-  entriesFromLegacy,
+  blockText,
+  chosenEntries,  entriesFromLegacy,
   entriesFromText,
+  entriesToConsider,
+  fitMaterial,
   knowledgeCap,
-  knowledgeForBlock,
   knowledgeReserve,
+  materialFromEntries,
   mergeSuggestions,
+  parseKnowledge,
+  parseResearchReply,
+  researchBatches,
+  researchSystemPrompt,
+  researchUserMessage,
+  sha256Hex,
   splitEntries,
+  updateRecord,
   analysisUserMessage,
   parseAnalysisReply,
   blockSettingsHash,
@@ -36,6 +46,7 @@ import {
   type AnalyzeInput,
   type AnalyzeResult,
   type BlockCellView,
+  type BlockMaterial,
   type BlockOutput,
   type CancelInput,
   type DemoOptions,
@@ -51,6 +62,9 @@ import {
   type ProjectVersion,
   type ProjectView,
   type PromptPreset,
+  type ResearchInput,
+  type ResearchRecord,
+  type ResearchResult,
   type SourceRevision,
   type SplitPreview,
   type StartJobInput,
@@ -435,7 +449,7 @@ export class WorkspaceService {
   private isOutdated(revision: SourceRevision, index: number, output: BlockOutput | undefined, current: Pick<ModelRun, "modelId" | "glossary" | "notes" | "prompt" | "config">): boolean {
     if (!output) return false;
     const attempt = producingAttempt(output);
-    return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current);
+    return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current, this.materialFor(blockText(revision, revision.blocks[index]!)));
   }
 
   /** Re-checks one block after something happened to it (an attempt finished, a new version was accepted). */
@@ -678,7 +692,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: KnowledgeEntry[] } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord> } } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -690,12 +704,12 @@ export class WorkspaceService {
       })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
-      knowledge: this.knowledge.all(),
+      knowledge: { entries: this.knowledge.all(), research: Object.fromEntries(this.research) },
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: KnowledgeEntry[] | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined } | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -714,7 +728,8 @@ export class WorkspaceService {
     });
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
-    if (project.knowledge) this.knowledge.load(project.knowledge);
+    this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
+    if (project.knowledge) this.knowledge.load(project.knowledge.entries);
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
       // A project from before the knowledge store: bring its glossary and notes over once.
       this.knowledge.load(entriesFromLegacy(this.settings.glossary, this.settings.notes, this.settings.knowledge, { newId, now: () => new Date().toISOString() }));
@@ -741,6 +756,7 @@ export class WorkspaceService {
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
     this.knowledge.load([]);
+    this.research.clear();
     this.epoch++;
     this.jobIds = [];
     this.waitingInfo.clear();
@@ -979,6 +995,7 @@ export class WorkspaceService {
       },
       // The practice translator only echoes text, so only the glossary check is meaningful for it.
       checks: (run) => (run.providerRefId === "practice" ? "terms" : "all"),
+      material: (_run, blockText) => this.materialFor(blockText),
       ...(this.options.checkpoint ? { checkpoint: this.options.checkpoint } : {}),
     });
     coordinator.onEvent((e) => this.onCoordinatorEvent(e));
@@ -1056,58 +1073,80 @@ export class WorkspaceService {
 
   private analysisAbort: AbortController | null = null;
 
-  /**
-   * Asks a model to read one passage and suggest notes. It is a single request, made only when the user asks,
-   * and never while translations are running (the model server handles one thing at a time).
-   */
-  async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
+  /** Only one request of this kind at a time, and never while translations are running (the model server handles one thing at a time). */
+  private beginSideRequest(): AbortController {
     if (this.snapshot().busy) throw new UserError("busy", "Wait for the translations to finish, then try again.");
-    if (this.analysisAbort) throw new UserError("busy", "Already reading the text.");
-    const known = splitEntries(this.knowledge.all());
-    const messages = [
-      { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
-      { role: "user" as const, content: analysisUserMessage(knowledgeForBlock(known.glossary, known.notes, input.passage, knowledgeCap(input.contextLimit)), input.passage) },
-    ];
-    const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
-    if (needed > input.contextLimit) {
-      throw new UserError("context_overflow", "This part of the text does not fit the model's context. Raise the context size for this model, or use smaller blocks.");
-    }
+    if (this.analysisAbort) throw new UserError("busy", "Already working on the text.");
     const abort = new AbortController();
     this.analysisAbort = abort;
-    try {
-      let reply = "";
-      if (input.backend === "practice") {
-        await new Promise((r) => setTimeout(r, this.options.speedMs ?? 150));
-        reply = input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: 彼 | Practice mode: these notes are examples." : "NONE";
-      } else {
-        const provider = this.options.provider;
-        if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
-        const stream = provider.adapter().generate(
-          provider.config(),
-          { requestId: newId(), modelId: input.modelId, messages, temperature: 0.2, maxOutputTokens: input.maxOutputTokens, stream: true },
-          abort.signal,
-        );
-        const it = stream[Symbol.asyncIterator]();
-        try {
-          for (;;) {
-            const next = await it.next();
-            if (next.done) break;
-            const ev = next.value;
-            if (ev.type === "delta") reply += ev.text;
-            else if (ev.type === "error") {
-              if (abort.signal.aborted) break;
-              throw new UserError(ev.error.code, ev.error.message);
-            } else break;
-          }
-        } catch (e) {
-          if (!abort.signal.aborted) throw e;
-        } finally {
-          void it.return?.(undefined).catch(() => {});
+    return abort;
+  }
+
+  /** One request to a model, answered in full. Returns null if the user stopped it. */
+  private async askModel(
+    ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string },
+    abort: AbortController,
+  ): Promise<string | null> {
+    let reply = "";
+    if (ask.backend === "practice") {
+      await new Promise((r) => setTimeout(r, this.options.speedMs ?? 150));
+      reply = ask.practiceReply();
+    } else {
+      const provider = this.options.provider;
+      if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
+      const stream = provider.adapter().generate(
+        provider.config(),
+        { requestId: newId(), modelId: ask.modelId, messages: ask.messages, temperature: 0.2, maxOutputTokens: ask.maxOutputTokens, stream: true },
+        abort.signal,
+      );
+      const it = stream[Symbol.asyncIterator]();
+      try {
+        for (;;) {
+          const next = await it.next();
+          if (next.done) break;
+          const ev = next.value;
+          if (ev.type === "delta") reply += ev.text;
+          else if (ev.type === "error") {
+            if (abort.signal.aborted) break;
+            throw new UserError(ev.error.code, ev.error.message);
+          } else break;
         }
+      } catch (e) {
+        if (!abort.signal.aborted) throw e;
+      } finally {
+        void it.return?.(undefined).catch(() => {});
       }
-      if (abort.signal.aborted) return { added: 0, canceled: true };
-      reply = stripThinking(reply);
-      if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
+    }
+    if (abort.signal.aborted) return null;
+    reply = stripThinking(reply);
+    if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
+    return reply;
+  }
+
+  /** Asks a model to read one passage and suggest names, hints and notes. They are added as suggestions. */
+  async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
+    const abort = this.beginSideRequest();
+    try {
+      const known = splitEntries(this.knowledge.all());
+      const messages = [
+        { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
+        { role: "user" as const, content: analysisUserMessage(fitMaterial({ glossary: known.glossary, notes: parseKnowledge(known.notes).notes.map((n) => n.text) }, knowledgeCap(input.contextLimit)), input.passage) },
+      ];
+      const needed = estimateTokens(messages[0]!.content) + estimateTokens(messages[1]!.content) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens;
+      if (needed > input.contextLimit) {
+        throw new UserError("context_overflow", "This part of the text does not fit the model's context. Raise the context size for this model, or use smaller blocks.");
+      }
+      const reply = await this.askModel(
+        {
+          backend: input.backend,
+          modelId: input.modelId,
+          maxOutputTokens: input.maxOutputTokens,
+          messages,
+          practiceReply: () => (input.passage.includes("彼") ? "彼 = He # practice mode: this is an example, not written by a model\nNOTE: Practice mode: these notes are examples." : "NONE"),
+        },
+        abort,
+      );
+      if (reply === null) return { added: 0, canceled: true };
       const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle, block: input.block };
       const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, { newId, now: () => new Date().toISOString() });
       if (merged.added > 0) {
@@ -1115,6 +1154,67 @@ export class WorkspaceService {
         this.knowledgeChanged();
       }
       return { added: merged.added, canceled: false };
+    } finally {
+      this.analysisAbort = null;
+    }
+  }
+
+  // ---- choosing the background for each block ----
+
+  /** What has been decided about each passage, by the passage's hash. Saved with the project. */
+  private research = new Map<string, ResearchRecord>();
+
+  /** The background chosen for a block, or undefined if no one has looked through the knowledge for it (a backup is used then). */
+  private materialFor(blockText: string): BlockMaterial | undefined {
+    const entries = this.knowledge.all();
+    if (entries.length === 0) return undefined;
+    const chosen = chosenEntries(entries, this.research.get(sha256Hex(blockText)));
+    return chosen === null ? undefined : materialFromEntries(chosen);
+  }
+
+  /**
+   * A model reads one block and the project's knowledge and chooses which entries matter for translating it.
+   * Only entries that are new or changed since the last time are looked at, so asking again is cheap.
+   */
+  async researchBlock(input: ResearchInput): Promise<ResearchResult> {
+    const abort = this.beginSideRequest();
+    try {
+      const entries = this.knowledge.all();
+      const key = sha256Hex(input.passage);
+      const record = this.research.get(key);
+      const pending = entriesToConsider(entries, record);
+      if (entries.length === 0 || pending.length === 0) {
+        if (entries.length > 0 && !record) this.research.set(key, updateRecord(undefined, entries, [], [], new Date().toISOString()));
+        return { asked: false, chosen: record?.ids.length ?? 0, canceled: false };
+      }
+      const system = researchSystemPrompt(input.sourceLanguage, input.targetLanguage);
+      const replyTokens = Math.min(input.maxOutputTokens, 256); // the reply is only a list of numbers
+      const room = input.contextLimit - estimateTokens(system) - estimateTokens(input.passage) - replyTokens - DEFAULTS.messageOverheadTokens - 40;
+      if (room < 60) throw new UserError("context_overflow", "This part of the text does not fit the model's context together with the notes. Raise the context size for this model, or use smaller blocks.");
+      const chosen: string[] = [];
+      for (const batch of researchBatches(pending, room)) {
+        const reply = await this.askModel(
+          {
+            backend: input.backend,
+            modelId: input.modelId,
+            maxOutputTokens: replyTokens,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: researchUserMessage(input.passage, batch) },
+            ],
+            // The practice translator has no judgement: it picks names that appear in the text, and every note.
+            practiceReply: () => batch.map((e, i) => (e.kind === "note" || input.passage.includes(e.source) ? i + 1 : 0)).filter(Boolean).join(", ") || "NONE",
+          },
+          abort,
+        );
+        if (reply === null) return { asked: true, chosen: 0, canceled: true };
+        for (const i of parseResearchReply(reply, batch.length)) chosen.push(batch[i]!.id);
+      }
+      const next = updateRecord(record, entries, pending, chosen, new Date().toISOString());
+      this.research.set(key, next);
+      this.refreshOutdated();
+      this.notify("state");
+      return { asked: true, chosen: next.ids.length, canceled: false };
     } finally {
       this.analysisAbort = null;
     }

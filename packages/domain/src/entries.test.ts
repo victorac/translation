@@ -5,26 +5,26 @@ let n = 0;
 const deps = { newId: () => `e${++n}`, now: () => "2026-01-01T00:00:00.000Z" };
 
 describe("entries", () => {
-  const { entries, unreadable } = entriesFromText("魔王 = Demon King # villain\n> 魔王 | He speaks formally.\n> Keep honorifics.\nnot a line", { by: "user" }, "confirmed", deps);
+  const { entries, unreadable } = entriesFromText("魔王 = Demon King # villain\n> He speaks formally.\n> Keep honorifics.\nnot a line", { by: "user" }, "confirmed", deps);
 
   it("reads pasted lines into terms and notes and counts the unreadable ones", () => {
     expect(unreadable).toBe(1);
     expect(entries).toMatchObject([
       { kind: "term", source: "魔王", target: "Demon King", hint: "villain", status: "confirmed", origin: { by: "user" } },
-      { kind: "note", keys: ["魔王"], text: "He speaks formally." },
-      { kind: "note", keys: [], text: "Keep honorifics." },
+      { kind: "note", text: "He speaks formally." },
+      { kind: "note", text: "Keep honorifics." },
     ]);
   });
 
   it("gives a run what it needs and writes the same lines back out", () => {
     const s = splitEntries(entries);
     expect(s.glossary).toEqual([{ source: "魔王", target: "Demon King", note: "villain" }]);
-    expect(s.notes).toBe("> 魔王 | He speaks formally.\n> Keep honorifics.");
-    expect(entriesToText(entries)).toBe("魔王 = Demon King # villain\n\n> 魔王 | He speaks formally.\n> Keep honorifics.");
+    expect(s.notes).toBe("> He speaks formally.\n> Keep honorifics.");
+    expect(entriesToText(entries)).toBe("魔王 = Demon King # villain\n\n> He speaks formally.\n> Keep honorifics.");
   });
 
   it("explains what is missing", () => {
-    const base = { kind: "term" as const, source: "", target: "", hint: "", keys: [], text: "" };
+    const base = { kind: "term" as const, source: "", target: "", hint: "", text: "", pinned: false };
     expect(entryProblems(base)).toHaveLength(2);
     expect(entryProblems({ ...base, source: "a", target: "b" })).toEqual([]);
     expect(entryProblems({ ...base, kind: "note" })).toEqual(["Enter the note."]);

@@ -9,7 +9,7 @@ interface Row {
   source: string;
   target: string;
   hint: string;
-  keys: string;
+  pinned: number;
   text: string;
   origin: string;
   status: string;
@@ -22,8 +22,8 @@ const toEntry = (r: Row): KnowledgeEntry => ({
   source: r.source,
   target: r.target,
   hint: r.hint,
-  keys: JSON.parse(r.keys) as string[],
   text: r.text,
+  pinned: r.pinned === 1,
   origin: JSON.parse(r.origin) as EntryOrigin,
   status: r.status === "suggested" ? "suggested" : "confirmed",
   updatedAt: r.updated_at,
@@ -42,21 +42,22 @@ export class KnowledgeStore {
   constructor(private readonly deps: EntryDeps = { newId, now: () => new Date().toISOString() }) {
     this.db.exec(`CREATE TABLE entries (
       id TEXT PRIMARY KEY, seq INTEGER NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, hint TEXT NOT NULL,
-      keys TEXT NOT NULL, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
+      pinned INTEGER NOT NULL, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
   }
 
   private insert(e: KnowledgeEntry, seq: number = ++this.seq): void {
     this.db
-      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, keys, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(e.id, seq, e.kind, e.source, e.target, e.hint, JSON.stringify(e.keys), e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
+      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, pinned, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(e.id, seq, e.kind, e.source, e.target, e.hint, e.pinned ? 1 : 0, e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
   }
 
   /** Replaces everything, for example when a project is opened. Does not count as a change. */
   load(entries: readonly KnowledgeEntry[]): void {
     this.db.exec("DELETE FROM entries");
     this.seq = 0;
-    for (const e of entries) this.insert(e);
+    // Files from before pinned entries existed do not have the field.
+    for (const e of entries) this.insert({ ...e, pinned: e.pinned === true });
     this.rev++;
   }
 
@@ -74,8 +75,8 @@ export class KnowledgeStore {
     const text = q.text?.trim();
     if (text) {
       const like = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-      where.push("(source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR hint LIKE ? ESCAPE '\\' OR keys LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')");
-      args.push(like, like, like, like, like);
+      where.push("(source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR hint LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')");
+      args.push(like, like, like, like);
     }
     const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM entries${clause}`).get(...args) as { n: number }).n;
@@ -104,14 +105,13 @@ export class KnowledgeStore {
   save(input: EntryInput): KnowledgeEntry {
     const problems = entryProblems(input);
     if (problems.length > 0) throw new UserError("bad_entry", problems[0]!);
-    const keys = input.keys.map((k) => k.trim()).filter(Boolean);
-    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), keys, text: input.text.trim() };
+    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), text: input.text.trim(), pinned: input.pinned };
     const before = input.id ? this.get(input.id) : undefined;
     if (input.id && !before) throw new UserError("no_entry", "That entry no longer exists.");
     if (!before && clean.kind === "term" && this.all().some((e) => e.kind === "term" && e.source === clean.source)) {
       throw new UserError("duplicate_entry", `"${clean.source}" is already listed. Edit that entry instead.`);
     }
-    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.keys, before.text]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.keys, clean.text]);
+    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.text, before.pinned]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.text, clean.pinned]);
     const entry: KnowledgeEntry = {
       id: before?.id ?? this.deps.newId(),
       ...clean,

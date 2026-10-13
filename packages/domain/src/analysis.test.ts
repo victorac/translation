@@ -4,15 +4,15 @@ import { analysisUserMessage, mergeSuggestions, parseAnalysisReply } from "./ana
 describe("parseAnalysisReply", () => {
   it("reads people and notes and ignores everything else", () => {
     const r = parseAnalysisReply(
-      ["Here is what I found:", "- 花子 = Hanako # girl, speaks politely", "2. 太郎 → Taro # boy, the narrator", "NOTE: 花子, 太郎 | The second speaker is talking to Hanako.", "note: the narrator is a boy", "Hope this helps!"].join("\n"),
+      ["Here is what I found:", "- 花子 = Hanako # girl, speaks politely", "2. 太郎 → Taro # boy, the narrator", "NOTE: The second speaker is talking to Hanako.", "note: the narrator is a boy", "Hope this helps!"].join("\n"),
     );
     expect(r.characters).toEqual([
       { source: "花子", target: "Hanako", note: "girl, speaks politely" },
       { source: "太郎", target: "Taro", note: "boy, the narrator" },
     ]);
     expect(r.notes).toEqual([
-      { keys: ["花子", "太郎"], text: "The second speaker is talking to Hanako." },
-      { keys: [], text: "the narrator is a boy" },
+      { text: "The second speaker is talking to Hanako." },
+      { text: "the narrator is a boy" },
     ]);
   });
 
@@ -33,15 +33,15 @@ describe("mergeSuggestions", () => {
   let n = 0;
   const deps = { newId: () => `id${++n}`, now: () => "2026-01-01T00:00:00.000Z" };
   const origin = { by: "model" as const, model: "m", documentTitle: "Chapter 1", block: 2 };
-  const found = { characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: [{ keys: ["花子"], text: "Hanako is the one being addressed." }] };
-  const mine = (over = {}) => ({ id: "u1", kind: "term" as const, source: "花子", target: "Hanakko", hint: "", keys: [], text: "", origin: { by: "user" as const }, status: "confirmed" as const, updatedAt: "x", ...over });
+  const found = { characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: [{ text: "Hanako is the one being addressed." }] };
+  const mine = (over = {}) => ({ id: "u1", kind: "term" as const, source: "花子", target: "Hanakko", hint: "", text: "", pinned: false, origin: { by: "user" as const }, status: "confirmed" as const, updatedAt: "x", ...over });
 
   it("adds new terms and notes as suggestions that remember where they came from", () => {
     const r = mergeSuggestions([], found, origin, deps);
     expect(r.added).toBe(2);
     expect(r.entries).toMatchObject([
       { kind: "term", source: "花子", target: "Hanako", hint: "girl", origin, status: "suggested" },
-      { kind: "note", keys: ["花子"], text: "Hanako is the one being addressed.", origin, status: "suggested" },
+      { kind: "note", text: "Hanako is the one being addressed.", origin, status: "suggested" },
     ]);
   });
 
@@ -54,7 +54,7 @@ describe("mergeSuggestions", () => {
   });
 
   it("does not repeat a note that is already there", () => {
-    const note = { ...mine(), id: "n1", kind: "note" as const, source: "", target: "", keys: [], text: "hanako is the one being addressed." };
+    const note = { ...mine(), id: "n1", kind: "note" as const, source: "", target: "", text: "hanako is the one being addressed." };
     expect(mergeSuggestions([note], { characters: [], notes: found.notes }, origin, deps).added).toBe(0);
   });
 });

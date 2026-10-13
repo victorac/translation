@@ -315,7 +315,7 @@ export class ProjectService {
     this.workspace.restore({
       activeDocumentId: file.activeDocumentId,
       ...(file.settings ? { settings: file.settings } : {}),
-      ...(file.knowledge ? { knowledge: file.knowledge.entries } : {}),
+      ...(file.knowledge ? { knowledge: file.knowledge } : {}),
       documents: file.documents.map((d) => ({ ...d, versions: d.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })) })),
     });
     this.meta = { id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };

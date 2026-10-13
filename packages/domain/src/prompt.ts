@@ -1,7 +1,7 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
 import { relevantEntries, targetVariants } from "./glossary.js";
-import { knowledgeCap, knowledgeForBlock, knowledgeReserve, parseKnowledge, relevantNotes } from "./knowledge.js";
+import { backupMaterial, fitMaterial, knowledgeCap, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
 import { blockText, type SourceRevision } from "./revision.js";
@@ -145,7 +145,14 @@ export function systemPromptFor(run: Pick<ModelRun, "prompt">, sourceLanguage: s
   return renderPrompt(run.prompt ?? STANDARD_PROMPT, sourceLanguage, targetLanguage);
 }
 
-export function buildPrompt(revision: SourceRevision, blockIndex: number, run: ModelRun, previousOutput: BlockOutput | undefined): BuiltPrompt {
+export function buildPrompt(
+  revision: SourceRevision,
+  blockIndex: number,
+  run: ModelRun,
+  previousOutput: BlockOutput | undefined,
+  /** The background chosen for this block. Without it, a keyword match over the project's terms is used as a backup. */
+  material?: BlockMaterial,
+): BuiltPrompt {
   const block = revision.blocks[blockIndex]!;
   const system = systemPromptFor(run, revision.sourceLanguage, revision.targetLanguage);
   // Set aside room for knowledge (terms, hints, notes). Each request carries only what applies to its own block.
@@ -168,7 +175,7 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
 
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
-  const kb = knowledgeForBlock(run.glossary, run.notes ?? "", text, knowledgeCap(run.config.contextLimit));
+  const kb = fitMaterial(material ?? backupMaterial(run.glossary, run.notes ?? "", text), knowledgeCap(run.config.contextLimit));
   const glossary = kb.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
   const user = renderUserMessage(glossary, context, text, kb.notes);
   return {
@@ -189,10 +196,11 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
  * Comparing this with the value stored on the attempt says whether the settings changed in a way that
  * matters for this block. Reply and context limits are left out because they do not change the wording.
  */
-export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary" | "notes">): string {
+export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary" | "notes">, material?: BlockMaterial): string {
   const text = blockText(revision, revision.blocks[blockIndex]!);
-  const glossary = relevantEntries(run.glossary, text).map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target]));
-  const notes = relevantNotes(parseKnowledge(run.notes ?? "").notes, text).map((n) => n.text);
+  const chosen = material ?? backupMaterial(run.glossary, run.notes ?? "", text);
+  const glossary = chosen.glossary.map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target]));
+  const notes = chosen.notes;
   return sha256Hex(
     JSON.stringify({
       m: run.modelId,

@@ -26,7 +26,7 @@ interface Seen {
 const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
 
 /** A small stand-in for LM Studio: lists two models and "translates" by echoing the source block. */
-async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string; analysisReply?: string } = {}) {
+async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string; analysisReply?: string; researchReply?: string } = {}) {
   const seen: Seen[] = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -47,14 +47,15 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           res.writeHead(404, { "content-type": "application/json" }).end('{"error":{"message":"No models loaded. Please load a model in the developer page."}}');
           return;
         }
-        const reading = j.messages[0]!.content.includes("help a translator prepare");
+        const researching = j.messages[0]!.content.includes("prepare background for a translator");
+        const reading = researching || j.messages[0]!.content.includes("help a translator prepare");
         const source = reading ? "" : parseUserMessage(j.messages[1]!.content)!.sourceBlock;
         if (opts.failBlock && source.includes(opts.failBlock)) {
           res.writeHead(400, { "content-type": "application/json" }).end('{"error":{"message":"Trying to keep the first 9000 tokens when context overflows"}}');
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = reading ? (opts.analysisReply ?? "NONE") : `EN(${j.model}): ${fakeEnglish(source)}`;
+        const text = reading ? (researching ? (opts.researchReply ?? "NONE") : (opts.analysisReply ?? "NONE")) : `EN(${j.model}): ${fakeEnglish(source)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -360,7 +361,7 @@ describe("suggested notes", () => {
   });
 
   it("asks the model to read a passage and returns the people and notes it found", async () => {
-    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: 花子 | The speaker is talking to Hanako." });
+    const lm = await fakeLmStudio({ analysisReply: "花子 = Hanako # girl\nNOTE: The speaker is talking to Hanako." });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const r = await service.analyze(ask());
@@ -368,7 +369,7 @@ describe("suggested notes", () => {
     const origin = { by: "model", model: "qwen2.5-7b-instruct", documentTitle: "Chapter 1", block: 3 };
     expect(service.knowledgeList({}).entries).toMatchObject([
       { kind: "term", source: "花子", target: "Hanako", hint: "girl", status: "suggested", origin },
-      { kind: "note", keys: ["花子"], text: "The speaker is talking to Hanako.", status: "suggested", origin },
+      { kind: "note", text: "The speaker is talking to Hanako.", status: "suggested", origin },
     ]);
     expect(service.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1, suggested: 2 });
     const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] }).at(-1)!;
@@ -383,5 +384,64 @@ describe("suggested notes", () => {
     service.start(job());
     await expect(service.analyze(ask())).rejects.toThrow(/Wait for the translations/);
     await service.whenIdle();
+  });
+});
+
+describe("choosing the background for each block", () => {
+  const ask = (passage: string, over = {}) => ({ backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage, ...over });
+  const save = (service: ReturnType<typeof setup>["service"], source: string, target: string, hint = "") => service.knowledgeSave({ kind: "term", source, target, hint, text: "", pinned: false });
+  const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
+
+  it("lets a model choose, so a person who is only implied still reaches the translation", async () => {
+    const lm = await fakeLmStudio({ researchReply: "2" });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    save(service, "魔王", "Demon King");
+    save(service, "勇者", "Hero", "shy, the one being spoken to");
+    const text = "魔王が来た。";
+    const r = await service.researchBlock(ask(text));
+    expect(r).toEqual({ asked: true, chosen: 1, canceled: false });
+    expect(bodies(lm)[0]!.messages[1]!.content).toBe("KNOWN SO FAR:\n1. 魔王 = Demon King\n2. 勇者 = Hero (shy, the one being spoken to)\n\nPASSAGE:\n魔王が来た。");
+
+    service.start(job({ text }));
+    await service.whenIdle();
+    const translation = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(parseUserMessage(translation)!.glossary).toEqual([{ source: "勇者", target: "Hero" }]); // chosen by the model, although 魔王 is in the text
+  });
+
+  it("asks again only about entries that are new or changed, and not at all when nothing changed", async () => {
+    const lm = await fakeLmStudio({ researchReply: "NONE" });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    save(service, "魔王", "Demon King");
+    await service.researchBlock(ask("本文。"));
+    expect((await service.researchBlock(ask("本文。"))).asked).toBe(false);
+    save(service, "勇者", "Hero");
+    expect((await service.researchBlock(ask("本文。"))).asked).toBe(true);
+    const last = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(last).toContain("1. 勇者 = Hero");
+    expect(last).not.toContain("魔王");
+  });
+
+  it("sends pinned entries with every block without asking", async () => {
+    const lm = await fakeLmStudio({ researchReply: "NONE" });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    service.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "Keep honorifics.", pinned: true });
+    const r = await service.researchBlock(ask("本文。"));
+    expect(r.asked).toBe(false);
+    service.start(job({ text: "本文。" }));
+    await service.whenIdle();
+    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- Keep honorifics.");
+  });
+
+  it("splits a long list over several requests and reports a model that is too small", async () => {
+    const lm = await fakeLmStudio({ researchReply: "1" });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    for (let i = 0; i < 80; i++) save(service, `名${i}`, `Name${i}`, "a fairly long hint so that the list takes room in the request");
+    await service.researchBlock(ask("本文。", { contextLimit: 1400 }));
+    expect(bodies(lm).length).toBeGreaterThan(1);
+    await expect(service.researchBlock(ask("本文。".repeat(300), { contextLimit: 600, maxOutputTokens: 300 }))).rejects.toThrow(/does not fit/);
   });
 });

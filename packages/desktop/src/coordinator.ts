@@ -1,5 +1,6 @@
 import {
   blockSettingsHash,
+  type BlockMaterial,
   blockText,
   buildPrompt,
   checkTranslation,
@@ -62,6 +63,8 @@ export interface CoordinatorDeps {
   checkpoint?: () => Promise<void>;
   /** Quality checks on finished text: everything (default), glossary terms only, or none. Can depend on the run. */
   checks?: "all" | "terms" | "none" | ((run: ModelRun) => "all" | "terms" | "none");
+  /** The background chosen for a block (what its request carries besides the text). Without it, a keyword match is used. */
+  material?: (run: ModelRun, blockText: string) => BlockMaterial | undefined;
 }
 
 export type JobState = "queued" | "running" | "waiting" | "completed" | "completed_with_issues" | "canceled" | "interrupted";
@@ -494,14 +497,15 @@ export class Coordinator {
     for (;;) {
       if (stopped()) return;
       const previous = index > 0 ? run.outputs[revision.blocks[index - 1]!.id] : undefined;
-      const built = buildPrompt(revision, index, run, previous);
+      const material = this.deps.material?.(run, blockText(revision, block));
+      const built = buildPrompt(revision, index, run, previous, material);
       const attempt: Attempt = {
         id: this.newId(),
         ordinal: out.attempts.length + 1,
         configHash: built.configHash,
         sourceHash: built.sourceHash,
         contextHash: built.contextHash,
-        settingsHash: blockSettingsHash(revision, index, run),
+        settingsHash: blockSettingsHash(revision, index, run, material),
         state: "pending",
       };
       out.attempts.push(attempt);

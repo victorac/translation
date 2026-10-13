@@ -1,4 +1,5 @@
 import type { KnowledgeEntry } from "./entries.js";
+import type { ResearchRecord } from "./research.js";
 import { z } from "zod";
 import type { BlockSize } from "./defaults.js";
 import type { Backend } from "./ipc.js";
@@ -62,7 +63,7 @@ export interface ProjectFile {
   providerLabel?: string;
   settings?: ProjectSettings;
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
-  knowledge?: { entries: KnowledgeEntry[] };
+  knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> };
   activeDocumentId: string;
   documents: ProjectDocument[];
 }
@@ -200,8 +201,8 @@ const entrySchema = z.object({
   source: z.string().max(2000),
   target: z.string().max(2000),
   hint: z.string().max(2000),
-  keys: z.array(z.string().max(2000)).max(100),
   text: z.string().max(2000),
+  pinned: z.boolean().optional(),
   origin: z.object({ by: z.enum(["user", "model"]), model: z.string().max(300).optional(), documentTitle: z.string().max(500).optional(), block: z.number().int().min(1).max(1e7).optional() }),
   status: z.enum(["suggested", "confirmed"]),
   updatedAt: iso,
@@ -213,7 +214,7 @@ const fileSchema = z.object({
   project: projectHead,
   providerLabel: z.string().max(2000).optional(),
   settings: settingsSchema.optional(),
-  knowledge: z.object({ entries: z.array(entrySchema).max(50_000) }).optional(),
+  knowledge: z.object({ entries: z.array(entrySchema).max(50_000), research: z.record(z.string().max(100), z.object({ ids: z.array(id).max(50_000), seen: z.array(id).max(50_000), at: iso })).optional() }).optional(),
   activeDocumentId: id,
   documents: z.array(documentSchema).min(1).max(200),
 });
@@ -396,7 +397,7 @@ export function buildProjectFile(input: {
   version: number;
   providerLabel?: string;
   settings?: ProjectSettings | null;
-  knowledge?: KnowledgeEntry[];
+  knowledge?: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord> };
   activeDocumentId: string;
   documents: ProjectDocument[];
 }): ProjectFile {
@@ -406,7 +407,7 @@ export function buildProjectFile(input: {
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
     ...(input.settings ? { settings: input.settings } : {}),
-    ...(input.knowledge && input.knowledge.length > 0 ? { knowledge: { entries: input.knowledge } } : {}),
+    ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(Object.keys(input.knowledge.research).length > 0 ? { research: input.knowledge.research } : {}) } } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,
   };

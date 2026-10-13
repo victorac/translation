@@ -785,8 +785,10 @@ describe("names, hints and notes in saved projects", () => {
   it("saves the knowledge with the project, reopens it, and brings an older project's glossary over once", async () => {
     const { dir, answers, make } = env();
     const a = make();
-    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", keys: [], text: "" });
-    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", keys: ["魔王"], text: "He speaks formally." });
+    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", text: "", pinned: false });
+    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", pinned: false });
+    await a.workspace.researchBlock({ backend: "practice", modelId: "x", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage: "魔王が来た。" });
+    expect(Object.keys(a.workspace.exportProject().knowledge.research)).toHaveLength(1);
     answers.save = join(dir, "kb.ltw.json");
     await a.save(false);
 
@@ -795,6 +797,7 @@ describe("names, hints and notes in saved projects", () => {
     await b.open(false);
     expect(b.workspace.knowledgeList({}).entries).toMatchObject([{ source: "魔王", hint: "villain" }, { text: "He speaks formally." }]);
     expect(b.workspace.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1 });
+    expect(b.workspace.exportProject().knowledge.research).toEqual(a.workspace.exportProject().knowledge.research);
 
     // An older project kept them in its settings.
     const old = JSON.parse(readFileSync(join(dir, "kb.ltw.json"), "utf8"));

@@ -3,14 +3,14 @@ import { KnowledgeStore } from "./knowledge-store.js";
 
 let n = 0;
 const make = () => new KnowledgeStore({ newId: () => `e${++n}`, now: () => "2026-01-01T00:00:00.000Z" });
-const term = (source: string, target: string, hint = "") => ({ kind: "term" as const, source, target, hint, keys: [], text: "" });
-const note = (text: string, keys: string[] = []) => ({ kind: "note" as const, source: "", target: "", hint: "", keys, text });
+const term = (source: string, target: string, hint = "") => ({ kind: "term" as const, source, target, hint, text: "", pinned: false });
+const note = (text: string) => ({ kind: "note" as const, source: "", target: "", hint: "", text, pinned: false });
 
 describe("KnowledgeStore", () => {
   it("adds, lists in the order added, and counts", () => {
     const s = make();
     s.save(term("魔王", "Demon King", "villain"));
-    s.save(note("He speaks formally.", ["魔王"]));
+    s.save(note("He speaks formally."));
     expect(s.list().entries.map((e) => e.kind)).toEqual(["term", "note"]);
     expect(s.counts()).toEqual({ terms: 1, notes: 1, suggested: 0 });
   });
@@ -19,7 +19,7 @@ describe("KnowledgeStore", () => {
     const s = make();
     s.save(term("魔王", "Demon King", "villain"));
     s.save(term("勇者", "Hero"));
-    s.save(note("The hero is shy.", ["勇者"]));
+    s.save(note("The hero is shy."));
     expect(s.list({ text: "魔王" }).entries).toHaveLength(1);
     expect(s.list({ text: "hero" }).entries).toHaveLength(2);
     expect(s.list({ text: "VILLAIN" }).total).toBe(1);
@@ -51,7 +51,7 @@ describe("KnowledgeStore", () => {
 
   it("confirms suggestions, removes entries, and skips repeats when adding many", () => {
     const s = make();
-    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", keys: [], text: "", origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
+    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", text: "", pinned: false, origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
     expect(s.addMany([{ ...base, id: "a" }, { ...base, id: "b" }, { ...base, id: "c", source: "勇者" }])).toBe(2);
     expect(s.confirm(["a"])).toBe(1);
     expect(s.confirm()).toBe(1);

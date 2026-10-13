@@ -3,8 +3,8 @@ import { entriesToText, entryProblems, type EntryInput, type EntryKind, type Ent
 import { api } from "./api";
 import { useKnowledgeList } from "./useKnowledge";
 
-const blank = (kind: EntryKind): EntryInput => ({ kind, source: "", target: "", hint: "", keys: [], text: "" });
-const fromEntry = (e: KnowledgeEntry): EntryInput => ({ id: e.id, kind: e.kind, source: e.source, target: e.target, hint: e.hint, keys: e.keys, text: e.text });
+const blank = (kind: EntryKind): EntryInput => ({ kind, source: "", target: "", hint: "", text: "", pinned: false });
+const fromEntry = (e: KnowledgeEntry): EntryInput => ({ id: e.id, kind: e.kind, source: e.source, target: e.target, hint: e.hint, text: e.text, pinned: e.pinned });
 
 function fromWhere(e: KnowledgeEntry): { short: string; long: string } {
   if (e.origin.by === "user") return { short: "You", long: "Written by you" };
@@ -57,15 +57,15 @@ function EntryForm({ initial, onSave, onCancel }: { initial: EntryInput; onSave:
       ) : (
         <div className="kb-fields">
           <label className="wide">
-            Applies when these words appear (empty: every block)
-            <input autoFocus value={e.keys.join(", ")} onChange={(ev) => set({ keys: ev.target.value.split(/[,、，]/) })} />
-          </label>
-          <label className="wide">
             Note
-            <textarea rows={2} value={e.text} onChange={(ev) => set({ text: ev.target.value })} />
+            <textarea autoFocus rows={2} value={e.text} onChange={(ev) => set({ text: ev.target.value })} />
           </label>
         </div>
       )}
+      <label className="check" title="Normally a model decides which entries matter for each block. An entry that is always sent skips that decision.">
+        <input type="checkbox" checked={e.pinned} onChange={(ev) => set({ pinned: ev.target.checked })} />
+        Always send with every block
+      </label>
       <div className="row-end">
         {problem && <span className="hint err-text">{problem}</span>}
         <button type="button" onClick={onCancel}>
@@ -159,7 +159,7 @@ export function KnowledgeTable({ rev }: { rev: number }) {
       )}
       {pasting && (
         <div className="kb-form">
-          <textarea rows={4} value={paste} placeholder={"魔王 = Demon King # villain\n> 魔王 | He speaks formally.\n> A note for every block"} onChange={(e) => setPaste(e.target.value)} />
+          <textarea rows={4} value={paste} placeholder={"魔王 = Demon King # villain\n> He speaks formally."} onChange={(e) => setPaste(e.target.value)} />
           <div className="row-end">
             <button onClick={() => setPasting(false)}>Close</button>
             <button
@@ -200,8 +200,6 @@ export function KnowledgeTable({ rev }: { rev: number }) {
                       </>
                     ) : (
                       <>
-                        <span className="kb-keys">{e.keys.length > 0 ? e.keys.join(", ") : "every block"}</span>
-                        <span className="muted"> · </span>
                         {e.text}
                       </>
                     )}
@@ -209,6 +207,7 @@ export function KnowledgeTable({ rev }: { rev: number }) {
                   <div className="kb-meta-row">
                     <span className={e.status === "suggested" ? "tag warn-tag" : "hint"} title={w.long}>
                       {e.status === "suggested" ? `Suggested · ${w.short}` : w.short}
+                      {e.pinned && " · always sent"}
                     </span>
                     <span className="kb-row-actions">
                       {e.status === "suggested" && (

@@ -18,7 +18,7 @@ export function analysisSystemPrompt(sourceLanguage: string, targetLanguage: str
 
 Reply with plain lines and nothing else. There are two kinds of line.
 1. One line for each named person or recurring character: the name as written in the passage, then "=", then the name in ${targetLanguage}, then "#", then a short hint (gender, age group, how they speak, their relationship to others). Example: 花子 = Hanako # girl, speaks very politely, the narrator's classmate
-2. Lines that start with "NOTE:", then the names (as written in the passage) the note is about, separated by commas, then "|", then one short sentence about who speaks to whom, who a dropped subject or object refers to, or whose point of view the narrator has. Example: NOTE: 花子 | The second speaker is talking to Hanako.
+2. Lines that start with "NOTE:" followed by one short sentence about who speaks to whom, who a dropped subject or object refers to, or whose point of view the narrator has. Example: NOTE: The second speaker is talking to Hanako.
 
 A section called KNOWN SO FAR lists what is already noted. Do not repeat it. Add a person only if they are new, or if you can add something that is missing. If you are not sure about something, say so in the line (for example "probably a girl"). If there is nothing to add, reply with the single word NONE.`;
 }
@@ -51,7 +51,7 @@ export function parseAnalysisReply(reply: string): AnalysisResult {
     if (note) {
       if (notes.length >= MAX_NOTES_PER_PASSAGE) continue;
       const parsed = parseKnowledge(`> ${note[1]!.trim()}`).notes[0];
-      if (parsed) notes.push({ keys: parsed.keys, text: parsed.text.slice(0, MAX_NOTE_CHARS) });
+      if (parsed) notes.push({ text: parsed.text.slice(0, MAX_NOTE_CHARS) });
     } else if (/[=→]|->/.test(line)) {
       characterLines.push(line);
     }
@@ -71,7 +71,7 @@ export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: Anal
   for (const c of found.characters) {
     const i = next.findIndex((e) => e.kind === "term" && e.source.trim() === c.source);
     if (i < 0) {
-      next.push({ id: deps.newId(), kind: "term", source: c.source, target: c.target, hint: c.note ?? "", keys: [], text: "", origin, status: "suggested", updatedAt: at });
+      next.push({ id: deps.newId(), kind: "term", source: c.source, target: c.target, hint: c.note ?? "", text: "", pinned: false, origin, status: "suggested", updatedAt: at });
       added++;
     } else if (!next[i]!.hint.trim() && c.note) {
       next = next.map((e, j) => (j === i ? { ...e, hint: c.note!, updatedAt: at } : e));
@@ -80,7 +80,7 @@ export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: Anal
   }
   for (const n of found.notes) {
     if (next.some((e) => e.kind === "note" && e.text.toLocaleLowerCase() === n.text.toLocaleLowerCase())) continue;
-    next.push({ id: deps.newId(), kind: "note", source: "", target: "", hint: "", keys: n.keys, text: n.text, origin, status: "suggested", updatedAt: at });
+    next.push({ id: deps.newId(), kind: "note", source: "", target: "", hint: "", text: n.text, pinned: false, origin, status: "suggested", updatedAt: at });
     added++;
   }
   return { entries: next, added };
