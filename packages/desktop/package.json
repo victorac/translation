@@ -19,14 +19,15 @@
   },
   "dependencies": {
     "@ltw/domain": "workspace:*",
-    "@ltw/providers": "workspace:*"
+    "@ltw/providers": "workspace:*",
+    "lindera-wasm-ipadic": "^2.1.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
     "electron": "^44.7.0",
     "electron-vite": "^5.0.0",
     "tsx": "^4.23.15",
     "vite": "^7.3.7",
-    "zod": "^4.6.7",
-    "@vitejs/plugin-react": "^5.0.0"
+    "zod": "^4.6.7"
   }
 }

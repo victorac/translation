@@ -61,3 +61,5 @@ export * from "./entries.js";
 export * from "./research.js";
 export * from "./classes.js";
 export * from "./topicfile.js";
+export * from "./steps.js";
+export * from "./extract.js";

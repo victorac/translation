@@ -29,6 +29,9 @@ importers:
       '@ltw/providers':
         specifier: workspace:*
         version: link:../providers
+      lindera-wasm-ipadic:
+        specifier: ^2.1.0
+        version: 2.1.0
     devDependencies:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
@@ -1158,6 +1161,10 @@ packages:
     resolution: {integrity: sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==}
     engines: {node: '>= 12.0.0'}
 
+  lindera-wasm-ipadic@2.1.0:
+    resolution: {integrity: sha512-KdUku5OKNfbswatINoiTPAi63SskH4uw4OVTodtQZiZwOP3VkSjR4DIs+/MZmGS8ydUXBIDdCxxRl3+jBVHhZw==}
+    deprecated: Unmaintained 2.x build with an embedded dictionary. Since v3 Lindera ships the single package 'lindera-wasm' (v6.0.0) and loads dictionaries at runtime; see https://lindera.github.io/lindera/lindera-wasm/installation.html
+
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
@@ -2232,6 +2239,8 @@ snapshots:
       lightningcss-linux-x64-musl: 1.33.0
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
+
+  lindera-wasm-ipadic@2.1.0: {}
 
   lru-cache@5.1.1:
     dependencies:

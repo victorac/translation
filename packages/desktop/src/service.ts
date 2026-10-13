@@ -1,6 +1,8 @@
 import {
   allPrompts,
-  analysisSystemPrompt,
+  extractBlock,
+  type Asker,
+  type Question,
   blockText,
   blockMaterial,
   entriesFromLegacy,
@@ -12,7 +14,6 @@ import {
   listFiles,
   newTopic,
   parseClasses,
-  rejectedLine,
   resolveName,
   titleOf,
   entriesFromText,
@@ -21,7 +22,6 @@ import {
   knowledgeCap,
   knowledgeReserve,
   mergeSummary,
-  mergeSuggestions,
   summarySystemPrompt,
   summaryUserMessage,
   parseKnowledge,
@@ -32,8 +32,6 @@ import {
   sha256Hex,
   splitEntries,
   updateRecord,
-  analysisUserMessage,
-  parseAnalysisReply,
   blockSettingsHash,
   BLOCK_SIZES,
   chunkSource,
@@ -61,7 +59,6 @@ import {
   type AnalyzeResult,
   type BlockCellView,
   type BlockMaterial,
-  type KnownTerm,
   type SummarizeInput,
   type SummarizeResult,
   type BlockOutput,
@@ -102,6 +99,7 @@ import {
   type TranslationProvider,
 } from "@ltw/providers";
 import { Coordinator, type CoordinatorEvent } from "./coordinator.js";
+import { findCandidateNames } from "./analyzer.js";
 import { UserError } from "./errors.js";
 import { KnowledgeStore } from "./knowledge-store.js";
 import type { ProviderService } from "./provider-service.js";
@@ -1208,7 +1206,7 @@ export class WorkspaceService {
 
   /** One request to a model, answered in full. Returns null if the user stopped it. */
   private async askModel(
-    ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string },
+    ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
     abort: AbortController,
   ): Promise<string | null> {
     let reply = "";
@@ -1220,7 +1218,7 @@ export class WorkspaceService {
       if (!provider) throw new UserError("no_provider", "No model server connection is set up.");
       const stream = provider.adapter().generate(
         provider.config(),
-        { requestId: newId(), modelId: ask.modelId, messages: ask.messages, temperature: 0.2, maxOutputTokens: ask.maxOutputTokens, stream: true },
+        { requestId: newId(), modelId: ask.modelId, messages: ask.messages, temperature: ask.temperature ?? 0.2, maxOutputTokens: ask.maxOutputTokens, stream: true },
         abort.signal,
       );
       const it = stream[Symbol.asyncIterator]();
@@ -1243,73 +1241,97 @@ export class WorkspaceService {
     }
     if (abort.signal.aborted) return null;
     reply = stripThinking(reply);
-    if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
+    if (reply.trim() === "" && !ask.allowEmpty) throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
     return reply;
   }
 
-  /** The known people and terms with their facts, as many as fit in `capTokens`. */
-  private knownTerms(capTokens: number): KnownTerm[] {
-    const entries = this.knowledge.all();
-    const out: KnownTerm[] = [];
-    let left = capTokens;
-    for (const t of entries.filter((e) => e.kind === "term")) {
-      const known = { category: t.category, source: t.source, aliases: t.aliases, target: t.target, hint: t.hint, facts: entries.filter((e) => e.kind === "note" && e.about === t.id).map((e) => e.text) };
-      const cost = estimateTokens([t.source, ...t.aliases, t.target, t.hint, ...known.facts].join(" "));
-      if (cost > left) break;
-      left -= cost;
-      out.push(known);
+  /** What the practice translator answers to each kind of question: always the most harmless option. */
+  private practiceAnswer(q: Question): string {
+    const last = String.fromCharCode(64 + (q.options?.length ?? 1));
+    switch (q.id) {
+      case "list-names":
+        return "NONE";
+      case "classify":
+        return "A";
+      case "same-as":
+        return last; // a new one
+      case "english-name":
+        return "Practice name";
+      case "describe":
+        return "an example, not written by a model";
+      case "role":
+        return "A";
+      case "attribute":
+        return last; // not stated
+      case "relation":
+        return "B";
+      case "same-scene":
+        return "B";
+      case "scene-text":
+        return "Practice mode: this scene description is an example.";
+      default:
+        return "";
     }
-    return out;
   }
 
   /**
-   * Asks a model to read one passage and add what it finds to the knowledge base as suggestions: people and terms,
-   * facts about them, and a description of the scene. Facts are attached to the person they are about.
+   * Reads one passage for knowledge in layers: the program finds candidate names, then asks the model one narrow
+   * question at a time (what is this name, is it one we know, who is acting, what does the text say about them...) and
+   * checks each answer before using it. What it finds is added to the knowledge base as suggestions.
    */
   async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     const abort = this.beginSideRequest();
     try {
-      const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && (e.scope.blockEnd ?? e.scope.block) === input.block - 1);
-      const system = analysisSystemPrompt(input.sourceLanguage, input.targetLanguage);
-      const everything = this.knowledge.everything();
-      const rejectedLines = this.knowledge.rejected().map((e) => rejectedLine(e, everything)).filter((l): l is string => l !== null).slice(0, 40);
-      // The reply is a handful of short lines, so it needs far less room than a translation does.
-      const replyTokens = Math.min(input.maxOutputTokens, ANALYSIS_REPLY_TOKENS);
-      const fixed = estimateTokens(system) + estimateTokens(input.passage) + estimateTokens(previous?.text ?? "") + estimateTokens(rejectedLines.join("\n")) + replyTokens + DEFAULTS.messageOverheadTokens + 60;
-      const roomForKnown = input.contextLimit - fixed;
-      if (roomForKnown < 0) {
+      // The longest question is the one that lists names, which needs the whole passage.
+      const fixed = estimateTokens(input.passage) + 260 + 150 + DEFAULTS.messageOverheadTokens + 60;
+      if (fixed > input.contextLimit) {
         throw new UserError(
           "context_overflow",
           `This block needs about ${fixed} tokens to be read for knowledge, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size for this model (in its settings), or use smaller blocks.`,
         );
       }
-      // What is already known helps the model avoid repeating itself, but it gives way to the passage when room is short.
-      const messages = [
-        { role: "system" as const, content: system },
-        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), rejected: rejectedLines, previousScene: previous ? { text: previous.text, from: previous.scope?.block ?? input.block - 1, to: previous.scope?.blockEnd ?? previous.scope?.block ?? input.block - 1 } : undefined }, input.passage) },
-      ];
-      const reply = await this.askModel(
-        {
-          backend: input.backend,
-          modelId: input.modelId,
-          maxOutputTokens: replyTokens,
-          messages,
-          practiceReply: () =>
-            input.passage.includes("彼")
-              ? `CHARACTER: 彼 = He | practice mode: an example, not written by a model\nFACT: 彼 | Practice mode: this fact is an example.\nSCENE: ${input.block > 1 && input.block % 2 === 0 ? "CONTINUES" : "NEW"} | 彼 | Practice mode: this scene description is an example.`
-              : `SCENE: ${input.block > 1 ? "CONTINUES" : "NEW"} | Practice mode: this scene description is an example.`,
+      const candidates = await findCandidateNames(input.passage);
+      const asker: Asker = {
+        ask: async (q) => {
+          const reply = await this.askModel(
+            {
+              backend: input.backend,
+              modelId: input.modelId,
+              maxOutputTokens: q.maxTokens,
+              temperature: 0,
+              allowEmpty: true,
+              messages: [
+                { role: "system", content: q.system },
+                { role: "user", content: q.user },
+              ],
+              practiceReply: () => this.practiceAnswer(q),
+            },
+            abort,
+          );
+          return reply;
         },
-        abort,
-      );
-      if (reply === null) return { added: 0, canceled: true };
+      };
       const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle, block: input.block };
-      const scope = { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block };
-      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, scope, { newId, now: () => new Date().toISOString() }, this.knowledge.rejected());
-      if (merged.added > 0 || JSON.stringify(merged.entries) !== JSON.stringify(this.knowledge.all())) {
-        this.knowledge.replaceLive(merged.entries);
+      const result = await extractBlock({
+        entries: this.knowledge.all(),
+        rejected: this.knowledge.rejected(),
+        classes: parseClasses(this.classesText).classes,
+        passage: input.passage,
+        scope: { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block },
+        origin,
+        candidates,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        asker,
+        deps: { newId, now: () => new Date().toISOString() },
+        shouldStop: () => abort.signal.aborted,
+      });
+      if (abort.signal.aborted) return { added: 0, canceled: true };
+      if (JSON.stringify(result.entries) !== JSON.stringify(this.knowledge.all())) {
+        this.knowledge.replaceLive(result.entries);
         this.knowledgeChanged();
       }
-      return { added: merged.added, canceled: false };
+      return { added: result.added, canceled: false };
     } finally {
       this.analysisAbort = null;
     }
