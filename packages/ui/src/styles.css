@@ -237,3 +237,5 @@ details > summary { cursor: pointer; }
 .export-dialog h2 { margin-bottom: 0.6rem; }
 .export-preview { border-top: 1px solid var(--border); padding-top: 0.4rem; }
 .dialog-actions { justify-content: flex-end; margin-top: 0.8rem; }
+
+.outdated-mark { font-size: 0.75em; color: var(--warn); font-weight: 700; flex: none; }

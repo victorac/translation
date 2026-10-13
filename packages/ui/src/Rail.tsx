@@ -132,6 +132,11 @@ export function Rail({
                   {sub && <span className="hint ellipsis">{sub}</span>}
                 </span>
               )}
+              {e.run && e.run.outdated > 0 && (
+                <span className="outdated-mark" title={`${e.run.outdated} block${e.run.outdated === 1 ? "" : "s"} translated with older settings. Run to update.`}>
+                  ↻{e.run.outdated}
+                </span>
+              )}
               {c && (
                 <span className="hint count">
                   {c.done}/{c.total}
@@ -147,7 +152,7 @@ export function Rail({
                   { label: "Cancel", onSelect: () => e.run && void send("job.cancel", { kind: "run", runId: e.run.id }), disabled: !e.run || !["running", "queued", "waiting"].includes(e.run.state) },
                   { label: "Retry unfinished", onSelect: () => e.run && void send("run.retryUnfinished", { runId: e.run.id }), disabled: !e.run || busy || !unfinished },
                   { label: "Retranslate out-of-date", onSelect: () => e.run && void send("run.retranslateDownstream", { runId: e.run.id }), disabled: !e.run || busy || !(c && c.stale > 0) },
-                  { label: "Run again with current settings", onSelect: () => onRunAgain(e.label), disabled: !e.run || !e.config || busy || !viewingLatest },
+                  { label: "Translate everything again", onSelect: () => onRunAgain(e.label), disabled: !e.run || !e.config || busy || !viewingLatest },
                   { label: "Remove", onSelect: () => void remove(e), danger: true, separated: true },
                 ]}
               />

@@ -6,7 +6,8 @@ import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar } from "./Toolbar";
 import { Tray } from "./Tray";
-import { loadSetup, mergeRunModels, modelsFromRuns, saveSetup, toStartInput, type SetupState } from "./setup";
+import { api } from "./api";
+import { labelOf, loadSetup, mergeRunModels, modelsFromRuns, saveSetup, toStartInput, type SetupState } from "./setup";
 import { useProvider } from "./useProvider";
 import { useSplitPreview } from "./useSplitPreview";
 import { useWorkspace } from "./useWorkspace";
@@ -25,6 +26,17 @@ export function App() {
   const setupRef = useRef(setup);
   setupRef.current = setup;
   useEffect(() => saveSetup(setup), [setup]);
+
+  // Tell the background process which choices decide how blocks are translated, so Retry and Run use the current ones
+  // and it can mark blocks translated under older choices.
+  const syncKey = JSON.stringify([setup.models, setup.glossary, setup.prompts, setup.sourceLanguage, setup.targetLanguage]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const s = setupRef.current;
+      void api.invoke("settings.sync", { sourceLanguage: s.sourceLanguage, targetLanguage: s.targetLanguage, models: s.models, glossary: s.glossary, prompts: s.prompts });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [syncKey]);
 
   const hasVersion = !!snap?.revision;
   const viewingLatest = !snap || snap.viewingId === snap.latestId;
@@ -80,10 +92,24 @@ export function App() {
               : null;
   const canRun = runHint === null && !busy;
 
+  // Is there anything for Run to do? New text, a model not run yet, unfinished blocks, or blocks translated with older settings.
+  const needsRun =
+    !snap?.revision ||
+    edited ||
+    !viewingLatest ||
+    setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
+    snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
+
   const run = async (rerun: string[] = []) => {
     if (busy || (rerun.length === 0 && !canRun)) return;
+    let labels = rerun;
+    if (labels.length === 0 && !needsRun) {
+      // Nothing is missing, but the user asked: translate everything again rather than refusing.
+      if (!window.confirm("Everything is already translated with the current settings. Translate it all again?")) return;
+      labels = setupRef.current.models.map((m) => labelOf(m, setupRef.current));
+    }
     setMode(null);
-    await send("job.start", toStartInput(setupRef.current, rerun));
+    await send("job.start", toStartInput(setupRef.current, labels));
   };
 
   // ---- shortcuts ----

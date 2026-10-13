@@ -76,6 +76,11 @@ export function Cell({ cell, actions, label, n }: { cell: BlockCellView; actions
 
       {quiet ? <span className="sr-only">{s.label}. </span> : <span className={`state state-${cell.state}`}><span aria-hidden="true">{s.icon}</span> {s.label}{cell.state === "failed" && cell.error ? ` · ${cell.error}` : ""}</span>}
       {cell.edited && <span className="tag">edited</span>}
+      {cell.outdated && (
+        <span className="tag warn-tag" title="The glossary or settings changed after this was translated. Run to update it, or retry this block.">
+          older settings
+        </span>
+      )}
       {cell.attempts > 1 && quiet && <span className="tag">{cell.attempts} tries</span>}
 
       {cell.state === "needs_review" && cell.reviewNotes.length > 0 && (
