@@ -272,6 +272,7 @@ export interface CommandMap {
   "knowledge.delete": { id: string };
   "knowledge.resolve": { name: string };
   "knowledge.beginExtraction": { documentId: string };
+  "knowledge.check": undefined;
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
   "knowledge.remove": { ids: string[] };
@@ -284,7 +285,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
@@ -298,6 +299,7 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "knowledge.delete": { removed: boolean };
   "knowledge.resolve": { id: string | null; title: string | null };
   "knowledge.beginExtraction": { discarded: number };
+  "knowledge.check": { found: number; added: number; removed: number };
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
   "knowledge.remove": { removed: number };
@@ -352,6 +354,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "knowledge.delete",
   "knowledge.resolve",
   "knowledge.beginExtraction",
+  "knowledge.check",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

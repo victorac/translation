@@ -6,7 +6,9 @@ import {
   blockText,
   blockMaterial,
   entriesFromLegacy,
+  applyChecks,
   applyFile,
+  checkKnowledge,
   backlinksOf,
   classLabel,
   DEFAULT_CLASSES_TEXT,
@@ -1138,6 +1140,20 @@ export class WorkspaceService {
     return { id: hit?.id ?? null, title: hit?.source ?? null };
   }
 
+  /**
+   * Looks over the whole knowledge base for things that cannot all be right (two topics sharing a name, links that lead
+   * nowhere...) and notes each one on the topic it is about, as a suggested note beginning with "Check:".
+   */
+  knowledgeCheck(): { found: number; added: number; removed: number } {
+    const issues = checkKnowledge(this.knowledge.all(), parseClasses(this.classesText).classes);
+    const result = applyChecks(this.knowledge.all(), this.knowledge.rejected(), issues, { newId, now: () => new Date().toISOString() });
+    if (result.added > 0 || result.removed > 0) {
+      this.knowledge.replaceLive(result.entries);
+      this.knowledgeChanged();
+    }
+    return { found: issues.length, added: result.added, removed: result.removed };
+  }
+
   /** Before reading a document again: forget what a model suggested from it that nobody checked. */
   beginExtraction(documentId: string): { discarded: number } {
     const doc = this.docs.find((d) => d.id === documentId);
@@ -1247,26 +1263,28 @@ export class WorkspaceService {
 
   /** What the practice translator answers to each kind of question: always the most harmless option. */
   private practiceAnswer(q: Question): string {
-    const last = String.fromCharCode(64 + (q.options?.length ?? 1));
+    const letter = (start: string) => String.fromCharCode(65 + Math.max(0, (q.options ?? []).findIndex((o) => o.startsWith(start))));
     switch (q.id) {
       case "list-names":
         return "NONE";
       case "classify":
-        return "A";
+        return letter("a person");
       case "same-as":
-        return last; // a new one
+        return letter("None");
       case "english-name":
         return "Practice name";
       case "describe":
         return "an example, not written by a model";
+      case "supported":
+        return letter("Yes");
       case "role":
-        return "A";
+        return letter("speaks or acts");
       case "attribute":
-        return last; // not stated
+        return letter("Not stated");
       case "relation":
-        return "B";
+        return letter("No");
       case "same-scene":
-        return "B";
+        return letter("No");
       case "scene-text":
         return "Practice mode: this scene description is an example.";
       default:

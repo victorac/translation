@@ -113,6 +113,15 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
               Accept all
             </button>
           )}
+          <button
+            className="small"
+            onClick={() =>
+              void api.invoke("knowledge.check").then((r) => setMessage(r.ok ? (r.value.found === 0 ? "No problems found." : `${r.value.found} possible ${r.value.found === 1 ? "problem" : "problems"}. They are noted as "Check:" on the topics concerned.`) : r.error.message))
+            }
+            title="Look through the knowledge base for names that clash and links that lead nowhere"
+          >
+            Check
+          </button>
           <button className="small" onClick={() => setListOpen((o) => !o)} aria-expanded={listOpen}>
             {listOpen ? "Hide files" : "Files"}
           </button>
@@ -148,7 +157,7 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
         </form>
       )}
       {message && (
-        <p className="hint err-text" role="alert">
+        <p className="hint" role="status">
           {message}
         </p>
       )}

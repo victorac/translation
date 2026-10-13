@@ -14,11 +14,13 @@ import {
   quoteInPassage,
   related,
   relation,
+  reversed,
   role,
   sameAs,
   sameScene,
   sceneText,
   splitSentences,
+  supported,
   windowAround,
   type Question,
 } from "./steps.js";
@@ -55,6 +57,10 @@ export interface ExtractResult {
   added: number;
   asked: number;
   stopped: boolean;
+  /** Answers thrown away because the model did not give the same answer when the options were in another order. */
+  disputed: number;
+  /** Descriptions thrown away because the passage does not support them. */
+  unsupported: number;
 }
 
 const PHRASE: Record<string, string> = {
@@ -85,7 +91,10 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
   let added = 0;
   let asked = 0;
   let stopped = false;
+  let disputed = 0;
+  let unsupported = 0;
   const at = deps.now();
+  const latin = !/japan|chinese|korean|mandarin|cantonese/i.test(input.targetLanguage);
 
   const stop = () => {
     stopped = stopped || input.shouldStop?.() === true;
@@ -112,6 +121,37 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     const n = q.options!.length;
     const reply = await ask(q);
     return reply === null ? null : parseChoiceWithQuote(reply, n);
+  };
+  /** A choice asked twice, the second time with the options in the opposite order. Only an answer given both ways counts. */
+  const pickAgreed = async (q: Question): Promise<number | null> => {
+    const first = await pick(q);
+    if (first === null) return null;
+    const r = reversed(q);
+    const second = await pick(r.question);
+    if (second === null) return null;
+    if (r.back[second] !== first) {
+      disputed++;
+      return null;
+    }
+    return first;
+  };
+  const pickWithQuoteAgreed = async (q: Question): Promise<{ index: number; quote: string } | null> => {
+    const first = await pickWithQuote(q);
+    if (first === null) return null;
+    const r = reversed(q);
+    const second = await pickWithQuote(r.question);
+    if (second === null) return null;
+    if (r.back[second.index] !== first.index) {
+      disputed++;
+      return null;
+    }
+    return first;
+  };
+  /** Does the passage support this statement? Anything else is not kept. */
+  const isSupported = async (statement: string, subject: string, context: string): Promise<boolean> => {
+    const answer = await pick(supported(statement, subject, context));
+    if (answer !== 0) unsupported++;
+    return answer === 0;
   };
   const update = (id: string, patch: Partial<KnowledgeEntry>) => {
     entries = entries.map((e) => (e.id === id ? { ...e, ...patch, updatedAt: at } : e));
@@ -142,7 +182,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
   for (const c of candidates) {
     if (stop()) break;
     const context = windowAround(sentences, [c]);
-    const kindIndex = await pick(classify(c, context, classOptions));
+    const kindIndex = await pickAgreed(classify(c, context, classOptions));
     if (kindIndex === null || kindIndex >= classNames.length) continue;
     const category: TermCategory = classNames[kindIndex]!;
 
@@ -150,7 +190,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       .filter((e) => e.category === category && nameSet(e).some((n) => related(c, n)))
       .slice(0, 5);
     if (similar.length > 0) {
-      const which = await pick(sameAs(c, context, similar.map((e) => ({ label: `${e.source}${e.aliases.length > 0 ? ` (${e.aliases.join(", ")})` : ""} = ${e.target}${e.hint ? ` — ${e.hint}` : ""}` }))));
+      const which = await pickAgreed(sameAs(c, context, similar.map((e) => ({ label: `${e.source}${e.aliases.length > 0 ? ` (${e.aliases.join(", ")})` : ""} = ${e.target}${e.hint ? ` — ${e.hint}` : ""}` }))));
       if (which !== null && which < similar.length) {
         const hit = similar[which]!;
         update(hit.id, { aliases: [...hit.aliases, c] });
@@ -163,9 +203,11 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
 
     const nameReply = await ask(englishName(c, category, context, input.targetLanguage));
     const target = nameReply === null ? null : parseShortText(nameReply, 60);
-    if (!target) continue;
+    // An English name with Japanese characters in it is not a translation.
+    if (!target || (latin && /[\u3040-\u30FF\u4E00-\u9FFF]/.test(target))) continue;
     const descReply = await ask(describe(c, context));
-    const summary = descReply === null ? "" : (parseShortText(descReply, 200) ?? "");
+    let summary = descReply === null ? "" : (parseShortText(descReply, 200) ?? "");
+    if (summary !== "" && !(await isSupported(summary, c, context))) summary = "";
     const created: KnowledgeEntry = {
       id: deps.newId(),
       kind: "term",
@@ -212,7 +254,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       if ((current.attrs[a.key] ?? []).length > 0) continue;
       if (a.kind === "choice" && a.choices) {
         budget--;
-        const got = await pickWithQuote(attribute(p.source, a.key, a.choices, context));
+        const got = await pickWithQuoteAgreed(attribute(p.source, a.key, a.choices, context));
         if (!got || got.index >= a.choices.length || !quoteInPassage(passage, got.quote)) continue;
         update(p.id, { attrs: { ...current.attrs, [a.key]: [a.choices[got.index]!] }, attrFlags: [...new Set([...current.attrFlags, a.key])] });
         added++;
@@ -221,7 +263,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
         for (const o of others) {
           if (stop() || budget <= 0) break;
           budget--;
-          const got = await pickWithQuote(relation(p.source, a.key, o.source, context));
+          const got = await pickWithQuoteAgreed(relation(p.source, a.key, o.source, context));
           if (!got || got.index !== 0 || !quoteInPassage(passage, got.quote)) continue;
           const now = entries.find((e) => e.id === p.id)!;
           update(p.id, { attrs: { ...now.attrs, [a.key]: [...(now.attrs[a.key] ?? []), o.source] }, attrFlags: [...new Set([...now.attrFlags, a.key])] });
@@ -253,7 +295,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       } else if (!stopped) {
         const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage));
         const text = reply === null ? null : parseShortText(reply, 300);
-        if (text) {
+        if (text && (await isSupported(text, "this scene", passage.slice(0, 1500)))) {
           entries.push({
             id: deps.newId(),
             kind: "scene",
@@ -277,5 +319,5 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       }
     }
   }
-  return { entries, added, asked, stopped };
+  return { entries, added, asked, stopped, disputed, unsupported };
 }

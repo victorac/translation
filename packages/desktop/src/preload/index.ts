@@ -48,6 +48,7 @@ const COMMANDS = new Set([
   "knowledge.delete",
   "knowledge.resolve",
   "knowledge.beginExtraction",
+  "knowledge.check",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

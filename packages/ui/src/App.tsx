@@ -167,7 +167,10 @@ export function App() {
         documentTitle: activeTitle,
       });
       if (!s2.ok) return setWorkNote(`${added} suggestions were added, but the summary could not be written: ${s2.error.message}`);
-      setWorkNote(`${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?. Accept what is right, fix or delete the rest, and read again if you like.`);
+      // A last look over everything for names that clash and links that lead nowhere.
+      const checked = await api.invoke("knowledge.check");
+      const flagged = checked.ok ? checked.value.found : 0;
+      setWorkNote(`${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?.${flagged > 0 ? ` ${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:".` : ""} Accept what is right, fix or delete the rest, and read again if you like.`);
     } finally {
       setWork(null);
     }

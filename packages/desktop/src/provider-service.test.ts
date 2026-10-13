@@ -347,25 +347,26 @@ describe("storage", () => {
   });
 });
 
-/** Answers the small questions of the knowledge reading from a table of what each name is. */
-type Person = { english: string; summary?: string; gender?: "male" | "female"; kind?: string };
+/** Answers the small questions of the knowledge reading from a table of what each name is. It answers by what an option says, so asking in another order gives the same answer. */
+type Person = { english: string; summary?: string; gender?: "male" | "female"; kind?: "person" | "organization" };
+const optionLetter = (user: string, start: string): string => [...user.matchAll(/^([A-J])\) (.*)$/gm)].find((m) => m[2]!.startsWith(start))?.[1] ?? "A";
 const reader =
-  (people: Record<string, Person>, extra: { sameScene?: string; sceneText?: string; quote?: string } = {}) =>
+  (people: Record<string, Person>, extra: { sameScene?: boolean; sceneText?: string; quote?: string } = {}) =>
   (system: string, user: string): string => {
     const name = /「(.+?)」/.exec(user)?.[1] ?? "";
     const p = people[name];
-    const last = String.fromCharCode(64 + (user.match(/^[A-J]\) /gm) ?? []).length);
     if (system.startsWith("You find names")) return Object.keys(people).join("\n") || "NONE";
-    if (system.startsWith("You classify")) return p ? (p.kind ?? "A") : "F";
-    if (system.startsWith("You decide whether two")) return last;
+    if (system.startsWith("You classify")) return optionLetter(user, p ? (p.kind === "organization" ? "an organization" : "a person") : "not a name");
+    if (system.startsWith("You decide whether two")) return optionLetter(user, "None");
     if (system.startsWith("You translate names")) return p?.english ?? "";
     if (system.startsWith("You write very short")) return p?.summary ?? "UNKNOWN";
+    if (system.startsWith("You check statements")) return optionLetter(user, "Yes");
     if (system.startsWith("You read fiction closely and only report")) {
-      if (user.includes("this relation")) return "B";
-      return p?.gender ? `${p.gender === "male" ? "A" : "B"} | ${extra.quote ?? "彼女は笑った"}` : last;
+      if (user.includes("this relation")) return optionLetter(user, "No");
+      return p?.gender ? `${optionLetter(user, p.gender)} | ${extra.quote ?? "彼女は笑った"}` : optionLetter(user, "Not stated");
     }
-    if (system.startsWith("You read fiction closely.")) return "A";
-    if (system.startsWith("You follow the scenes")) return extra.sameScene ?? "B";
+    if (system.startsWith("You read fiction closely.")) return optionLetter(user, "speaks or acts");
+    if (system.startsWith("You follow the scenes")) return optionLetter(user, extra.sameScene ? "Yes" : "No");
     if (system.startsWith("You describe scenes")) return extra.sceneText ?? "A scene.";
     return "";
   };
@@ -385,7 +386,7 @@ describe("suggested knowledge", () => {
     block: 3,
     ...over,
   });
-  const girl: Record<string, Person> = { 花子: { english: "Hanako", summary: "a girl waiting at the gate", gender: "female" }, 学園: { english: "the Academy", kind: "C" } };
+  const girl: Record<string, Person> = { 花子: { english: "Hanako", summary: "a girl waiting at the gate", gender: "female" }, 学園: { english: "the Academy", kind: "organization" } };
   const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
 
   it("reads a passage in small steps and adds typed topics, their attributes as suggestions, and a scene tied to the block", async () => {
@@ -452,7 +453,7 @@ describe("suggested knowledge", () => {
   });
 
   it("lets a scene run over several blocks when the model says the passage continues it", async () => {
-    const lm = await fakeLmStudio({ answer: reader({}, { sameScene: "A", sceneText: "At the gate, still talking." }) });
+    const lm = await fakeLmStudio({ answer: reader({}, { sameScene: true, sceneText: "At the gate, still talking." }) });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await service.analyze(ask({ block: 1, passage: "一つ目。" }));
@@ -609,5 +610,21 @@ describe("topics as files", () => {
     const item = service.knowledgeCreate("item", "魔剣");
     expect(service.knowledgeFile(item.id).text).toContain("owner:\nweight:");
     expect(service.knowledgeSetFile("classes", "owner: text").problems[0]!.message).toMatch(/Start with the name of a class/);
+  });
+});
+
+describe("checking the knowledge base", () => {
+  it("notes things that cannot all be right on the topics they are about, once, and takes the note away when it is fixed", () => {
+    const service = new WorkspaceService({ speedMs: 0 });
+    const a = service.knowledgeCreate("character", "花子").id;
+    const b = service.knowledgeCreate("character", "佐藤花子").id;
+    for (const [id, name] of [[a, "花子"], [b, "佐藤花子"]] as const) service.knowledgeSetFile(id, service.knowledgeFile(id).text.replace(`english: ${name}`, "english: Hanako"));
+    expect(service.knowledgeCheck()).toEqual({ found: 1, added: 1, removed: 0 });
+    expect(service.knowledgeFile(b).text).toContain("- Check: 花子 and 佐藤花子 are both translated as \"Hanako\". Are they the same? ?");
+    expect(service.knowledgeCheck()).toEqual({ found: 1, added: 0, removed: 0 });
+    // Fixed: one of them gets another English name, and the note goes away.
+    service.knowledgeSetFile(b, service.knowledgeFile(b).text.replace("english: Hanako", "english: Hanako Sato"));
+    expect(service.knowledgeCheck()).toEqual({ found: 0, added: 0, removed: 1 });
+    expect(service.knowledgeFile(b).text).not.toContain("Check:");
   });
 });

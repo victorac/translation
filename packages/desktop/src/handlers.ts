@@ -116,6 +116,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   "knowledge.delete": z.object({ id: id }),
   "knowledge.resolve": z.object({ name: z.string().max(500) }),
   "knowledge.beginExtraction": z.object({ documentId: id }),
+  "knowledge.check": z.undefined(),
   "knowledge.list": z.object({ text: z.string().max(500).optional(), kind: z.enum(["term", "note", "scene", "summary"]).optional(), status: z.enum(["suggested", "confirmed"]).optional(), by: z.enum(["user", "model"]).optional() }),
   "knowledge.save": z.object({
     id: id.optional(),
@@ -207,6 +208,7 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "knowledge.delete": (p) => service.knowledgeDelete(p.id),
     "knowledge.resolve": (p) => service.knowledgeResolve(p.name),
     "knowledge.beginExtraction": (p) => service.beginExtraction(p.documentId),
+    "knowledge.check": () => service.knowledgeCheck(),
     "knowledge.list": (p) => service.knowledgeList(p),
     "knowledge.save": (p) => service.knowledgeSave(p),
     "knowledge.remove": (p) => service.knowledgeRemove(p.ids),

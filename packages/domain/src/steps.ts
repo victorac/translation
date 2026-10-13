@@ -153,6 +153,8 @@ export interface Question {
   options?: string[];
   /** The most the model should write. */
   maxTokens: number;
+  /** For a choice: the parts it was written from, so it can be written again with the options in another order. */
+  parts?: { intro: string; body: string; extra: string };
 }
 
 const LETTERS = "ABCDEFGHIJ";
@@ -166,7 +168,25 @@ const choice = (id: string, intro: string, body: string, options: string[], extr
   user: `${body}\n\n${optionLines(options)}\n\nReply with the letter only${extra}.`,
   options,
   maxTokens: extra ? 80 : 8,
+  parts: { intro, body, extra },
 });
+
+/**
+ * The same question with the options in the opposite order. A model that really read the passage gives the same
+ * answer both ways; one that is guessing tends to favour a position. `back[i]` is where option i of the reversed
+ * question was in the original.
+ */
+export function reversed(q: Question): { question: Question; back: number[] } {
+  const n = q.options!.length;
+  const back = Array.from({ length: n }, (_, i) => n - 1 - i);
+  const options = back.map((i) => q.options![i]!);
+  const { intro, body, extra } = q.parts!;
+  return { question: choice(q.id, intro, body, options, extra), back };
+}
+
+/** Is a statement supported by the passage? Used to throw away descriptions the model made up. */
+export const supported = (statement: string, subject: string, passage: string): Question =>
+  choice("supported", "You check statements against a text.", `Statement about 「${subject}」: ${statement}\n\nIs the statement supported by this passage?\n\nPASSAGE:\n${passage}`, ["Yes, the passage says or clearly implies it", "No, the passage does not say it"]);
 
 export const listNames = (passage: string, sourceLanguage: string): Question => ({
   id: "list-names",
