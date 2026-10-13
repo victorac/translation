@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CLASSES_TEXT, parseClasses } from "./classes.js";
+import { DEFAULT_CLASSES_TEXT, LEGACY_CLASSES_TEXT, parseClasses } from "./classes.js";
 import type { KnowledgeEntry } from "./entries.js";
 import { applyFile, backlinksOf, CLASSES_ID, fileText, listFiles, newTopic, NOTES_ID, resolveName, type FileContext } from "./topicfile.js";
 
@@ -44,6 +44,14 @@ const live = entries.filter((x) => x.status !== "rejected");
 const ctx: FileContext = { entries: live, classes: parseClasses(DEFAULT_CLASSES_TEXT).classes, classesText: DEFAULT_CLASSES_TEXT, docs: [{ id: "d1", title: "Chapter 1" }] };
 
 describe("classes", () => {
+  it("explains itself, in comments that do not count as classes", () => {
+    expect(DEFAULT_CLASSES_TEXT).toContain("aliases: other ways it is written, separated by commas");
+    expect(DEFAULT_CLASSES_TEXT).toContain("choice(a, b)");
+    expect(parseClasses(DEFAULT_CLASSES_TEXT).problems).toEqual([]);
+    expect(LEGACY_CLASSES_TEXT.startsWith("# character")).toBe(true);
+    expect(parseClasses(LEGACY_CLASSES_TEXT).classes).toEqual(parseClasses(DEFAULT_CLASSES_TEXT).classes);
+  });
+
   it("reads the default classes without problems", () => {
     const r = parseClasses(DEFAULT_CLASSES_TEXT);
     expect(r.problems).toEqual([]);

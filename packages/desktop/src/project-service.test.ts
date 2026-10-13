@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ModelSetting, StartJobInput, WorkspaceSnapshot } from "@ltw/domain";
+import { DEFAULT_CLASSES_TEXT, LEGACY_CLASSES_TEXT, type ModelSetting, type StartJobInput, type WorkspaceSnapshot } from "@ltw/domain";
 import { createHandler } from "./handlers.js";
 import { ProjectService, type FileDialogs } from "./project-service.js";
 
@@ -831,3 +831,21 @@ describe("topics in saved projects", () => {
     expect(b.workspace.knowledgeFile(school).backlinks).toEqual([{ id: hanako, title: "花子" }]);
   });
 });
+
+describe("older classes text", () => {
+  it("is replaced by the explained default when a project still has the old default", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    a.workspace.knowledgeCreate("character", "花子");
+    answers.save = join(dir, "old-classes.ltw.json");
+    await a.save(false);
+    const file = JSON.parse(readFileSync(join(dir, "old-classes.ltw.json"), "utf8"));
+    file.knowledge.classes = LEGACY_CLASSES_TEXT;
+    writeFileSync(join(dir, "old-classes.ltw.json"), JSON.stringify(file));
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "old-classes.ltw.json");
+    await b.open(false);
+    expect(b.workspace.knowledgeFile("classes").text).toBe(DEFAULT_CLASSES_TEXT);
+  });
+});
+

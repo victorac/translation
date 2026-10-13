@@ -12,6 +12,7 @@ import {
   backlinksOf,
   classLabel,
   DEFAULT_CLASSES_TEXT,
+  LEGACY_CLASSES_TEXT,
   fileText,
   listFiles,
   newTopic,
@@ -761,7 +762,7 @@ export class WorkspaceService {
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
     this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
-    this.classesText = project.knowledge?.classes ?? DEFAULT_CLASSES_TEXT;
+    this.classesText = project.knowledge?.classes === undefined || project.knowledge.classes === LEGACY_CLASSES_TEXT ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(project.knowledge.entries);
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
       // A project from before the knowledge store: bring its glossary and notes over once.

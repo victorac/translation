@@ -26,7 +26,45 @@ export interface ClassDef {
   attributes: AttributeDef[];
 }
 
-export const DEFAULT_CLASSES_TEXT = `# character
+/** The classes text projects were given before it explained itself. A project that still has it gets the new text. */
+export const LEGACY_CLASSES_TEXT = `# character
+gender: choice(male, female, other, unknown)
+age: text
+role: text
+speech style: text
+first person: text
+family: link(family)
+member of: links(organization)
+lives in: link(place)
+
+# place
+located in: link(place)
+
+# organization
+based in: link(place)
+leader: link(character)
+
+# family
+head: link(character)
+home: link(place)
+
+# term
+`;
+
+export const DEFAULT_CLASSES_TEXT = `<!-- Classes are the kinds of topic, and the attributes each kind has. Add your own with a line that starts with #. -->
+<!-- Every topic file also begins with these lines, whatever its class: -->
+<!--   type: its class -->
+<!--   name: how it is written in the text -->
+<!--   english: how it is translated -->
+<!--   aliases: other ways it is written, separated by commas (for example: 花ちゃん, 花子さん) -->
+<!-- An attribute is written as  name: kind  where kind is one of: -->
+<!--   text            any text -->
+<!--   choice(a, b)    one of the listed values -->
+<!--   link(class)     a link to one topic of that class, written [[like this]] in the file -->
+<!--   links(class)    links to several topics, separated by commas -->
+<!-- What an attribute says is told to the translator along with the topic's name, so choose the ones that matter. -->
+
+# character
 gender: choice(male, female, other, unknown)
 age: text
 role: text
