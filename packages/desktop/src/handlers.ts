@@ -51,6 +51,8 @@ const startInput = z.object({
     }),
   });
 
+const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, prompts: true });
+
 const schemas: Record<CommandName, z.ZodType> = {
   "workspace.snapshot": z.undefined(),
   "workspace.reset": z.undefined(),
@@ -67,6 +69,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   "provider.test": z.undefined(),
   "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
   "job.start": startInput,
+  "settings.sync": syncInput,
   "source.preview": startInput,
   "job.cancel": z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("job") }),
@@ -111,6 +114,7 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "project.dismissProblem": () => (needProject().dismissProblem(), service.snapshot()),
     "demo.loadModel": () => service.loadDemoModel(),
     "job.start": (p) => service.start(p),
+    "settings.sync": (p) => service.syncSettings(p),
     "job.cancel": (p) => service.cancel(p),
     "block.retry": (p) => service.retryBlock(p.runId, p.blockId),
     "block.acceptCandidate": (p) => service.acceptCandidate(p.runId, p.blockId),

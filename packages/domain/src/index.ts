@@ -34,6 +34,7 @@ export {
 } from "./budget.js";
 export * from "./state.js";
 export {
+  blockSettingsHash,
   buildPrompt,
   computeContext,
   configHash,

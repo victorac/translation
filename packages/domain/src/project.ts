@@ -61,6 +61,7 @@ const attemptSchema = z.object({
   usage: z.object({ inputTokens: count.optional(), outputTokens: count.optional() }).optional(),
   error: z.object({ code: z.string().max(100), message: z.string().max(20_000), httpStatus: count.optional() }).optional(),
   notes: z.array(z.string().max(2000)).max(50).optional(),
+  settingsHash: z.string().max(200).optional(),
 });
 
 const versionSchema = z.object({

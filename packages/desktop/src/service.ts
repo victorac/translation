@@ -1,5 +1,6 @@
 import {
   allPrompts,
+  blockSettingsHash,
   BLOCK_SIZES,
   chunkSource,
   createRevision,
@@ -11,6 +12,7 @@ import {
   normalizeSource,
   planChunking,
   preflightRevision,
+  producingAttempt,
   renderPrompt,
   RevisionError,
   runLabel,
@@ -29,6 +31,7 @@ import {
   type SourceRevision,
   type SplitPreview,
   type StartJobInput,
+  type SyncSettingsInput,
   type WorkspaceSnapshot,
 } from "@ltw/domain";
 import {
@@ -62,7 +65,8 @@ export interface ServiceOptions {
   projectView?: () => ProjectView;
 }
 
-export type ChangeKind = "state" | "delta";
+/** `view`: only how things are shown changed (nothing to save). */
+export type ChangeKind = "state" | "delta" | "view";
 
 const NO_PROJECT: ProjectView = { title: "Untitled", path: null, dirty: false, lastSavedAt: null, recovery: null, openProblem: null, notice: null };
 const DEFAULT_DEMO: DemoOptions = { speed: "normal", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false };
@@ -120,6 +124,10 @@ export class WorkspaceService {
   private jobIds: string[] = [];
   private waitingInfo = new Map<string, { code: string; message: string }>();
   private firstModel = "";
+  /** The settings the user has chosen right now, by model run name. Retries and Run use these. */
+  private currentPlans = new Map<string, RunPlan>();
+  /** Per model run: the blocks translated with settings that have since changed. */
+  private outdated = new Map<string, Set<string>>();
   private listeners = new Set<(kind: ChangeKind) => void>();
 
   constructor(private readonly options: ServiceOptions = {}) {}
@@ -151,6 +159,7 @@ export class WorkspaceService {
     const text = normalizeSource(input.text);
     if (text.trim() === "") throw new UserError("empty", "Paste some text to translate first.");
     const plans = this.validate(input);
+    this.currentPlans = new Map(plans.map((p) => [p.label, p]));
 
     if (input.backend === "provider") {
       const provider = this.options.provider;
@@ -170,17 +179,21 @@ export class WorkspaceService {
 
   /** Checks what the user asked for and works out the runs. Throws plain-language errors. */
   private validate(input: StartJobInput): RunPlan[] {
-    const named = input.models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name !== "");
+    return this.buildPlans(input.models, input.prompts, input.glossary);
+  }
+
+  private buildPlans(models: StartJobInput["models"], prompts: StartJobInput["prompts"], glossaryInput: StartJobInput["glossary"]): RunPlan[] {
+    const named = models.map((m) => ({ ...m, name: m.name.trim() })).filter((m) => m.name !== "");
     if (named.length === 0) throw new UserError("no_models", "Add at least one model.");
     if (named.length > MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} model runs per version of the text.`);
 
-    if (input.prompts.length > 20) throw new UserError("too_many_prompts", "At most 20 custom prompts.");
-    for (const p of input.prompts) {
+    if (prompts.length > 20) throw new UserError("too_many_prompts", "At most 20 custom prompts.");
+    for (const p of prompts) {
       const problem = validatePrompt(p);
       if (problem) throw new UserError("bad_prompt", problem);
     }
-    const styles = allPrompts(input.prompts);
-    const glossary = normalizeGlossary(input.glossary);
+    const styles = allPrompts(prompts);
+    const glossary = normalizeGlossary(glossaryInput);
     if (glossary.problems.length > 0) throw new UserError("bad_glossary", glossary.problems[0]!);
 
     const plans = named.map((m) => {
@@ -201,6 +214,23 @@ export class WorkspaceService {
       throw new UserError("duplicate_models", "Each combination of model, prompt and glossary setting can only be used once.");
     }
     return plans;
+  }
+
+  /**
+   * The window tells the service about the choices that decide how blocks are translated, whenever they change.
+   * Retries then use them, and blocks translated under older choices are marked out of date.
+   * Choices that cannot be used yet (for example a half-typed glossary row) are ignored until fixed.
+   */
+  syncSettings(input: SyncSettingsInput): WorkspaceSnapshot {
+    try {
+      const plans = this.buildPlans(input.models, input.prompts, input.glossary);
+      this.currentPlans = new Map(plans.map((p) => [p.label, p]));
+    } catch {
+      // keep the last usable choices
+    }
+    this.refreshOutdated();
+    this.notify("view");
+    return this.snapshot();
   }
 
   private startNewVersion(coordinator: Coordinator, text: string, plans: RunPlan[], input: StartJobInput): void {
@@ -234,31 +264,101 @@ export class WorkspaceService {
   }
 
   private addMissingRuns(coordinator: Coordinator, version: Version, plans: RunPlan[], input: StartJobInput): void {
-    // Runs the user asked to redo are replaced by fresh ones (the old results stay in the project, out of view).
-    for (const label of input.rerun) {
-      const old = this.activeRuns(coordinator, version).find((r) => r.label === label);
-      if (old) coordinator.archiveRun(old.id);
-    }
-    const toRun: string[] = [];
+    this.refreshOutdated();
+    const allBlockIds = version.revision.blocks.map((b) => b.id);
+    let started = 0;
     for (const p of plans) {
       const existing = this.activeRuns(coordinator, version).find((r) => r.label === p.label);
-      if (existing) {
-        if (Object.values(existing.outputs).some((o) => ["pending", "failed", "canceled", "waiting"].includes(o.state))) toRun.push(existing.id);
+      if (!existing) {
+        const issues = preflightRevision(version.revision, [this.budgetInput(p, input)]);
+        if (issues.length > 0) throw new UserError("budget", issues[0]!.message);
+        if (this.activeRuns(coordinator, version).length >= MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} model runs per version of the text.`);
+        const id = this.addRun(coordinator, version.revision, p, input.backend);
+        version.runIds.push(id);
+        this.trackJob(coordinator.startJob({ revisionId: version.revision.id, runIds: [id] }).job.id);
+        started++;
         continue;
       }
-      const issues = preflightRevision(version.revision, [this.budgetInput(p, input)]);
-      if (issues.length > 0) throw new UserError("budget", issues[0]!.message);
-      if (this.activeRuns(coordinator, version).length >= MAX_MODELS) throw new UserError("too_many_models", `At most ${MAX_MODELS} model runs per version of the text.`);
-      const id = this.addRun(coordinator, version.revision, p, input.backend);
-      version.runIds.push(id);
-      toRun.push(id);
+      // An existing model: bring it up to the current settings, then translate what needs it.
+      this.applyCurrentSettings(coordinator, existing.id);
+      const stale = this.outdated.get(existing.id) ?? new Set<string>();
+      const wanted = input.rerun.includes(p.label)
+        ? allBlockIds
+        : allBlockIds.filter((id) => {
+            const state = existing.outputs[id]?.state;
+            return stale.has(id) || (state !== undefined && ["pending", "failed", "canceled", "waiting"].includes(state));
+          });
+      if (wanted.length === 0) continue;
+      // Finished text from the model is replaced (the earlier text stays in the history); text you edited is kept
+      // and the new version is offered as a candidate.
+      this.trackJob(coordinator.startJob({ revisionId: version.revision.id, runIds: [existing.id], blockIds: wanted, retry: true, replaceGenerated: true }).job.id);
+      started++;
     }
     this.viewId = version.id;
-    if (toRun.length === 0) {
+    if (started === 0) {
       this.notify("state");
-      throw new UserError("nothing_to_do", "Everything is already translated. Edit the text, add a model, or retry a block.");
+      throw new UserError("nothing_to_do", "Everything is already translated with the current settings.");
     }
-    this.trackJob(coordinator.startJob({ revisionId: version.revision.id, runIds: toRun }).job.id);
+  }
+
+  /** Makes a model run use the choices the user has made now (glossary, style, temperature, limits), if it is idle. */
+  private applyCurrentSettings(coordinator: Coordinator, runId: string): void {
+    const run = coordinator.peekRun(runId);
+    const plan = this.currentPlans.get(run.label);
+    if (!plan) return;
+    coordinator.updateRunSettings(runId, {
+      glossary: plan.glossary,
+      prompt: snapshotPrompt(plan.style),
+      config: { contextLimit: plan.contextLimit, maxOutputTokens: plan.maxOutputTokens, temperature: plan.temperature },
+    });
+  }
+
+  // ---- which blocks are out of date ----
+
+  /** Recomputes, for every model run, the blocks whose translation used settings that have since changed. */
+  private refreshOutdated(): void {
+    const c = this.coordinator;
+    this.outdated.clear();
+    if (!c) return;
+    for (const v of this.versions) for (const id of v.runIds) this.outdated.set(id, this.outdatedBlocks(c, v, id));
+  }
+
+  private outdatedBlocks(c: Coordinator, v: Version, runId: string): Set<string> {
+    const run = c.peekRun(runId);
+    const plan = this.currentPlans.get(run.label);
+    const out = new Set<string>();
+    if (!plan) return out;
+    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
+    v.revision.blocks.forEach((b, i) => {
+      if (this.isOutdated(v.revision, i, run.outputs[b.id], hypothetical)) out.add(b.id);
+    });
+    return out;
+  }
+
+  private isOutdated(revision: SourceRevision, index: number, output: BlockOutput | undefined, current: Pick<ModelRun, "modelId" | "glossary" | "prompt" | "config">): boolean {
+    if (!output) return false;
+    const attempt = producingAttempt(output);
+    return !!attempt?.settingsHash && attempt.settingsHash !== blockSettingsHash(revision, index, current);
+  }
+
+  /** Re-checks one block after something happened to it (an attempt finished, a new version was accepted). */
+  private refreshBlock(runId: string, blockId: string): void {
+    const c = this.coordinator;
+    if (!c) return;
+    const v = this.versions.find((x) => x.runIds.includes(runId));
+    if (!v) return;
+    const run = c.peekRun(runId);
+    const plan = this.currentPlans.get(run.label);
+    const set = this.outdated.get(runId) ?? new Set<string>();
+    this.outdated.set(runId, set);
+    const index = v.revision.blocks.findIndex((b) => b.id === blockId);
+    if (!plan || index < 0) {
+      set.delete(blockId);
+      return;
+    }
+    const hypothetical = { modelId: run.modelId, glossary: plan.glossary, prompt: snapshotPrompt(plan.style), config: { ...run.config, temperature: plan.temperature } };
+    if (this.isOutdated(v.revision, index, run.outputs[blockId], hypothetical)) set.add(blockId);
+    else set.delete(blockId);
   }
 
   private addRun(coordinator: Coordinator, revision: SourceRevision, p: RunPlan, backend: Backend): string {
@@ -430,6 +530,7 @@ export class WorkspaceService {
     }
     this.viewId = this.versions.at(-1)?.id ?? null;
     this.firstModel = versions.at(-1)?.runs[0]?.modelId ?? "";
+    this.refreshOutdated();
     this.notify("state");
   }
 
@@ -447,6 +548,7 @@ export class WorkspaceService {
     this.viewId = null;
     this.jobIds = [];
     this.waitingInfo.clear();
+    this.outdated.clear();
     this.firstModel = "";
   }
 
@@ -463,15 +565,24 @@ export class WorkspaceService {
   }
 
   retryBlock(runId: string, blockId: string): WorkspaceSnapshot {
-    this.trackJob(this.need().retryBlock(runId, blockId).job.id);
+    const c = this.need();
+    this.applyCurrentSettings(c, runId);
+    // A block translated with older settings is replaced by the new translation (text you edited is kept and the
+    // new one offered instead). Otherwise a retry is another try to compare with the current text.
+    const replace = this.outdated.get(runId)?.has(blockId) ?? false;
+    this.trackJob(c.retryBlock(runId, blockId, { replaceGenerated: replace }).job.id);
     return this.snapshot();
   }
   retryUnfinished(runId: string): WorkspaceSnapshot {
-    this.trackJob(this.need().retryUnfinished(runId).job.id);
+    const c = this.need();
+    this.applyCurrentSettings(c, runId);
+    this.trackJob(c.retryUnfinished(runId).job.id);
     return this.snapshot();
   }
   retranslateDownstream(runId: string): WorkspaceSnapshot {
-    this.trackJob(this.need().retranslateDownstream(runId).job.id);
+    const c = this.need();
+    this.applyCurrentSettings(c, runId);
+    this.trackJob(c.retranslateDownstream(runId).job.id);
     return this.snapshot();
   }
   resolveWaiting(runId: string, resolution: "retry" | "skip"): WorkspaceSnapshot {
@@ -547,10 +658,14 @@ export class WorkspaceService {
       latestText: this.versions.at(-1)!.revision.exactText,
       viewingId: view.id,
       latestId: this.versions.at(-1)!.id,
-      runs: runs.map((r) => ({
+      runs: runs.map((r) => {
+        const stale = this.outdated.get(r.id);
+        return {
         id: r.id,
         versionId: view.id,
         label: r.label,
+        unfinished: Object.values(r.outputs).filter((o) => ["pending", "failed", "canceled", "waiting"].includes(o.state)).length,
+        outdated: stale?.size ?? 0,
         settings: {
           modelId: r.modelId,
           contextLimit: r.config.contextLimit,
@@ -561,8 +676,9 @@ export class WorkspaceService {
         },
         promptName: r.prompt?.name ?? "Standard",
         state: r.state,
-        blocks: Object.fromEntries(Object.entries(r.outputs).map(([id, o]) => [id, cellView(o)])),
-      })),
+        blocks: Object.fromEntries(Object.entries(r.outputs).map(([id, o]) => [id, cellView(o, stale?.has(id) ?? false)])),
+        };
+      }),
       archived: all.filter((r) => r.archived).map((r) => ({ runId: r.id, label: r.label })),
       backend: this.versions.at(-1)!.backend,
       job: last ? { id: last.id, state: last.state, ...(last.stopReason ? { stopReason: last.stopReason } : {}) } : null,
@@ -625,6 +741,7 @@ export class WorkspaceService {
     if (e.type === "waiting" && e.runId) {
       this.waitingInfo.set(e.runId, { code: String(e.payload.code ?? "waiting"), message: String(e.payload.message ?? "") });
     }
+    if (e.runId && e.blockId && (e.type === "terminal" || e.type === "stateChanged")) this.refreshBlock(e.runId, e.blockId);
     this.notify(e.type === "delta" ? "delta" : "state");
   }
 
@@ -669,7 +786,7 @@ export class WorkspaceService {
   }
 }
 
-function cellView(o: BlockOutput): BlockCellView {
+function cellView(o: BlockOutput, outdated: boolean): BlockCellView {
   const cur = currentVersion(o);
   const latest = o.attempts[o.attempts.length - 1];
   const candidate = o.candidate ? o.versions.find((v) => v.id === o.candidate!.versionId) : undefined;
@@ -682,6 +799,7 @@ function cellView(o: BlockOutput): BlockCellView {
     error: o.state === "failed" || o.state === "waiting" ? (latest?.error?.message ?? null) : null,
     candidateText: candidate?.text ?? null,
     reviewNotes: o.state === "needs_review" ? (o.attempts.find((a) => a.id === cur?.attemptId)?.notes ?? []) : [],
+    outdated,
     edited: cur?.kind === "manual",
   };
 }

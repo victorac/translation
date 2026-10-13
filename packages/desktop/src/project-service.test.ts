@@ -617,3 +617,39 @@ describe("versions in saved projects", () => {
     expect(await exportOf("old.txt")).toContain("古い本文");
   });
 });
+
+
+describe("changed settings and saved projects", () => {
+  it("syncing settings does not mark the project as having unsaved changes", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    answers.save = join(dir, "s.ltw.json");
+    await a.save(false);
+    expect(a.view().dirty).toBe(false);
+    const j = job({ models: [model("alpha")] });
+    a.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], glossary: [{ source: "段落", target: "paragraph" }] });
+    expect(a.view().dirty).toBe(false);
+  });
+
+  it("a reopened project knows which blocks used older settings once the settings are known", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    const j = job({ models: [model("alpha")] });
+    await runWholeJob(a, j);
+    answers.save = join(dir, "o.ltw.json");
+    await a.save(false);
+
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "o.ltw.json");
+    await b.open(false);
+    expect(b.workspace.snapshot().runs[0]!.outdated).toBe(0);
+    const synced = b.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], glossary: [{ source: "段落", target: "paragraph" }] });
+    expect(synced.runs[0]!.outdated).toBeGreaterThan(0);
+    b.workspace.start({ ...j, glossary: [{ source: "段落", target: "paragraph" }] });
+    await b.workspace.whenIdle();
+    const after = b.workspace.snapshot();
+    expect(after.runs[0]!.outdated).toBe(0);
+    expect(Object.values(after.runs[0]!.blocks).some((c) => c.text?.includes("paragraph"))).toBe(true);
+  });
+});

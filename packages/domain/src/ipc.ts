@@ -72,7 +72,7 @@ export interface StartJobInput {
   prompts: PromptPreset[];
   /** How big each block should be. The models' own limits can make blocks smaller. */
   blockSize: BlockSize;
-  /** Names of existing model runs to replace with a fresh run using the current settings. */
+  /** Names of existing model runs to translate again from the start with the current settings. */
   rerun: string[];
   demo: DemoOptions;
 }
@@ -106,6 +106,9 @@ export interface ConnectionTestResult {
   models: string[];
 }
 
+/** The choices that decide how blocks are translated. Sent whenever they change, so retries use them. */
+export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "prompts">;
+
 export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
 
 /** What to put in an exported file. */
@@ -129,6 +132,7 @@ export interface CommandMap {
   "workspace.snapshot": undefined;
   "workspace.reset": undefined;
   "job.start": StartJobInput;
+  "settings.sync": SyncSettingsInput;
   "job.cancel": CancelInput;
   "block.retry": { runId: string; blockId: string };
   "block.acceptCandidate": { runId: string; blockId: string };
@@ -171,6 +175,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "workspace.snapshot",
   "workspace.reset",
   "job.start",
+  "settings.sync",
   "job.cancel",
   "block.retry",
   "block.acceptCandidate",
@@ -235,6 +240,8 @@ export interface BlockCellView {
   candidateText: string | null;
   /** Reasons the text deserves a look (missing glossary terms, possible commentary...). */
   reviewNotes: string[];
+  /** The glossary, style or temperature changed in a way that affects this block since it was translated. */
+  outdated: boolean;
   edited: boolean;
 }
 
@@ -242,6 +249,10 @@ export interface RunView {
   id: string;
   versionId: string;
   label: string;
+  /** Blocks not translated yet, failed or canceled. */
+  unfinished: number;
+  /** Blocks translated with settings that have since changed. */
+  outdated: number;
   /** The settings the run was made with, so the window can show and edit them. */
   settings: { modelId: string; contextLimit: number; maxOutputTokens: number; temperature: number; promptId: string; useGlossary: boolean };
   /** The translation style this model used. */

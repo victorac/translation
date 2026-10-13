@@ -102,7 +102,7 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
 
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
-  const glossary = relevantEntries(run.glossary, text, context.source).map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
+  const glossary = relevantEntries(run.glossary, text).map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
   const user = JSON.stringify({
     glossary,
     context: { source: context.source, translation: context.translation, translation_status: context.translationStatus },
@@ -118,6 +118,25 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
     context,
     fits: true,
   };
+}
+
+/**
+ * What a block's translation depends on among the user's settings: the model, temperature, style, and
+ * only the glossary entries whose term appears in this block's own text.
+ * Comparing this with the value stored on the attempt says whether the settings changed in a way that
+ * matters for this block. Reply and context limits are left out because they do not change the wording.
+ */
+export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary">): string {
+  const text = blockText(revision, revision.blocks[blockIndex]!);
+  const glossary = relevantEntries(run.glossary, text).map((g) => [g.source, g.target]);
+  return sha256Hex(
+    JSON.stringify({
+      m: run.modelId,
+      t: run.config.temperature,
+      p: run.prompt ? sha256Hex(`${run.prompt.appendFraming}\n${run.prompt.template}`) : "standard-v1",
+      g: glossary,
+    }),
+  );
 }
 
 /** Shortcut used by the coordinator to compare "context now" with "context the attempt used". */

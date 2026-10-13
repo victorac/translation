@@ -52,6 +52,12 @@ export interface Attempt {
   error?: AttemptError;
   /** Reasons the finished text deserves a look (missing glossary terms, possible commentary...). */
   notes?: string[];
+  /**
+   * What the translation depended on in the settings: the model, temperature, style and the glossary
+   * entries that applied to this block. If these change later, the block is out of date.
+   * Missing in projects saved before this existed (those blocks are never flagged).
+   */
+  settingsHash?: string;
 }
 
 export interface OutputVersion {
@@ -102,6 +108,16 @@ export interface ModelRun {
 }
 
 export const latestAttempt = (o: BlockOutput): Attempt | undefined => o.attempts[o.attempts.length - 1];
+
+/** The attempt whose text is the current version of a block (following manual edits back to the model's text). */
+export function producingAttempt(o: BlockOutput): Attempt | undefined {
+  let v = o.versions.find((x) => x.id === o.currentVersionId);
+  while (v && !v.attemptId && v.baseVersionId) {
+    const base = v.baseVersionId;
+    v = o.versions.find((x) => x.id === base);
+  }
+  return o.attempts.find((a) => a.id === v?.attemptId);
+}
 
 export const currentVersion = (o: BlockOutput): OutputVersion | undefined =>
   o.versions.find((v) => v.id === o.currentVersionId);

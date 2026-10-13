@@ -1,4 +1,5 @@
 import {
+  blockSettingsHash,
   blockText,
   buildPrompt,
   checkTranslation,
@@ -220,6 +221,19 @@ export class Coordinator {
     this.runtime.set(run.id, { cancelRequested: false, skipRequested: false });
   }
 
+  /**
+   * Brings a run's settings up to date (glossary, style, temperature, limits), so its next attempts use them.
+   * Results already produced keep the settings they were made with. Not possible while the run is working.
+   */
+  updateRunSettings(runId: string, next: { glossary: GlossaryEntry[]; prompt: PromptSnapshot; config: Partial<RunConfig> }): boolean {
+    const run = this.run(runId);
+    if (run.state === "running" || run.state === "waiting" || this.active?.runId === runId) return false;
+    run.glossary = structuredClone(next.glossary);
+    run.prompt = structuredClone(next.prompt);
+    run.config = { ...run.config, ...next.config };
+    return true;
+  }
+
   /** Hides a model run from view, cancelling any work it still has queued. Its results are kept. */
   archiveRun(runId: string): void {
     const run = this.run(runId);
@@ -231,6 +245,11 @@ export class Coordinator {
   unarchiveRun(runId: string): void {
     this.run(runId).archived = false;
     this.emit({ type: "stateChanged", runId, payload: { archived: false } });
+  }
+
+  /** The live run, for quick read-only checks. Do not change it. */
+  peekRun(runId: string): ModelRun {
+    return this.run(runId);
   }
 
   /** A copy, safe to read or compare in tests and UI code. */
@@ -294,9 +313,9 @@ export class Coordinator {
     this.emit({ type: "queued", jobId, runId, payload: { appended: true } });
   }
 
-  retryBlock(runId: string, blockId: string): { job: Job; done: Promise<void> } {
+  retryBlock(runId: string, blockId: string, options: { replaceGenerated?: boolean } = {}): { job: Job; done: Promise<void> } {
     const run = this.run(runId);
-    return this.startJob({ revisionId: run.revisionId, runIds: [runId], blockIds: [blockId], retry: true });
+    return this.startJob({ revisionId: run.revisionId, runIds: [runId], blockIds: [blockId], retry: true, ...(options.replaceGenerated ? { replaceGenerated: true } : {}) });
   }
 
   /** Runs every failed, canceled or not-yet-run block of a model. */
@@ -477,6 +496,7 @@ export class Coordinator {
         configHash: built.configHash,
         sourceHash: built.sourceHash,
         contextHash: built.contextHash,
+        settingsHash: blockSettingsHash(revision, index, run),
         state: "pending",
       };
       out.attempts.push(attempt);

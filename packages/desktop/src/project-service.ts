@@ -360,7 +360,7 @@ export class ProjectService {
       this.emit();
       return;
     }
-    if (kind === "state") this.changes++;
+    if (kind === "state") this.changes++; // "view" changes only how things are shown, not what is saved
     this.scheduleAutosave(kind);
     this.emit();
   }

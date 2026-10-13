@@ -378,21 +378,32 @@ describe("versions of the text and what Run does", () => {
     for (const id of finished) expect(snap.runs[0]!.blocks[id]!.attempts).toBe(1);
   });
 
-  it("a model named in rerun is replaced by a fresh run; the old one is kept out of view and can come back", async () => {
+  it("a model named in rerun is translated again from the start, in place; the earlier text stays in the history", async () => {
     const s = new WorkspaceService({ speedMs: 0 });
     s.start(input({ models: [model("alpha")] }));
     const first = await done(s);
-    const oldRunId = first.runs[0]!.id;
-    s.start(input({ models: [model("alpha", { temperature: 1 })], rerun: ["alpha"] }));
+    const runId = first.runs[0]!.id;
+    s.start(input({ models: [model("alpha")], rerun: ["alpha"] }));
     const snap = await done(s);
     expect(snap.runs).toHaveLength(1);
-    expect(snap.runs[0]!.id).not.toBe(oldRunId);
-    expect(snap.archived).toEqual([{ runId: oldRunId, label: "alpha" }]);
-    expect(() => s.restoreArchivedRun(oldRunId)).toThrow(/already shown/);
-    s.archiveRun(snap.runs[0]!.id);
-    const after = s.restoreArchivedRun(oldRunId);
-    expect(after.runs.map((r) => r.id)).toEqual([oldRunId]);
-    expect(Object.values(after.runs[0]!.blocks).every((c) => c.text !== null)).toBe(true);
+    expect(snap.runs[0]!.id).toBe(runId);
+    expect(snap.archived).toEqual([]);
+    expect(attemptsOf(snap, "alpha").every((n) => n === 2)).toBe(true);
+    const outputs = Object.values(s.exportViewed().runs[0]!.outputs);
+    expect(outputs.every((o) => o.versions.length === 2)).toBe(true); // the first translation is kept as history
+  });
+
+  it("a removed model can be brought back", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha")] }));
+    const first = await done(s);
+    const runId = first.runs[0]!.id;
+    const removed = s.archiveRun(runId);
+    expect(removed.runs).toEqual([]);
+    expect(removed.archived).toEqual([{ runId, label: "alpha" }]);
+    const back = s.restoreArchivedRun(runId);
+    expect(back.runs.map((r) => r.id)).toEqual([runId]);
+    expect(Object.values(back.runs[0]!.blocks).every((c) => c.text !== null)).toBe(true);
   });
 
   it("removing a model hides it, keeps its results in the saved data, and cancels its queued work", async () => {
@@ -434,5 +445,135 @@ describe("versions of the text and what Run does", () => {
     expect(await h("5", "run.archive", { runId })).toMatchObject({ ok: true, value: { runs: [] } });
     expect(await h("6", "run.restore", { runId })).toMatchObject({ ok: true, value: { runs: [expect.objectContaining({ id: runId })] } });
     expect(await h("7", "run.archive", { runId: "ghost" })).toMatchObject({ ok: false, error: { code: "unknown_run" } });
+  });
+});
+
+
+describe("changed settings: Run and Retry use the current glossary", () => {
+  const syncOf = (i: StartJobInput) => ({ sourceLanguage: i.sourceLanguage, targetLanguage: i.targetLanguage, models: i.models, glossary: i.glossary, prompts: i.prompts });
+  const SECOND = [{ source: "二番目", target: "second" }];
+  const finish = async (s: WorkspaceService) => {
+    await s.whenIdle();
+    return s.snapshot();
+  };
+  const idsWhere = (snap: ReturnType<WorkspaceService["snapshot"]>, pred: (text: string) => boolean) => snap.revision!.blocks.filter((b) => pred(b.text)).map((b) => b.id);
+
+  const translated = async (over: Partial<StartJobInput> = {}) => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    const i = input(over);
+    s.start(i);
+    return { s, i, snap: await finish(s) };
+  };
+
+  it("adding a term marks only the blocks that contain it as out of date, without running anything", async () => {
+    const { s, i, snap } = await translated();
+    expect(snap.runs[0]!.outdated).toBe(0);
+    const after = s.syncSettings({ ...syncOf(i), glossary: SECOND });
+    const marked = Object.entries(after.runs[0]!.blocks).filter(([, c]) => c.outdated).map(([id]) => id);
+    expect(marked).toEqual(idsWhere(snap, (t) => t.includes("二番目")));
+    expect(marked.length).toBeGreaterThan(0);
+    expect(marked.length).toBeLessThan(snap.revision!.blocks.length);
+    expect(after.runs[0]!.outdated).toBe(marked.length);
+    expect(after.busy).toBe(false);
+  });
+
+  it("Run then translates exactly those blocks again, in the same model run, with the new term", async () => {
+    const { s, i, snap } = await translated();
+    const runId = snap.runs[0]!.id;
+    const affected = idsWhere(snap, (t) => t.includes("二番目"));
+    const next = input({ glossary: SECOND });
+    s.syncSettings(syncOf(next));
+    s.start(next);
+    const after = await finish(s);
+    expect(after.runs).toHaveLength(1);
+    expect(after.runs[0]!.id).toBe(runId);
+    expect(after.archived).toEqual([]);
+    const blocks = snap.revision!.blocks;
+    blocks.forEach((b, idx) => {
+      const cell = after.runs[0]!.blocks[b.id]!;
+      expect(cell.attempts).toBe(affected.includes(b.id) ? 2 : 1);
+      expect(cell.outdated).toBe(false);
+      // the block right after a changed one was translated with the old text as context, so it is flagged as such
+      const followsChanged = idx > 0 && affected.includes(blocks[idx - 1]!.id);
+      expect(cell.state).toBe(followsChanged && !affected.includes(b.id) ? "stale" : "succeeded");
+      if (affected.includes(b.id)) expect(cell.text).toContain("second");
+    });
+    expect(after.runs[0]!.outdated).toBe(0);
+    void i;
+  });
+
+  it("Retry on a block uses the current glossary even without pressing Run", async () => {
+    const { s, i, snap } = await translated();
+    const run = snap.runs[0]!;
+    const blockId = idsWhere(snap, (t) => t.includes("二番目"))[0]!;
+    expect(run.blocks[blockId]!.text).not.toContain("second");
+    s.syncSettings({ ...syncOf(i), glossary: SECOND });
+    s.retryBlock(run.id, blockId);
+    const after = await finish(s);
+    const cell = after.runs[0]!.blocks[blockId]!;
+    expect(cell.candidateText ?? cell.text).toContain("second");
+    expect(cell.outdated).toBe(false);
+  });
+
+  it("text you edited is kept: the new translation is offered as a candidate", async () => {
+    const { s, i, snap } = await translated();
+    const run = snap.runs[0]!;
+    const blockId = idsWhere(snap, (t) => t.includes("二番目"))[0]!;
+    s.editBlock(run.id, blockId, "My own wording");
+    const next = input({ glossary: SECOND });
+    s.syncSettings(syncOf(next));
+    expect(s.snapshot().runs[0]!.blocks[blockId]!.outdated).toBe(true); // the edit does not hide that the model's text is old
+    s.start(next);
+    const after = await finish(s);
+    const cell = after.runs[0]!.blocks[blockId]!;
+    expect(cell.text).toBe("My own wording");
+    expect(cell.candidateText).toContain("second");
+    void i;
+  });
+
+  it("when everything is up to date Run says so, and rerun translates every block again anyway", async () => {
+    const { s, i, snap } = await translated();
+    expect(() => s.start(i)).toThrow(/already translated with the current settings/);
+    s.start({ ...i, rerun: [snap.runs[0]!.label] });
+    const after = await finish(s);
+    expect(Object.values(after.runs[0]!.blocks).every((c) => c.attempts === 2 && c.state === "succeeded")).toBe(true);
+  });
+
+  it("only changes that affect the wording count: temperature does, context and reply limits do not", async () => {
+    const { s, i } = await translated();
+    const changed = (m: Partial<ModelSetting>) => s.syncSettings({ ...syncOf(i), models: [{ ...i.models[0]!, ...m }] }).runs[0]!.outdated;
+    expect(changed({ contextLimit: 8192, maxOutputTokens: 512 })).toBe(0);
+    expect(changed({ temperature: 0.9 })).toBeGreaterThan(0);
+    expect(changed({ temperature: 0.2 })).toBe(0);
+  });
+
+  it("a half-finished glossary row is ignored until it is complete, and the last good settings stay", async () => {
+    const { s, i } = await translated();
+    s.syncSettings({ ...syncOf(i), glossary: SECOND });
+    const kept = s.syncSettings({ ...syncOf(i), glossary: [...SECOND, { source: "魔王", target: "" }] });
+    expect(kept.runs[0]!.outdated).toBeGreaterThan(0);
+    expect(s.syncSettings({ ...syncOf(i), models: [] }).runs[0]!.outdated).toBeGreaterThan(0);
+  });
+
+  it("a new style or turning the glossary off for a model is a different model run, so nothing is flagged", async () => {
+    const { s, i } = await translated({ glossary: SECOND });
+    const after = s.syncSettings({ ...syncOf(i), models: [{ ...i.models[0]!, promptId: "literary" }] });
+    expect(after.runs[0]!.outdated).toBe(0);
+  });
+
+  it("sync only changes how things are shown, so it does not count as something to save", async () => {
+    const { s, i } = await translated();
+    const kinds: string[] = [];
+    s.onChange((k) => kinds.push(k));
+    s.syncSettings({ ...syncOf(i), glossary: SECOND });
+    expect(kinds).toEqual(["view"]);
+  });
+
+  it("works through the window's command", async () => {
+    const { s, i } = await translated();
+    const h = createHandler(s);
+    const r = await h("1", "settings.sync", { ...syncOf(i), glossary: SECOND });
+    expect(r).toMatchObject({ ok: true, value: { runs: [expect.objectContaining({ outdated: expect.any(Number) })] } });
+    expect(await h("2", "settings.sync", { models: "x" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
   });
 });

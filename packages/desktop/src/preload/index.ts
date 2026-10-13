@@ -9,6 +9,7 @@ const COMMANDS = new Set([
   "workspace.snapshot",
   "workspace.reset",
   "job.start",
+  "settings.sync",
   "job.cancel",
   "block.retry",
   "block.acceptCandidate",

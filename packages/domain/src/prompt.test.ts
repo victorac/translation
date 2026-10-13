@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrompt, computeContext, configHash } from "./prompt.js";
+import { blockSettingsHash, buildPrompt, computeContext, configHash } from "./prompt.js";
 import { renderSystemPrompt } from "./prompts.js";
 import { createRevision } from "./revision.js";
 import type { BlockOutput, ModelRun } from "./state.js";
@@ -146,5 +146,45 @@ describe("translation style in the request", () => {
     const style = { id: "mine", name: "Mine", template: "x", appendFraming: false };
     expect(configHash(run({ prompt: style }))).not.toBe(configHash(run()));
     expect(configHash(run({ prompt: { ...style, template: "y" } }))).not.toBe(configHash(run({ prompt: style })));
+  });
+});
+
+describe("blockSettingsHash (when are results out of date?)", () => {
+  const hash = (i: number, r: ModelRun) => blockSettingsHash(revision, i, r);
+
+  it("is stable for the same settings", () => {
+    expect(hash(0, run())).toBe(hash(0, run()));
+  });
+
+  it("changes when a glossary entry that applies to the block is added or changed", () => {
+    const base = hash(0, run());
+    expect(hash(0, run({ glossary: [{ source: "段落", target: "paragraph" }] }))).not.toBe(base);
+    const a = hash(0, run({ glossary: [{ source: "段落", target: "paragraph" }] }));
+    expect(hash(0, run({ glossary: [{ source: "段落", target: "section" }] }))).not.toBe(a);
+  });
+
+  it("does not change for glossary entries that do not appear in the block", () => {
+    const base = hash(0, run());
+    expect(hash(0, run({ glossary: [{ source: "魔王", target: "Demon King" }] }))).toBe(base);
+  });
+
+  it("only looks at the block's own text, not the previous block that is sent as reference", () => {
+    const base = hash(1, run());
+    expect(hash(1, run({ glossary: [{ source: "一つ目", target: "first" }] }))).toBe(base); // 一つ目 is in block 0 only
+    expect(hash(0, run({ glossary: [{ source: "一つ目", target: "first" }] }))).not.toBe(hash(0, run()));
+  });
+
+  it("changes with the model, temperature and style but not with context or reply limits", () => {
+    const base = hash(0, run());
+    expect(hash(0, run({ modelId: "other" }))).not.toBe(base);
+    expect(hash(0, run({ config: { temperature: 0.9, maxOutputTokens: 1536, contextLimit: 4096 } }))).not.toBe(base);
+    expect(hash(0, run({ prompt: { id: "x", name: "X", template: "t", appendFraming: true } }))).not.toBe(base);
+    expect(hash(0, run({ config: { temperature: 0.2, maxOutputTokens: 512, contextLimit: 8192 } }))).toBe(base);
+  });
+
+  it("ignores the name shown for a style and the order of unrelated settings", () => {
+    const a = run({ prompt: { id: "x", name: "One name", template: "t", appendFraming: true } });
+    const b = run({ prompt: { id: "y", name: "Another name", template: "t", appendFraming: true } });
+    expect(hash(0, a)).toBe(hash(0, b));
   });
 });
