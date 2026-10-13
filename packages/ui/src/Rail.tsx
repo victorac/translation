@@ -33,7 +33,7 @@ export function Rail({
   provider,
   onSettings,
   docs,
-  onResetLayout,
+  layoutControl,
 }: {
   snap: WorkspaceSnapshot | null;
   setup: SetupState;
@@ -46,8 +46,8 @@ export function Rail({
   onRunAgain: (label: string) => void;
   provider: ReturnType<typeof useProvider>;
   onSettings: () => void;
-  /** Set only when the columns were moved or resized; puts them back. */
-  onResetLayout?: (() => void) | undefined;
+  /** How the workspace is arranged, and ways to change it. */
+  layoutControl: { mode: "aligned" | "panes"; linked: boolean; onMode: (m: "aligned" | "panes") => void; onLinked: (l: boolean) => void; onReset: () => void };
   docs: {
     onSelect: (id: string) => void;
     onCreate: () => void;
@@ -89,11 +89,18 @@ export function Rail({
       )}
       <div className="rail-head">
         <span className="rail-title">Models</span>
-        {onResetLayout && (
-          <button className="small rail-reset" onClick={onResetLayout} title="Put the columns back in their default order and widths">
-            Reset layout
-          </button>
-        )}
+        <span className="rail-reset">
+          <Menu
+            label="Layout"
+            trigger="Layout"
+            items={[
+              { label: `${layoutControl.mode === "aligned" ? "✓ " : ""}Aligned columns`, onSelect: () => layoutControl.onMode("aligned") },
+              { label: `${layoutControl.mode === "panes" ? "✓ " : ""}Free panes`, onSelect: () => layoutControl.onMode("panes") },
+              { label: `${layoutControl.linked ? "✓ " : ""}Link scrolling (panes)`, onSelect: () => layoutControl.onLinked(!layoutControl.linked), disabled: layoutControl.mode !== "panes", separated: true },
+              { label: "Reset layout", onSelect: layoutControl.onReset },
+            ]}
+          />
+        </span>
         <button className="icon-button" aria-label="Add a model" title="Add a model" aria-expanded={adding} onClick={() => setAdding((x) => !x)}>
           {adding ? "−" : "+"}
         </button>

@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { EMPTY_LAYOUT, parseLayout, type ColumnLayout } from "./layout";
+import { parseTree, type PaneNode } from "./paneTree";
 
 const KEY = "ltw.columnLayout.v1";
+const PANES_KEY = "ltw.panes.v1";
 
-function load(): ColumnLayout {
+export type LayoutMode = "aligned" | "panes";
+
+interface Saved {
+  mode: LayoutMode;
+  tree: PaneNode | null;
+  linked: boolean;
+}
+
+function loadColumns(): ColumnLayout {
   try {
     return parseLayout(JSON.parse(localStorage.getItem(KEY) ?? "null"));
   } catch {
@@ -11,16 +21,42 @@ function load(): ColumnLayout {
   }
 }
 
-/** The column order and widths, remembered between sessions on this computer. */
+function loadPanes(): Saved {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PANES_KEY) ?? "null") as Partial<Saved> | null;
+    return { mode: raw?.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw?.tree), linked: raw?.linked !== false };
+  } catch {
+    return { mode: "aligned", tree: null, linked: true };
+  }
+}
+
+function save(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage may be unavailable; the layout then lasts for this session only */
+  }
+}
+
+/** How the workspace is arranged (aligned columns or free panes), remembered between sessions on this computer. */
 export function useColumnLayout() {
-  const [layout, setLayout] = useState<ColumnLayout>(load);
-  useEffect(() => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(layout));
-    } catch {
-      /* storage may be unavailable; the layout then lasts for this session only */
-    }
-  }, [layout]);
-  const reset = useCallback(() => setLayout(EMPTY_LAYOUT), []);
-  return { layout, setLayout, reset };
+  const [layout, setLayout] = useState<ColumnLayout>(loadColumns);
+  const [panes, setPanes] = useState<Saved>(loadPanes);
+  useEffect(() => save(KEY, layout), [layout]);
+  useEffect(() => save(PANES_KEY, panes), [panes]);
+  const reset = useCallback(() => {
+    setLayout(EMPTY_LAYOUT);
+    setPanes((p) => ({ ...p, tree: null }));
+  }, []);
+  return {
+    layout,
+    setLayout,
+    reset,
+    mode: panes.mode,
+    setMode: (mode: LayoutMode) => setPanes((p) => ({ ...p, mode })),
+    tree: panes.tree,
+    setTree: (tree: PaneNode) => setPanes((p) => ({ ...p, tree })),
+    linked: panes.linked,
+    setLinked: (linked: boolean) => setPanes((p) => ({ ...p, linked })),
+  };
 }

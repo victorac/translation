@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeGlossary, normalizeSource } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
 import { Grid, type SourceMode } from "./Grid";
+import { Panes } from "./Panes";
 import { useColumnLayout } from "./useColumnLayout";
-import { isCustom } from "./layout";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar } from "./Toolbar";
@@ -260,7 +260,7 @@ export function App() {
               return next;
             })
           }
-          onResetLayout={isCustom(columns.layout) ? columns.reset : undefined}
+          layoutControl={{ mode: columns.mode, linked: columns.linked, onMode: columns.setMode, onLinked: columns.setLinked, onReset: columns.reset }}
           discovered={discovered}
           viewingLatest={viewingLatest}
           onRunAgain={(label) => void run([label])}
@@ -298,6 +298,26 @@ export function App() {
             </div>
           )}
           {snap ? (
+            columns.mode === "panes" ? (
+              <Panes
+                snap={snap}
+                text={setup.text}
+                onText={onText}
+                title={snap.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Source"}
+                previewBlocks={split.preview?.blocks ?? null}
+                editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
+                mode={effectiveMode}
+                onMode={setMode}
+                runs={visibleRuns}
+                send={send}
+                edited={edited && viewingLatest}
+                readOnlyOld={!viewingLatest}
+                tree={columns.tree}
+                onTree={columns.setTree}
+                onHide={(label) => setHidden((h) => new Set(h).add(label))}
+                linked={columns.linked}
+              />
+            ) : (
             <Grid
               snap={snap}
               text={setup.text}
@@ -315,6 +335,7 @@ export function App() {
               edited={edited && viewingLatest}
               readOnlyOld={!viewingLatest}
             />
+            )
           ) : (
             <p className="hint pad">Loading…</p>
           )}

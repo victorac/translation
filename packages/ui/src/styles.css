@@ -283,3 +283,28 @@ details > summary { cursor: pointer; }
 .rail-inline .three label { min-width: 0; }
 .rail-inline .three label:last-child { grid-column: 1; }
 .rail-inline .stack { gap: 0.5rem; }
+
+.panes { flex: 1; min-height: 0; display: grid; position: relative; overflow: hidden; }
+.pane-split { display: grid; min-width: 0; min-height: 0; }
+.pane-divider { background: var(--border); touch-action: none; position: relative; }
+.pane-split.row > .pane-divider { cursor: col-resize; }
+.pane-split.column > .pane-divider { cursor: row-resize; }
+.pane-divider:hover, .pane-divider:focus-visible, .pane-divider:active { background: var(--accent); outline: none; }
+.pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.pane-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; background: var(--panel); border-bottom: 1px solid var(--border-strong); cursor: grab; min-width: 0; flex: none; }
+.pane-head .head-close { margin-left: auto; }
+.pane-head .segmented { margin-left: auto; }
+.pane-body { flex: 1; min-height: 0; overflow: auto; position: relative; display: flex; flex-direction: column; }
+.pane-body > .cell, .pane-body > .cell-slot { flex: none; }
+.pane-body .cell { border-left: none; }
+.drop-zone { position: absolute; background: var(--accent); opacity: 0.25; pointer-events: none; z-index: 10; }
+.drop-zone.left { left: 0; top: 0; bottom: 0; width: 50%; }
+.drop-zone.right { right: 0; top: 0; bottom: 0; width: 50%; }
+.drop-zone.top { left: 0; right: 0; top: 0; height: 50%; }
+.drop-zone.bottom { left: 0; right: 0; bottom: 0; height: 50%; }
+.panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.pane-split.row { grid-template-rows: minmax(0, 1fr); }
+.pane-split.column { grid-template-columns: minmax(0, 1fr); }
+.panes, .pane-split { align-items: stretch; }
+.pane-head:hover .head-close, .pane-head:focus-within .head-close { opacity: 1; }
+.pane-divider, .pane-head { user-select: none; }
