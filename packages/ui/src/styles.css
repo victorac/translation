@@ -320,3 +320,23 @@ details > summary { cursor: pointer; }
 .cm-kb-msg { color: var(--danger); font-size: 0.85em; }
 .kb-pane { display: flex; flex-direction: column; gap: 0.4rem; min-height: 0; flex: 1; }
 .kb-meta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; }
+
+.kb-table { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.kb-bar { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.kb-bar input[type="search"] { flex: 1; min-width: 8rem; }
+.kb-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.kb-rows { list-style: none; margin: 0; padding: 0; }
+.kb-row { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border); }
+.kb-row.suggested { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.kb-main { overflow-wrap: anywhere; }
+.kb-hint, .kb-keys { color: var(--muted); }
+.kb-keys { color: var(--accent); }
+.kb-meta-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-top: 0.15rem; }
+.kb-row-actions { display: flex; gap: 0.25rem; }
+.kb-form { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.4rem 0; }
+.kb-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.kb-fields .wide { grid-column: 1 / -1; }
+.kb-fields input, .kb-fields textarea, .kb-form textarea { width: 100%; }
+.err-text { color: var(--danger); }
+.kb-pane { overflow: auto; }
+.kb-bar select { width: auto; flex: none; }

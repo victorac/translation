@@ -354,7 +354,8 @@ describe("suggested notes", () => {
     sourceLanguage: "Japanese",
     targetLanguage: "English",
     passage: "「え、だって花子、昨日は休みだったんだろ？」",
-    knowledge: "",
+    documentTitle: "Chapter 1",
+    block: 3,
     ...over,
   });
 
@@ -363,7 +364,13 @@ describe("suggested notes", () => {
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const r = await service.analyze(ask());
-    expect(r).toEqual({ characters: [{ source: "花子", target: "Hanako", note: "girl" }], notes: [{ keys: ["花子"], text: "The speaker is talking to Hanako." }], canceled: false });
+    expect(r).toEqual({ added: 2, canceled: false });
+    const origin = { by: "model", model: "qwen2.5-7b-instruct", documentTitle: "Chapter 1", block: 3 };
+    expect(service.knowledgeList({}).entries).toMatchObject([
+      { kind: "term", source: "花子", target: "Hanako", hint: "girl", status: "suggested", origin },
+      { kind: "note", keys: ["花子"], text: "The speaker is talking to Hanako.", status: "suggested", origin },
+    ]);
+    expect(service.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1, suggested: 2 });
     const sent = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] }).at(-1)!;
     expect(sent.messages[1]!.content).toContain("PASSAGE:\n「え、だって花子");
   });

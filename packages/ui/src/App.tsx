@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeGlossary, normalizeSource, splitKnowledge } from "@ltw/domain/pure";
+import { normalizeSource } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
 import { Grid, type SourceMode } from "./Grid";
 import { Panes } from "./Panes";
@@ -94,20 +94,17 @@ export function App() {
   // ---- what Run would do, and why it might not ----
   const startInput = useMemo(() => toStartInput(setup), [setup]);
   const split = useSplitPreview(startInput);
-  const glossaryProblem = normalizeGlossary(splitKnowledge(setup.knowledge).glossary).problems[0] ?? null;
   const splitProblem = split.preview ? (split.preview.problem ?? split.preview.issues[0] ?? null) : null;
   const runHint =
     setup.text.trim() === ""
       ? "No text"
       : setup.models.length === 0
         ? "No model"
-        : glossaryProblem
-          ? "Glossary problem"
-          : splitProblem
-            ? "Doesn't fit"
-            : setup.backend === "provider" && provider.view?.problem
-              ? "Server problem"
-              : null;
+        : splitProblem
+          ? "Doesn't fit"
+          : setup.backend === "provider" && provider.view?.problem
+            ? "Server problem"
+            : null;
   const canRun = runHint === null && !busy;
 
   // Is there anything for Run to do? New text, a model not run yet, unfinished blocks, or blocks translated with older settings.
@@ -319,7 +316,7 @@ export function App() {
                 showKnowledge={columns.showKnowledge}
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
                 setup={setup}
-                onKnowledge={(knowledge) => setSetup((s) => ({ ...s, knowledge }))}
+                knowledgeRev={snap.knowledge.rev}
                 passages={split.preview?.blocks.map((b) => b.text) ?? []}
               />
             ) : (
@@ -347,7 +344,7 @@ export function App() {
           {snap && hasVersion && <Tray snap={snap} open={trayOpen} onToggle={() => setTrayOpen((o) => !o)} send={send} />}
         </main>
 
-        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} />}
+        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} knowledgeRev={snap?.knowledge.rev ?? 0} documentTitle={snap?.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Document"} />}
       </div>
 
       {exporting && snap?.revision && <ExportDialog snap={snap} onClose={() => setExporting(false)} />}

@@ -37,7 +37,7 @@ interface Props {
   showKnowledge: boolean;
   onCloseKnowledge: () => void;
   setup: SetupState;
-  onKnowledge: (text: string) => void;
+  knowledgeRev: number;
   passages: readonly string[];
 }
 
@@ -240,7 +240,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgePanel setup={p.setup} passages={p.passages} onKnowledge={p.onKnowledge} />
+          <KnowledgePanel setup={p.setup} passages={p.passages} rev={p.knowledgeRev} documentTitle={p.title} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />

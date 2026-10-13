@@ -1,10 +1,13 @@
 import {
   allPrompts,
   analysisSystemPrompt,
+  entriesFromLegacy,
+  entriesFromText,
   knowledgeCap,
   knowledgeForBlock,
   knowledgeReserve,
-  splitKnowledge,
+  mergeSuggestions,
+  splitEntries,
   analysisUserMessage,
   parseAnalysisReply,
   blockSettingsHash,
@@ -37,6 +40,10 @@ import {
   type CancelInput,
   type DemoOptions,
   type DocumentView,
+  type EntryInput,
+  type EntryQuery,
+  type KnowledgeEntry,
+  type KnowledgeList,
   type GlossaryEntry,
   type ModelRun,
   type ProjectDocument,
@@ -62,6 +69,7 @@ import {
 } from "@ltw/providers";
 import { Coordinator, type CoordinatorEvent } from "./coordinator.js";
 import { UserError } from "./errors.js";
+import { KnowledgeStore } from "./knowledge-store.js";
 import type { ProviderService } from "./provider-service.js";
 
 export { UserError };
@@ -155,6 +163,8 @@ export class WorkspaceService {
   private epoch = 0;
   /** The project's shared choices (models, glossary, styles, languages), or null until the window sends them. */
   private settings: ProjectSettings | null = null;
+  /** The project's names, hints and notes. Every translation run draws on it. */
+  private readonly knowledge = new KnowledgeStore();
   private jobIds: string[] = [];
   private waitingInfo = new Map<string, { code: string; message: string }>();
   private firstModel = "";
@@ -190,7 +200,7 @@ export class WorkspaceService {
 
   /** There is something worth saving: a run, or text typed in any document. */
   get hasContent(): boolean {
-    return this.docs.some((d) => d.versions.length > 0 || d.draft.trim() !== "") || this.docs.length > 1;
+    return this.docs.some((d) => d.versions.length > 0 || d.draft.trim() !== "") || this.docs.length > 1 || this.knowledge.counts().terms + this.knowledge.counts().notes > 0;
   }
 
   onChange(listener: (kind: ChangeKind) => void): () => void {
@@ -235,6 +245,15 @@ export class WorkspaceService {
     return this.snapshot();
   }
 
+  /** What a run draws on: anything passed in with the request, plus the project's knowledge (which wins for the same word). */
+  private effectiveKnowledge(glossaryInput: readonly GlossaryEntry[], notesInput: string | undefined): { glossary: GlossaryEntry[]; notes: string } {
+    const stored = splitEntries(this.knowledge.all());
+    const bySource = new Map<string, GlossaryEntry>();
+    for (const g of glossaryInput) bySource.set(g.source.trim(), g);
+    for (const g of stored.glossary) bySource.set(g.source, g);
+    return { glossary: [...bySource.values()], notes: [(notesInput ?? "").trim(), stored.notes].filter(Boolean).join("\n") };
+  }
+
   /** Checks what the user asked for and works out the runs. Throws plain-language errors. */
   private validate(input: StartJobInput): RunPlan[] {
     return this.buildPlans(input.models, input.prompts, input.glossary, input.notes);
@@ -251,7 +270,8 @@ export class WorkspaceService {
       if (problem) throw new UserError("bad_prompt", problem);
     }
     const styles = allPrompts(prompts);
-    const glossary = normalizeGlossary(glossaryInput);
+    const merged = this.effectiveKnowledge(glossaryInput, notesInput);
+    const glossary = normalizeGlossary(merged.glossary);
     if (glossary.problems.length > 0) throw new UserError("bad_glossary", glossary.problems[0]!);
 
     const plans = named.map((m) => {
@@ -266,7 +286,7 @@ export class WorkspaceService {
         temperature: m.temperature,
         style,
         glossary: glossary.entries,
-        notes: (notesInput ?? "").trim(),
+        notes: merged.notes,
       };
     });
     if (new Set(plans.map((p) => p.label)).size !== plans.length) {
@@ -494,12 +514,13 @@ export class WorkspaceService {
     if (text.trim() === "") return { ...empty, problem: "Paste some text to see how it will be split." };
 
     const styles = allPrompts(input.prompts.filter((p) => validatePrompt(p) === null));
-    const glossary = normalizeGlossary(input.glossary).entries;
+    const merged = this.effectiveKnowledge(input.glossary, input.notes);
+    const glossary = normalizeGlossary(merged.glossary).entries;
     const plans = input.models
       .filter((m) => m.name.trim() !== "")
       .map((m) => {
         const style = styles.find((p) => p.id === m.promptId) ?? styles[0]!;
-        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles), style, glossary, notes: (input.notes ?? "").trim() };
+        return { ...m, label: runLabel({ ...m, promptId: style.id }, styles), style, glossary, notes: merged.notes };
       });
     const limits = this.sizeLimits(input);
     const plan = planChunking(plans.map((p) => this.budgetInput(p, input)), limits);
@@ -657,7 +678,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: KnowledgeEntry[] } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -669,11 +690,12 @@ export class WorkspaceService {
       })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
+      knowledge: this.knowledge.all(),
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: KnowledgeEntry[] | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -692,6 +714,13 @@ export class WorkspaceService {
     });
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
+    if (project.knowledge) this.knowledge.load(project.knowledge);
+    else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
+      // A project from before the knowledge store: bring its glossary and notes over once.
+      this.knowledge.load(entriesFromLegacy(this.settings.glossary, this.settings.notes, this.settings.knowledge, { newId, now: () => new Date().toISOString() }));
+      this.settings = { ...this.settings, glossary: [], notes: "" };
+      delete this.settings.knowledge;
+    } else this.knowledge.load([]);
     this.firstModel = this.versions.at(-1)?.runIds[0] ? coordinator.peekRun(this.versions.at(-1)!.runIds[0]!).modelId : "";
     this.epoch++;
     this.refreshOutdated();
@@ -711,6 +740,7 @@ export class WorkspaceService {
     this.docs = [newDoc("Document 1")];
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
+    this.knowledge.load([]);
     this.epoch++;
     this.jobIds = [];
     this.waitingInfo.clear();
@@ -806,6 +836,7 @@ export class WorkspaceService {
       draftText: this.doc.draft,
       epoch: this.epoch,
       settings: this.settings,
+      knowledge: { ...this.knowledge.counts(), rev: this.knowledge.rev },
       versions: [],
       latestText: null,
       viewingId: null,
@@ -829,6 +860,7 @@ export class WorkspaceService {
       draftText: this.doc.draft,
       epoch: this.epoch,
       settings: this.settings,
+      knowledge: { ...this.knowledge.counts(), rev: this.knowledge.rev },
       revision: {
         id: revision.id,
         sourceLanguage: revision.sourceLanguage,
@@ -973,6 +1005,53 @@ export class WorkspaceService {
     this.practice?.setUnavailable(firstModel, this.demo.firstModelUnloaded);
   }
 
+  // ---- names, hints and notes ----
+
+  knowledgeList(query: EntryQuery): KnowledgeList {
+    const { entries, total } = this.knowledge.list(query);
+    return { entries, total, counts: this.knowledge.counts(), rev: this.knowledge.rev };
+  }
+
+  knowledgeSave(input: EntryInput): { entry: KnowledgeEntry } {
+    const entry = this.knowledge.save(input);
+    this.knowledgeChanged();
+    return { entry };
+  }
+
+  knowledgeRemove(ids: string[]): { removed: number } {
+    const removed = this.knowledge.remove(ids);
+    if (removed > 0) this.knowledgeChanged();
+    return { removed };
+  }
+
+  knowledgeConfirm(ids?: string[]): { confirmed: number } {
+    const confirmed = this.knowledge.confirm(ids);
+    if (confirmed > 0) this.knowledgeChanged();
+    return { confirmed };
+  }
+
+  /** Adds entries from pasted lines, as the user's own. Lines that already exist are skipped. */
+  knowledgeImport(text: string): { added: number; unreadable: number } {
+    const { entries, unreadable } = entriesFromText(text, { by: "user" }, "confirmed", { newId, now: () => new Date().toISOString() });
+    const added = this.knowledge.addMany(entries);
+    if (added > 0) this.knowledgeChanged();
+    return { added, unreadable };
+  }
+
+  /** The choices runs draw on changed: bring the current plans up to date and mark what is now out of date. */
+  private knowledgeChanged(): void {
+    if (this.settings) {
+      try {
+        const plans = this.buildPlans(this.settings.models, this.settings.prompts, this.settings.glossary, this.settings.notes);
+        this.currentPlans = new Map(plans.map((p) => [p.label, p]));
+      } catch {
+        /* keep the last usable choices */
+      }
+    }
+    this.refreshOutdated();
+    this.notify("state");
+  }
+
   // ---- suggested notes ----
 
   private analysisAbort: AbortController | null = null;
@@ -984,7 +1063,7 @@ export class WorkspaceService {
   async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     if (this.snapshot().busy) throw new UserError("busy", "Wait for the translations to finish, then try again.");
     if (this.analysisAbort) throw new UserError("busy", "Already reading the text.");
-    const known = splitKnowledge(input.knowledge);
+    const known = splitEntries(this.knowledge.all());
     const messages = [
       { role: "system" as const, content: analysisSystemPrompt(input.sourceLanguage, input.targetLanguage) },
       { role: "user" as const, content: analysisUserMessage(knowledgeForBlock(known.glossary, known.notes, input.passage, knowledgeCap(input.contextLimit)), input.passage) },
@@ -1026,10 +1105,16 @@ export class WorkspaceService {
           void it.return?.(undefined).catch(() => {});
         }
       }
-      if (abort.signal.aborted) return { characters: [], notes: [], canceled: true };
+      if (abort.signal.aborted) return { added: 0, canceled: true };
       reply = stripThinking(reply);
       if (reply.trim() === "") throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
-      return { ...parseAnalysisReply(reply), canceled: false };
+      const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle, block: input.block };
+      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, { newId, now: () => new Date().toISOString() });
+      if (merged.added > 0) {
+        this.knowledge.replaceWith(merged.entries);
+        this.knowledgeChanged();
+      }
+      return { added: merged.added, canceled: false };
     } finally {
       this.analysisAbort = null;
     }

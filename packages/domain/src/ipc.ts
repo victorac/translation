@@ -1,4 +1,4 @@
-import type { KnowledgeNote } from "./knowledge.js";
+import type { EntryCounts, EntryInput, EntryQuery, KnowledgeEntry } from "./entries.js";
 import type { ProjectSettings } from "./project.js";
 import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
@@ -70,15 +70,31 @@ export interface AnalyzeInput {
   sourceLanguage: string;
   targetLanguage: string;
   passage: string;
-  /** The project's knowledge text; only what applies to this passage is sent, so the model does not repeat it. */
-  knowledge: string;
+  /** Where the passage is from, so what the model finds can say where it came from. */
+  documentTitle: string;
+  /** Number of the block (starting at 1). */
+  block: number;
 }
 
 export interface AnalyzeResult {
-  characters: GlossaryEntry[];
-  notes: KnowledgeNote[];
-  /** True when the user stopped it; nothing was found in that case. */
+  /** How many entries were added to (or filled in) the project's knowledge. */
+  added: number;
+  /** True when the user stopped it; nothing was added in that case. */
   canceled: boolean;
+}
+
+/** The project's names, hints and notes, as the window asks for them. */
+export interface KnowledgeList {
+  entries: KnowledgeEntry[];
+  /** How many entries match, which can be more than were returned. */
+  total: number;
+  counts: EntryCounts;
+  rev: number;
+}
+
+export interface KnowledgeSummary extends EntryCounts {
+  /** Changes whenever the knowledge changes, so the window knows to ask again. */
+  rev: number;
 }
 
 export interface StartJobInput {
@@ -188,6 +204,11 @@ export interface CommandMap {
   "source.preview": StartJobInput;
   "notes.analyze": AnalyzeInput;
   "notes.cancel": undefined;
+  "knowledge.list": EntryQuery;
+  "knowledge.save": EntryInput;
+  "knowledge.remove": { ids: string[] };
+  "knowledge.confirm": { ids?: string[] };
+  "knowledge.import": { text: string };
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -195,11 +216,16 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
+  "knowledge.list": KnowledgeList;
+  "knowledge.save": { entry: KnowledgeEntry };
+  "knowledge.remove": { removed: number };
+  "knowledge.confirm": { confirmed: number };
+  "knowledge.import": { added: number; unreadable: number };
   "export.preview": ExportPreview;
   "export.write": ExportWriteResult;
   "provider.get": ProviderView;
@@ -240,6 +266,11 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "source.preview",
   "notes.analyze",
   "notes.cancel",
+  "knowledge.list",
+  "knowledge.save",
+  "knowledge.remove",
+  "knowledge.confirm",
+  "knowledge.import",
   "provider.get",
   "provider.save",
   "provider.test",
@@ -343,6 +374,8 @@ export interface WorkspaceSnapshot {
   epoch: number;
   /** The project's saved choices, or null if the project has none yet (the window keeps its own). */
   settings: ProjectSettings | null;
+  /** How much names, hints and notes there are, and a number that changes whenever they change. */
+  knowledge: KnowledgeSummary;
   /** The version being looked at (the newest unless the user picked an older one). */
   revision: { id: string; sourceLanguage: string; targetLanguage: string; blocks: BlockView[]; text: string } | null;
   /** Every version of the text, oldest first. */

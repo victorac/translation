@@ -25,6 +25,8 @@ export function SettingsDrawer({
   onSetup,
   provider,
   split,
+  knowledgeRev,
+  documentTitle,
 }: {
   tab: SettingsTab;
   onTab: (t: SettingsTab) => void;
@@ -33,6 +35,8 @@ export function SettingsDrawer({
   onSetup: (update: (s: SetupState) => SetupState) => void;
   provider: ReturnType<typeof useProvider>;
   split: { preview: SplitPreview | null; loading: boolean };
+  knowledgeRev: number;
+  documentTitle: string;
 }) {
   const ref = useRef<HTMLElement>(null);
   const tabs = setup.backend === "practice" ? [...TABS, { id: "practice" as const, label: "Practice" }] : TABS;
@@ -102,7 +106,7 @@ export function SettingsDrawer({
           </div>
         )}
 
-        {tab === "glossary" && <KnowledgePanel setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} onKnowledge={(knowledge) => set({ knowledge })} />}
+        {tab === "glossary" && <KnowledgePanel setup={setup} passages={split.preview?.blocks.map((b) => b.text) ?? []} rev={knowledgeRev} documentTitle={documentTitle} />}
 
         {tab === "styles" && (
           <PromptsPanel

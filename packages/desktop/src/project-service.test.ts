@@ -687,7 +687,9 @@ describe("documents in saved projects", () => {
     const snap = b.workspace.snapshot();
     expect(snap.documents.map((d) => [d.title, d.blocks > 0, d.hasText])).toEqual([["Document 1", true, true], ["Chapter 2", false, true], ["Chapter 3", true, true]]);
     expect(snap.activeDocumentId).toBe(first);
-    expect(snap.settings).toEqual(settings(j));
+    // A glossary kept in the settings (the way older projects did) moves into the project's knowledge when opened.
+    expect(snap.settings).toEqual({ ...settings(j), glossary: [] });
+    expect(b.workspace.knowledgeList({}).entries).toMatchObject([{ kind: "term", source: "段落", target: "paragraph" }]);
     expect(b.workspace.selectDocument(snap.documents[1]!.id).draftText).toBe("まだ実行していない章。");
     expect(b.workspace.selectDocument(snap.documents[2]!.id).revision!.text).toBe("第三章の本文です。");
     expect(b.view().dirty).toBe(false);
@@ -776,5 +778,33 @@ describe("documents in saved projects", () => {
     expect(snap.documents).toHaveLength(1);
     expect(snap.settings).toBeNull();
     expect(a.view().dirty).toBe(false);
+  });
+});
+
+describe("names, hints and notes in saved projects", () => {
+  it("saves the knowledge with the project, reopens it, and brings an older project's glossary over once", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", keys: [], text: "" });
+    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", keys: ["魔王"], text: "He speaks formally." });
+    answers.save = join(dir, "kb.ltw.json");
+    await a.save(false);
+
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "kb.ltw.json");
+    await b.open(false);
+    expect(b.workspace.knowledgeList({}).entries).toMatchObject([{ source: "魔王", hint: "villain" }, { text: "He speaks formally." }]);
+    expect(b.workspace.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1 });
+
+    // An older project kept them in its settings.
+    const old = JSON.parse(readFileSync(join(dir, "kb.ltw.json"), "utf8"));
+    delete old.knowledge;
+    old.settings = { sourceLanguage: "Japanese", targetLanguage: "English", blockSize: "normal", models: [], glossary: [{ source: "勇者", target: "Hero" }], notes: "Keep honorifics.", prompts: [] };
+    writeFileSync(join(dir, "old.ltw.json"), JSON.stringify(old));
+    const c = make({ recoveryPath: join(dir, "r2.json") });
+    answers.open = join(dir, "old.ltw.json");
+    await c.open(false);
+    expect(c.workspace.knowledgeList({}).entries).toMatchObject([{ kind: "term", source: "勇者" }, { kind: "note", text: "Keep honorifics." }]);
+    expect(c.workspace.snapshot().settings?.glossary).toEqual([]);
   });
 });

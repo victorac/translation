@@ -177,7 +177,7 @@ describe("glossary and prompt styles", () => {
     expect(s.snapshot().job?.state).toBe("completed");
   });
 
-  it("always sends the glossary to every model, and notes reach the request and mark results out of date when changed", async () => {
+  it("always sends the glossary to every model, and a change to the project's knowledge marks affected results out of date", async () => {
     const s = new WorkspaceService({ speedMs: 0 });
     s.start(input({ glossary: GLOSSARY, models: [model("alpha")] }));
     await s.whenIdle();
@@ -185,8 +185,10 @@ describe("glossary and prompt styles", () => {
     expect(run.label).toBe("alpha");
     expect(Object.values(run.blocks)[0]!.text).toContain("paragraph");
     expect(run.outdated).toBe(0);
-    s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }), notes: "> Hanako is a girl who speaks politely." });
+    s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }) });
+    s.knowledgeSave({ kind: "note", source: "", target: "", hint: "", keys: [], text: "Hanako is a girl who speaks politely." });
     expect(s.snapshot().runs[0]!.outdated).toBeGreaterThan(0);
+    expect(s.knowledgeImport("段落 = passage\nnot a line")).toEqual({ added: 1, unreadable: 1 });
   });
 
   it("explains unusable styles, prompts and glossary rows in plain words", () => {

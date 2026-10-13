@@ -1,32 +1,26 @@
-import { KnowledgeEditor, KnowledgeSummary, KNOWLEDGE_HELP } from "./KnowledgeEditor";
+import { KnowledgeTable } from "./KnowledgeTable";
 import { NotesAssistant } from "./NotesAssistant";
 import type { SetupState } from "./setup";
 
 /**
- * Names, hints and notes for the whole project, as one text that is read as you type.
- * Each block only receives the lines that apply to its own text.
+ * Names, hints and notes for the whole project. Each block only receives the entries that apply to its own text.
+ * A model can read the open text and suggest entries; they stay marked as suggested until you confirm them.
  */
 export function KnowledgePanel({
   setup,
   passages,
-  onKnowledge,
-  assistant = true,
+  rev,
+  documentTitle,
 }: {
-  setup: Pick<SetupState, "backend" | "sourceLanguage" | "targetLanguage" | "models" | "knowledge">;
+  setup: Pick<SetupState, "backend" | "sourceLanguage" | "targetLanguage" | "models">;
   passages: readonly string[];
-  onKnowledge: (text: string) => void;
-  assistant?: boolean;
+  rev: number;
+  documentTitle: string;
 }) {
   return (
     <div className="kb-pane">
-      <div className="kb-meta">
-        <KnowledgeSummary text={setup.knowledge} />
-        <span className="hint kb-help" title="Each block only receives the lines that apply to its own text.">
-          {KNOWLEDGE_HELP}
-        </span>
-      </div>
-      {assistant && <NotesAssistant setup={setup} passages={passages} knowledge={setup.knowledge} onKnowledge={onKnowledge} />}
-      <KnowledgeEditor value={setup.knowledge} onChange={onKnowledge} />
+      <NotesAssistant setup={setup} passages={passages} documentTitle={documentTitle} />
+      <KnowledgeTable rev={rev} />
     </div>
   );
 }
