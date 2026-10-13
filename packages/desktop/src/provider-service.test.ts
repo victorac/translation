@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ModelSetting, StartJobInput } from "@ltw/domain";
+import { parseUserMessage, type ModelSetting, type StartJobInput } from "@ltw/domain";
 import { createHandler } from "./handlers.js";
 import { ProviderService } from "./provider-service.js";
 import { WorkspaceService } from "./service.js";
@@ -47,7 +47,7 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
           res.writeHead(404, { "content-type": "application/json" }).end('{"error":{"message":"No models loaded. Please load a model in the developer page."}}');
           return;
         }
-        const source = (JSON.parse(j.messages[1]!.content) as { source_block: string }).source_block;
+        const source = parseUserMessage(j.messages[1]!.content)!.sourceBlock;
         if (opts.failBlock && source.includes(opts.failBlock)) {
           res.writeHead(400, { "content-type": "application/json" }).end('{"error":{"message":"Trying to keep the first 9000 tokens when context overflows"}}');
           return;
@@ -269,9 +269,9 @@ describe("glossary and prompt styles with a real server connection", () => {
     expect(sent).toHaveLength(3);
     expect(sent[0]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // standard style
     expect(sent[1]!.messages[0]!.content).toMatch(/^Translate Japanese to English briskly\./);
-    expect(sent[1]!.messages[0]!.content).toContain("source_block"); // layout notes were added
-    expect(JSON.parse(sent[0]!.messages[1]!.content).glossary).toEqual([{ source: "魔王", target: "Demon King", note: "villain" }]); // 勇者 is not in the block
-    expect(JSON.parse(sent[2]!.messages[1]!.content).glossary).toEqual([]);
+    expect(sent[1]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // layout notes were added
+    expect(parseUserMessage(sent[0]!.messages[1]!.content)!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]); // 勇者 is not in the block
+    expect(parseUserMessage(sent[2]!.messages[1]!.content)!.glossary).toEqual([]);
     expect(service.snapshot().runs.map((r) => r.label)).toEqual(["qwen2.5-7b-instruct", "qwen2.5-7b-instruct · Brisk", "qwen2.5-7b-instruct · Natural, literary · no glossary"]);
   });
 
@@ -303,7 +303,7 @@ describe("glossary and prompt styles with a real server connection", () => {
     expect(snap.runs[0]!.blocks[snap.revision!.blocks[0]!.id]!.state).toBe("needs_review");
     const sent = posts(lm);
     expect(sent).toHaveLength(2);
-    expect(JSON.parse(sent[1]!.messages[1]!.content).context).toMatchObject({ translation_status: "available" });
+    expect(parseUserMessage(sent[1]!.messages[1]!.content)!.context).toMatchObject({ translation: expect.any(String) });
   });
 });
 

@@ -3,6 +3,7 @@ import {
   blockText,
   buildPrompt,
   checkTranslation,
+  looksLikeEcho,
   contextHashFor,
   currentVersion,
   newId as defaultNewId,
@@ -659,6 +660,15 @@ export class Coordinator {
         this.failAttempt(j, run, out, attempt, {
           code: "invalid_response",
           message: emptyReplyMessage(terminal.reason, terminal.usage?.outputTokens ?? undefined, terminal.reasoningSeen === true, run.config.maxOutputTokens),
+        });
+        this.setBlockState(run.id, out, "failed");
+        return { kind: "done" };
+      }
+      if (looksLikeEcho(draft)) {
+        // The model wrote the request back instead of translating. Keeping it would also poison the next block's context.
+        this.failAttempt(j, run, out, attempt, {
+          code: "echoed_request",
+          message: "The model repeated the request (JSON or its labels) instead of translating. Retry, or try another style or model.",
         });
         this.setBlockState(run.id, out, "failed");
         return { kind: "done" };

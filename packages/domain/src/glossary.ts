@@ -125,3 +125,19 @@ export function checkTranslation(input: {
   }
   return notes;
 }
+
+const ECHO_PATTERNS = [
+  /^\s*[[{]\s*"(glossary|context|source_block)"\s*:/,
+  /"(source_block|translation_status)"\s*:/,
+  /^\s*(SOURCE_BLOCK|GLOSSARY)\s*:/m,
+  /^\s*CONTEXT \(reference only/m,
+];
+
+/**
+ * True when a reply is the request written back (JSON or the labelled sections) instead of a translation.
+ * Such a reply is useless, and if kept it would be fed to the next block as context, so it counts as a failure.
+ */
+export function looksLikeEcho(output: string): boolean {
+  const head = output.trimStart();
+  return ECHO_PATTERNS.some((re) => re.test(head));
+}

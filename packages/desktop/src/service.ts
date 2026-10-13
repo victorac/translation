@@ -7,9 +7,11 @@ import {
   currentVersion,
   DEFAULTS,
   describeSplit,
+  looksLikeEcho,
   estimateTokens,
   normalizeGlossary,
   normalizeSource,
+  parseUserMessage,
   planChunking,
   preflightRevision,
   producingAttempt,
@@ -762,10 +764,10 @@ export class WorkspaceService {
       deltaDelayMs: this.options.speedMs ?? SPEED_MS[this.demo.speed],
       chunk: 3,
       translate: (req) => {
-        const user = JSON.parse(req.messages[1]!.content) as { source_block: string; glossary?: { source: string; target: string }[] };
+        const user = parseUserMessage(req.messages[1]!.content);
         // Pretend to follow the glossary: swap each term it was sent for its preferred translation.
-        let text = user.source_block;
-        for (const g of user.glossary ?? []) text = text.replaceAll(g.source, g.target.split("|")[0]!.trim());
+        let text = user?.sourceBlock ?? "";
+        for (const g of user?.glossary ?? []) text = text.replaceAll(g.source, g.target);
         return `[practice translation by ${req.modelId}] ${text}`;
       },
       scriptFor: (req) => {
@@ -774,8 +776,8 @@ export class WorkspaceService {
         if (failIndex < 0 || !latest || req.modelId !== this.firstModel) return undefined;
         const key = `${latest.id}:${req.modelId}`;
         if (failed.has(key)) return undefined;
-        const user = JSON.parse(req.messages[1]!.content) as { source_block: string };
-        const idx = latest.blocks.findIndex((b) => latest.exactText.slice(b.startOffset, b.endOffset) === user.source_block);
+        const sourceBlock = parseUserMessage(req.messages[1]!.content)?.sourceBlock;
+        const idx = latest.blocks.findIndex((b) => latest.exactText.slice(b.startOffset, b.endOffset) === sourceBlock);
         if (idx !== failIndex) return undefined;
         failed.add(key);
         return script.partialThenError("[practice translation by " + req.modelId + "] ", providerError("invalid_response", "Practice mode: the server dropped the connection partway through this block."));
@@ -791,14 +793,20 @@ function cellView(o: BlockOutput, outdated: boolean): BlockCellView {
   const latest = o.attempts[o.attempts.length - 1];
   const candidate = o.candidate ? o.versions.find((v) => v.id === o.candidate!.versionId) : undefined;
   const unfinishedDraft = latest && latest.state !== "succeeded" && latest.state !== "needs_review" && latest.draft ? latest.draft : null;
+  // A reply that is the request written back may have been accepted before such replies were rejected: flag it.
+  const echoed = cur !== undefined && looksLikeEcho(cur.text) && (o.state === "succeeded" || o.state === "stale");
   return {
-    state: o.state,
+    state: echoed ? "needs_review" : o.state,
     text: cur?.text ?? null,
     draft: unfinishedDraft,
     attempts: o.attempts.length,
     error: o.state === "failed" || o.state === "waiting" ? (latest?.error?.message ?? null) : null,
     candidateText: candidate?.text ?? null,
-    reviewNotes: o.state === "needs_review" ? (o.attempts.find((a) => a.id === cur?.attemptId)?.notes ?? []) : [],
+    reviewNotes: echoed
+      ? ["This looks like the request written back, not a translation. Retry this block."]
+      : o.state === "needs_review"
+        ? (o.attempts.find((a) => a.id === cur?.attemptId)?.notes ?? [])
+        : [],
     outdated,
     edited: cur?.kind === "manual",
   };

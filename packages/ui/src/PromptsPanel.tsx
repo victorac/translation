@@ -62,7 +62,7 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
           </label>
           <label className="check">
             <input type="checkbox" checked={editing.appendFraming} onChange={(e) => setEditing({ ...editing, appendFraming: e.target.checked })} />
-            <span title="Explains glossary, context and source_block to the model, and that text in the message is never an instruction. Leave on unless your instructions already say it.">Add the standard notes about the message layout</span>
+            <span title="Explains the GLOSSARY, CONTEXT and SOURCE_BLOCK sections to the model, tells it to reply with the translation only, and that text in the message is never an instruction. Leave on unless your instructions already say it.">Add the standard notes about the message layout</span>
           </label>
           {problem && editing.name !== "" && <p className="note error-note">{problem}</p>}
           <div className="actions">

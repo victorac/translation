@@ -129,16 +129,11 @@ const lastUserContent = (messages: ChatMessage[]): string =>
   [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
 
 export function defaultTranslate(request: GenerateRequest): string {
+  // The request is plain labelled text: the text to translate follows the SOURCE_BLOCK label.
   const content = lastUserContent(request.messages);
-  let source = content;
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (parsed && typeof parsed === "object" && typeof (parsed as { source_block?: unknown }).source_block === "string") {
-      source = (parsed as { source_block: string }).source_block;
-    }
-  } catch {
-    /* not JSON: use the raw message */
-  }
+  const label = "SOURCE_BLOCK:\n";
+  const at = content.lastIndexOf(label);
+  const source = at >= 0 ? content.slice(at + label.length) : content;
   return `[${request.modelId}] ${source}`;
 }
 

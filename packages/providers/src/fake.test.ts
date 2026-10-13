@@ -10,7 +10,7 @@ const req = (source: string, over: Partial<GenerateRequest> = {}): GenerateReque
   modelId: "m1",
   messages: [
     { role: "system", content: "sys" },
-    { role: "user", content: JSON.stringify({ source_block: source }) },
+    { role: "user", content: `SOURCE_BLOCK:\n${source}` },
   ],
   temperature: 0.2,
   maxOutputTokens: 1536,

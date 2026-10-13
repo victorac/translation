@@ -577,3 +577,23 @@ describe("changed settings: Run and Retry use the current glossary", () => {
     expect(await h("2", "settings.sync", { models: "x" })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
   });
 });
+
+
+describe("text that is the request written back", () => {
+  it("shows up as needing review with a plain note, so it can be found and retried", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input());
+    await s.whenIdle();
+    const snap = s.snapshot();
+    const runId = snap.runs[0]!.id;
+    const blockId = snap.revision!.blocks[0]!.id;
+    s.editBlock(runId, blockId, '{"glossary":[{"source":"太郎","target":"Taro"}],"context":{"source":"って');
+    const cell = s.snapshot().runs[0]!.blocks[blockId]!;
+    expect(cell.state).toBe("needs_review");
+    expect(cell.reviewNotes).toEqual([expect.stringContaining("request written back")]);
+    // blocks further away are untouched (the one right after is marked out of date, because its context changed)
+    const last = snap.revision!.blocks.at(-1)!;
+    expect(snap.revision!.blocks.length).toBeGreaterThan(2);
+    expect(s.snapshot().runs[0]!.blocks[last.id]!.state).toBe("succeeded");
+  });
+});

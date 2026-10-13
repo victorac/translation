@@ -1,4 +1,5 @@
 import type { ModelBudgetInput } from "./budget.js";
+import { looksLikeEcho } from "./glossary.js";
 import type { PromptSnapshot } from "./prompts.js";
 
 /** A glossary line: how a name or term should be translated. */
@@ -131,6 +132,8 @@ export function usableText(o: BlockOutput | undefined): string | null {
   if (!o || o.state === "stale") return null;
   const v = currentVersion(o);
   if (!v) return null;
+  // Text that is the request written back (found in projects made before such replies were rejected) is never context.
+  if (looksLikeEcho(v.text)) return null;
   if (v.kind === "manual") return o.state === "needs_review" ? null : v.text;
   const producedBy = o.attempts.find((a) => a.id === v.attemptId);
   if (producedBy?.state === "succeeded") return v.text;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkTranslation, normalizeGlossary, parseGlossaryText, relevantEntries, targetVariants } from "./glossary.js";
-import { allPrompts, BUILTIN_PROMPTS, FRAMING, renderPrompt, renderSystemPrompt, snapshotPrompt, SYSTEM_PROMPT_V1, validatePrompt } from "./prompts.js";
+import { checkTranslation, looksLikeEcho, normalizeGlossary, parseGlossaryText, relevantEntries, targetVariants } from "./glossary.js";
+import { allPrompts, BUILTIN_PROMPTS, FRAMING, renderPrompt, renderSystemPrompt, snapshotPrompt, SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, validatePrompt } from "./prompts.js";
 
 describe("normalizeGlossary", () => {
   it("trims, drops empty rows and keeps the last entry for a repeated term", () => {
@@ -110,8 +110,10 @@ describe("checkTranslation", () => {
 });
 
 describe("prompt styles", () => {
-  it("the standard style is the spec's original prompt", () => {
-    expect(BUILTIN_PROMPTS[0]).toMatchObject({ id: "standard", template: SYSTEM_PROMPT_V1, appendFraming: false });
+  it("the standard style is the spec's original prompt plus one line against repeating the request", () => {
+    expect(BUILTIN_PROMPTS[0]).toMatchObject({ id: "standard", template: SYSTEM_PROMPT_V2, appendFraming: false });
+    expect(SYSTEM_PROMPT_V2.startsWith(SYSTEM_PROMPT_V1)).toBe(true);
+    expect(SYSTEM_PROMPT_V2).toMatch(/Do not repeat the labels/);
     expect(renderSystemPrompt("Japanese", "English")).toContain("from Japanese to English");
   });
 
@@ -145,5 +147,29 @@ describe("prompt styles", () => {
     expect(all.find((p) => p.id === "standard")!.name).toBe("Standard");
     expect(all.map((p) => p.id)).toContain("mine");
     expect(snapshotPrompt(custom[1]!)).toEqual({ id: "mine", name: "Mine", template: "t", appendFraming: true });
+  });
+});
+
+describe("looksLikeEcho", () => {
+  it("catches the request written back as JSON, including a cut-off one", () => {
+    expect(looksLikeEcho('{"glossary":[{"source":"太郎","target":"Taro"},{"source":"花子","target":"Hanako"}],"context":{"source":"そうだね。」\n\n\n\n')).toBe(true);
+    expect(looksLikeEcho('  {"context":{"source":null},"source_block":"本文"}')).toBe(true);
+    expect(looksLikeEcho('Sure:\n{"source_block": "x", "translation_status": "none"}')).toBe(true);
+  });
+
+  it("catches the labelled sections written back", () => {
+    expect(looksLikeEcho("SOURCE_BLOCK:\nHe left.")).toBe(true);
+    expect(looksLikeEcho("GLOSSARY:\n- 魔王 => Demon King\n\nSOURCE_BLOCK:\nx")).toBe(true);
+    expect(looksLikeEcho("CONTEXT (reference only, do not translate):\nPrevious source:\nx")).toBe(true);
+  });
+
+  it("leaves real translations alone, even ones that mention the words", () => {
+    for (const t of [
+      "He said, \"The glossary is incomplete.\" She laughed.",
+      "{She smiled}, and the context of it was clear.",
+      "The source block of the wall was cracked.",
+      "\"Source: unknown,\" he muttered.",
+      "He left.\n\nShe stayed.",
+    ]) expect(looksLikeEcho(t)).toBe(false);
   });
 });

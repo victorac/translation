@@ -1,6 +1,6 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
-import { relevantEntries } from "./glossary.js";
+import { relevantEntries, targetVariants } from "./glossary.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
 import { blockText, type SourceRevision } from "./revision.js";
@@ -73,6 +73,69 @@ export function configHash(run: ModelRun): string {
   );
 }
 
+const SOURCE_LABEL = "SOURCE_BLOCK:";
+const GLOSSARY_LABEL = "GLOSSARY:";
+const CONTEXT_LABEL = "CONTEXT (reference only, do not translate):";
+const UNAVAILABLE = "(not available)";
+
+/**
+ * The request for one block, as plain labelled text. It deliberately does not look like a data structure,
+ * because some models write structured input back out instead of translating it. The text to translate is last,
+ * so the natural continuation is its translation.
+ */
+export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string): string {
+  const parts: string[] = [];
+  if (glossary.length > 0) {
+    const lines = glossary.map((g) => {
+      const [first, ...others] = targetVariants(g.target);
+      return `- ${g.source} => ${first ?? g.target}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
+    });
+    parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
+  }
+  if (context.translationStatus === "available" || context.translationStatus === "unavailable") {
+    const before = context.source !== null ? `Previous source:\n${context.source}` : "";
+    const after = `Previous translation:\n${context.translation ?? UNAVAILABLE}`;
+    parts.push(`${CONTEXT_LABEL}\n${[before, after].filter(Boolean).join("\n")}`);
+  }
+  parts.push(`${SOURCE_LABEL}\n${sourceText}`);
+  return parts.join("\n\n");
+}
+
+export interface ParsedUserMessage {
+  glossary: { source: string; target: string }[];
+  /** Absent when the message had no context section. */
+  context: { source: string | null; translation: string | null } | null;
+  sourceBlock: string;
+}
+
+/** Reads a request made by `renderUserMessage` back into its parts. Used by tests and the practice translator. */
+export function parseUserMessage(content: string): ParsedUserMessage | null {
+  const at = content.lastIndexOf(`${SOURCE_LABEL}\n`);
+  if (at < 0) return null;
+  const sourceBlock = content.slice(at + SOURCE_LABEL.length + 1);
+  const head = content.slice(0, at).replace(/\n\n$/, ""); // exactly the separator, so the translation keeps its own line breaks
+  const ctxAt = head.indexOf(CONTEXT_LABEL);
+  const glossAt = head.indexOf(GLOSSARY_LABEL);
+  const glossary: ParsedUserMessage["glossary"] = [];
+  if (glossAt >= 0) {
+    const end = ctxAt > glossAt ? ctxAt : head.length;
+    for (const line of head.slice(glossAt + GLOSSARY_LABEL.length, end).split("\n")) {
+      const m = /^- (.+?) => (.+?)(?: \(or .*\))?(?: — .*)?$/.exec(line.trim());
+      if (m) glossary.push({ source: m[1]!, target: m[2]! });
+    }
+  }
+  let context: ParsedUserMessage["context"] = null;
+  if (ctxAt >= 0) {
+    const body = head.slice(ctxAt + CONTEXT_LABEL.length).replace(/^\n/, "");
+    const t = body.indexOf("Previous translation:\n");
+    const srcPart = t >= 0 ? body.slice(0, t) : body;
+    const source = srcPart.startsWith("Previous source:\n") ? srcPart.slice("Previous source:\n".length).replace(/\n$/, "") : null;
+    const translation = t >= 0 ? body.slice(t + "Previous translation:\n".length) : null;
+    context = { source, translation: translation === UNAVAILABLE ? null : translation };
+  }
+  return { glossary, context, sourceBlock };
+}
+
 /** The system message a model run sends: its translation style with the languages filled in. */
 export function systemPromptFor(run: Pick<ModelRun, "prompt">, sourceLanguage: string, targetLanguage: string): string {
   return renderPrompt(run.prompt ?? STANDARD_PROMPT, sourceLanguage, targetLanguage);
@@ -103,11 +166,7 @@ export function buildPrompt(revision: SourceRevision, blockIndex: number, run: M
   const context = computeContext(revision, blockIndex, previousOutput, contextAllowance(budget, block.estimatedTokens));
   const text = blockText(revision, block);
   const glossary = relevantEntries(run.glossary, text).map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
-  const user = JSON.stringify({
-    glossary,
-    context: { source: context.source, translation: context.translation, translation_status: context.translationStatus },
-    source_block: text,
-  });
+  const user = renderUserMessage(glossary, context, text);
   return {
     messages: [
       { role: "system", content: system },

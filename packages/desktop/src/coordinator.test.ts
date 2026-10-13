@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRevision, currentVersion, type SourceRevision } from "@ltw/domain";
+import { createRevision, currentVersion, parseUserMessage, type SourceRevision } from "@ltw/domain";
 import { createGate, FakeProvider, ProviderRegistry, providerError, script, type FakeProviderOptions } from "@ltw/providers";
 import { Coordinator, type CoordinatorEvent } from "./coordinator.js";
 
@@ -40,8 +40,12 @@ const until = (c: Coordinator, pred: (e: CoordinatorEvent) => boolean) =>
     });
   });
 
-const sourceOf = (req: { messages: { content: string }[] }) => JSON.parse(req.messages[1]!.content).source_block as string;
-const contextOf = (req: { messages: { content: string }[] }) => JSON.parse(req.messages[1]!.content).context;
+const sourceOf = (req: { messages: { content: string }[] }) => parseUserMessage(req.messages[1]!.content)!.sourceBlock;
+/** The reference part of a request, in the shape the tests below describe. */
+const contextOf = (req: { messages: { content: string }[] }) => {
+  const c = parseUserMessage(req.messages[1]!.content)!.context;
+  return { source: c?.source ?? null, translation: c?.translation ?? null, translation_status: c === null ? "none" : c.translation === null ? "unavailable" : "available" };
+};
 const text = (c: Coordinator, runId: string, i: number, rev: SourceRevision) => {
   const out = c.snapshotRun(runId).outputs[rev.blocks[i]!.id]!;
   return currentVersion(out)?.text;
@@ -367,6 +371,43 @@ describe("what counts as finished (AC-12)", () => {
     const a = run();
     await c.startJob({ revisionId: revision.id, runIds: [a.id], blockIds: [revision.blocks[0]!.id] }).done;
     expect(c.snapshotRun(a.id).outputs[revision.blocks[0]!.id]!.attempts[0]!.error?.message).toMatch(/reported: stop/);
+  });
+
+  it("a reply that is the request written back is a failure, keeps the raw reply, and is not used as context", async () => {
+    const { c, revision, provider, run } = setup();
+    const echo = '{"glossary":[{"source":"太郎","target":"Taro"}],"context":{"source":"そうだね。」\n\n';
+    provider.enqueue(script.translate(echo));
+    const a = run();
+    await c.startJob({ revisionId: revision.id, runIds: [a.id] }).done;
+    const first = c.snapshotRun(a.id).outputs[revision.blocks[0]!.id]!;
+    expect(first.state).toBe("failed");
+    expect(first.versions).toEqual([]);
+    expect(first.attempts[0]).toMatchObject({ state: "failed", draft: echo, rawOutput: echo, error: { code: "echoed_request", message: expect.stringContaining("repeated the request") } });
+    // the next block is told the previous translation is not available instead of being handed the junk
+    expect(contextOf(provider.requests[1]!)).toMatchObject({ translation: null, translation_status: "unavailable" });
+    expect(c.snapshotRun(a.id).outputs[revision.blocks[1]!.id]!.state).toBe("succeeded");
+  });
+
+  it("the labelled form of an echo is caught too, and a retry can then succeed", async () => {
+    const { c, revision, provider, run } = setup();
+    provider.enqueue(script.translate("SOURCE_BLOCK:\nHe left."));
+    const a = run();
+    const blockId = revision.blocks[0]!.id;
+    await c.startJob({ revisionId: revision.id, runIds: [a.id], blockIds: [blockId] }).done;
+    expect(c.snapshotRun(a.id).outputs[blockId]!.state).toBe("failed");
+    await c.retryBlock(a.id, blockId).done;
+    const out = c.snapshotRun(a.id).outputs[blockId]!;
+    expect(out.state).toBe("succeeded");
+    expect(out.attempts.map((x) => x.state)).toEqual(["failed", "succeeded"]);
+  });
+
+  it("a normal translation that merely mentions the words is not mistaken for an echo", async () => {
+    const { c, revision, provider, run } = setup();
+    provider.enqueue(script.translate('He said, "The glossary is incomplete."'));
+    const a = run();
+    const blockId = revision.blocks[0]!.id;
+    await c.startJob({ revisionId: revision.id, runIds: [a.id], blockIds: [blockId] }).done;
+    expect(c.snapshotRun(a.id).outputs[blockId]!.state).toBe("succeeded");
   });
 
   it("a stream that just stops is a failure and keeps the partial text", async () => {
