@@ -51,7 +51,7 @@ const startInput = z.object({
     }),
   });
 
-const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, prompts: true });
+const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, prompts: true, blockSize: true });
 
 const schemas: Record<CommandName, z.ZodType> = {
   "workspace.snapshot": z.undefined(),
@@ -70,6 +70,11 @@ const schemas: Record<CommandName, z.ZodType> = {
   "provider.save": z.object({ baseUrl: z.string().max(2000), allowRemote: z.boolean(), apiKey: z.string().max(2000).optional() }),
   "job.start": startInput,
   "settings.sync": syncInput,
+  "document.create": z.object({ title: z.string().max(200).optional() }),
+  "document.select": z.object({ documentId: id }),
+  "document.rename": z.object({ documentId: id, title: z.string().max(200) }),
+  "document.delete": z.object({ documentId: id }),
+  "document.setText": z.object({ documentId: id, text: z.string().max(5_000_000) }),
   "source.preview": startInput,
   "job.cancel": z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("job") }),
@@ -115,6 +120,11 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "demo.loadModel": () => service.loadDemoModel(),
     "job.start": (p) => service.start(p),
     "settings.sync": (p) => service.syncSettings(p),
+    "document.create": (p) => service.createDocument(p.title),
+    "document.select": (p) => service.selectDocument(p.documentId),
+    "document.rename": (p) => service.renameDocument(p.documentId, p.title),
+    "document.delete": (p) => service.deleteDocument(p.documentId),
+    "document.setText": (p) => service.setDraft(p.documentId, p.text),
     "job.cancel": (p) => service.cancel(p),
     "block.retry": (p) => service.retryBlock(p.runId, p.blockId),
     "block.acceptCandidate": (p) => service.acceptCandidate(p.runId, p.blockId),

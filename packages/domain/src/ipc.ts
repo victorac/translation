@@ -1,3 +1,4 @@
+import type { ProjectSettings } from "./project.js";
 import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
@@ -107,7 +108,7 @@ export interface ConnectionTestResult {
 }
 
 /** The choices that decide how blocks are translated. Sent whenever they change, so retries use them. */
-export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "prompts">;
+export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "prompts" | "blockSize">;
 
 export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
 
@@ -133,6 +134,11 @@ export interface CommandMap {
   "workspace.reset": undefined;
   "job.start": StartJobInput;
   "settings.sync": SyncSettingsInput;
+  "document.create": { title?: string };
+  "document.select": { documentId: string };
+  "document.rename": { documentId: string; title: string };
+  "document.delete": { documentId: string };
+  "document.setText": { documentId: string; text: string };
   "job.cancel": CancelInput;
   "block.retry": { runId: string; blockId: string };
   "block.acceptCandidate": { runId: string; blockId: string };
@@ -176,6 +182,11 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "workspace.reset",
   "job.start",
   "settings.sync",
+  "document.create",
+  "document.select",
+  "document.rename",
+  "document.delete",
+  "document.setText",
   "job.cancel",
   "block.retry",
   "block.acceptCandidate",
@@ -213,7 +224,7 @@ export interface ProjectView {
   dirty: boolean;
   lastSavedAt: string | null;
   /** Unsaved work from an earlier session, waiting for the user to restore or discard it. */
-  recovery: { updatedAt: string; blocks: number; models: number } | null;
+  recovery: { updatedAt: string; blocks: number; models: number; documents: number } | null;
   /** The last file the user tried to open could not be opened. */
   openProblem: { message: string; canOpenBackup: boolean } | null;
   /** Something worth knowing (for example the project used a different server address). */
@@ -278,7 +289,29 @@ export interface VersionView {
   createdAt: string;
 }
 
+/** One document in the project, as the left rail lists it. */
+export interface DocumentView {
+  id: string;
+  title: string;
+  /** Blocks in its newest version (0 if it has not been run). */
+  blocks: number;
+  models: number;
+  /** Finished and total blocks across its models in the newest version. */
+  done: number;
+  total: number;
+  hasText: boolean;
+}
+
 export interface WorkspaceSnapshot {
+  /** The project's documents, in order. Everything below describes the open one. */
+  documents: DocumentView[];
+  activeDocumentId: string;
+  /** The text in the open document's editor. */
+  draftText: string;
+  /** Changes whenever a project is opened, restored or started, so the window knows to reload its choices. */
+  epoch: number;
+  /** The project's saved choices, or null if the project has none yet (the window keeps its own). */
+  settings: ProjectSettings | null;
   /** The version being looked at (the newest unless the user picked an older one). */
   revision: { id: string; sourceLanguage: string; targetLanguage: string; blocks: BlockView[]; text: string } | null;
   /** Every version of the text, oldest first. */

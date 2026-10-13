@@ -1,15 +1,18 @@
 import { z } from "zod";
+import type { BlockSize } from "./defaults.js";
 import type { Backend } from "./ipc.js";
-import { sha256Hex } from "./platform.js";
+import type { PromptPreset } from "./prompts.js";
+import { newId, sha256Hex } from "./platform.js";
 import { verifyRevision, type SourceRevision } from "./revision.js";
-import type { Attempt, BlockOutput, BlockState, ModelRun } from "./state.js";
+import type { Attempt, BlockOutput, BlockState, GlossaryEntry, ModelRun } from "./state.js";
+import type { ModelSetting } from "./ipc.js";
 
 /**
  * The saved project file (`.ltw.json`). Plain JSON, UTF-8. It contains the source text, every model's
  * results (including retries and edits) and the settings used. It never contains API keys.
  */
 export const PROJECT_FORMAT = "ltw-project";
-export const PROJECT_SCHEMA_VERSION = 2;
+export const PROJECT_SCHEMA_VERSION = 3;
 export const PROJECT_EXTENSION = ".ltw.json";
 /** Files larger than this are refused before reading (guards memory, not a normal case). */
 export const MAX_PROJECT_BYTES = 256 * 1024 * 1024;
@@ -24,14 +27,37 @@ export interface ProjectVersion {
   createdAt?: string;
 }
 
+/** The choices shared by every document in a project. */
+export interface ProjectSettings {
+  sourceLanguage: string;
+  targetLanguage: string;
+  blockSize: BlockSize;
+  models: ModelSetting[];
+  glossary: GlossaryEntry[];
+  /** The user's own translation styles. */
+  prompts: PromptPreset[];
+}
+
+/** One piece of text in a project (a chapter, a scene...) with its own versions and results. */
+export interface ProjectDocument {
+  id: string;
+  title: string;
+  createdAt: string;
+  /** The text in the editor. It may not have been run yet, or may differ from the newest version. */
+  draft: string;
+  /** Oldest first. Editing the text and running again adds a version; older ones stay. */
+  versions: ProjectVersion[];
+}
+
 export interface ProjectFile {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   project: { id: string; title: string; createdAt: string; updatedAt: string; version: number };
   /** Informational: the server address the project was made with. */
   providerLabel?: string;
-  /** Oldest first. Editing the text and running again adds a version; older ones stay. */
-  versions: ProjectVersion[];
+  settings?: ProjectSettings;
+  activeDocumentId: string;
+  documents: ProjectDocument[];
 }
 
 // ---- shape checks (what a file must look like before anything else is trusted) ----
@@ -131,7 +157,45 @@ const sourceSchema = z.object({
 const projectHead = z.object({ id, title: z.string().max(500), createdAt: iso, updatedAt: iso, version: count });
 const versionSchema_ = z.object({ source: sourceSchema, backend: z.enum(["provider", "practice"]), runs: z.array(runSchema).max(24), createdAt: iso.optional() });
 
+const modelSettingSchema = z.object({
+  name: z.string().min(1).max(300),
+  contextLimit: z.number().int().min(1).max(100_000_000),
+  maxOutputTokens: z.number().int().min(1).max(10_000_000),
+  temperature: z.number().min(0).max(2),
+  promptId: z.string().min(1).max(100),
+  useGlossary: z.boolean(),
+});
+const settingsSchema = z.object({
+  sourceLanguage: z.string().max(200),
+  targetLanguage: z.string().max(200),
+  blockSize: z.enum(["small", "normal", "large"]),
+  models: z.array(modelSettingSchema).max(24),
+  glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional() })).max(10_000),
+  prompts: z
+    .array(z.object({ id: z.string().min(1).max(100), name: z.string().max(200), description: z.string().max(500), template: z.string().max(20_000), appendFraming: z.boolean() }))
+    .max(100),
+});
+
+const documentSchema = z.object({
+  id,
+  title: z.string().max(500),
+  createdAt: iso,
+  draft: z.string().max(5_000_000),
+  versions: z.array(versionSchema_).max(50),
+});
+
 const fileSchema = z.object({
+  format: z.literal(PROJECT_FORMAT),
+  schemaVersion: z.literal(3),
+  project: projectHead,
+  providerLabel: z.string().max(2000).optional(),
+  settings: settingsSchema.optional(),
+  activeDocumentId: id,
+  documents: z.array(documentSchema).min(1).max(200),
+});
+
+/** Files written by the second release: one document's versions at the top level. Converted on load. */
+const fileSchemaV2 = z.object({
   format: z.literal(PROJECT_FORMAT),
   schemaVersion: z.literal(2),
   project: projectHead,
@@ -187,21 +251,34 @@ export function parseProject(text: string, hash: (t: string) => string = sha256H
   }
   const shapeIssues = (issues: { path: PropertyKey[]; message: string }[]) =>
     issues.slice(0, 8).map((i) => `${i.path.map(String).join(".") || "(file)"}: ${i.message}`);
+  const invalid = (issues: { path: PropertyKey[]; message: string }[]) =>
+    fail("invalid", "This project file is missing information or has unexpected content, so it cannot be opened safely.", shapeIssues(issues));
+  /** Older files held one text; it becomes the project's first document, with its text in the editor. */
+  const singleDocument = (project: ProjectFile["project"], versions: ProjectVersion[], providerLabel?: string): ProjectFile => {
+    const docId = newId();
+    return {
+      format: PROJECT_FORMAT,
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      project,
+      ...(providerLabel !== undefined ? { providerLabel } : {}),
+      activeDocumentId: docId,
+      documents: [{ id: docId, title: "Document 1", createdAt: project.createdAt, draft: versions.at(-1)?.source.exactText ?? "", versions }],
+    };
+  };
   let file: ProjectFile;
   if (head.schemaVersion === 1) {
     const v1 = fileSchemaV1.safeParse(json);
-    if (!v1.success) return fail("invalid", "This project file is missing information or has unexpected content, so it cannot be opened safely.", shapeIssues(v1.error.issues));
-    const { source, runs, backend, project, providerLabel } = v1.data as unknown as {
-      source: SourceRevision;
-      runs: ModelRun[];
-      backend: Backend;
-      project: ProjectFile["project"];
-      providerLabel?: string;
-    };
-    file = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, project, ...(providerLabel !== undefined ? { providerLabel } : {}), versions: [{ source, backend, runs }] };
+    if (!v1.success) return invalid(v1.error.issues);
+    const { source, runs, backend, project, providerLabel } = v1.data as unknown as { source: SourceRevision; runs: ModelRun[]; backend: Backend; project: ProjectFile["project"]; providerLabel?: string };
+    file = singleDocument(project, [{ source, backend, runs }], providerLabel);
+  } else if (head.schemaVersion === 2) {
+    const v2 = fileSchemaV2.safeParse(json);
+    if (!v2.success) return invalid(v2.error.issues);
+    const { versions, project, providerLabel } = v2.data as unknown as { versions: ProjectVersion[]; project: ProjectFile["project"]; providerLabel?: string };
+    file = singleDocument(project, versions, providerLabel);
   } else {
     const shape = fileSchema.safeParse(json);
-    if (!shape.success) return fail("invalid", "This project file is missing information or has unexpected content, so it cannot be opened safely.", shapeIssues(shape.error.issues));
+    if (!shape.success) return invalid(shape.error.issues);
     file = shape.data as unknown as ProjectFile;
   }
 
@@ -211,7 +288,9 @@ export function parseProject(text: string, hash: (t: string) => string = sha256H
     if (seenIds.has(ident)) problems.push(`${kind} id ${ident} is used more than once.`);
     seenIds.add(ident);
   };
-  for (const version of file.versions) {
+  if (!file.documents.some((d) => d.id === file.activeDocumentId)) problems.push("The document that was open no longer exists.");
+  for (const doc of file.documents) unique("Document", doc.id);
+  for (const version of file.documents.flatMap((d) => d.versions)) {
     const source = version.source;
     for (const p of verifyRevision(source, hash)) problems.push(p.message);
     unique("Text version", source.id);
@@ -292,14 +371,18 @@ export function buildProjectFile(input: {
   updatedAt: string;
   version: number;
   providerLabel?: string;
-  versions: ProjectVersion[];
+  settings?: ProjectSettings | null;
+  activeDocumentId: string;
+  documents: ProjectDocument[];
 }): ProjectFile {
   return {
     format: PROJECT_FORMAT,
     schemaVersion: PROJECT_SCHEMA_VERSION,
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
-    versions: input.versions,
+    ...(input.settings ? { settings: input.settings } : {}),
+    activeDocumentId: input.activeDocumentId,
+    documents: input.documents,
   };
 }
 

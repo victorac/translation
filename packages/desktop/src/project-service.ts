@@ -116,7 +116,7 @@ export class ProjectService {
   }
 
   isDirty(): boolean {
-    return this.workspace.hasRevision && this.changes !== this.savedChanges;
+    return this.workspace.hasContent && this.changes !== this.savedChanges;
   }
 
   view(): ProjectView {
@@ -126,9 +126,20 @@ export class ProjectService {
       path: this.meta.path,
       dirty: this.isDirty(),
       lastSavedAt: this.meta.lastSavedAt,
-      recovery: p ? { updatedAt: p.file.project.updatedAt, blocks: p.file.versions.at(-1)!.source.blocks.length, models: p.file.versions.at(-1)!.runs.filter((r) => !r.archived).length } : null,
+      recovery: p ? this.recoveryView(p.file) : null,
       openProblem: this.openProblem ? { message: this.openProblem.message, canOpenBackup: this.openProblem.backupOf !== null } : null,
       notice: this.autosaveError ?? this.notice,
+    };
+  }
+
+  private recoveryView(file: ProjectFile): NonNullable<ProjectView["recovery"]> {
+    const doc = file.documents.find((d) => d.id === file.activeDocumentId) ?? file.documents[0]!;
+    const latest = doc.versions.at(-1);
+    return {
+      updatedAt: file.project.updatedAt,
+      blocks: latest?.source.blocks.length ?? 0,
+      models: latest?.runs.filter((r) => !r.archived).length ?? 0,
+      documents: file.documents.length,
     };
   }
 
@@ -136,7 +147,7 @@ export class ProjectService {
 
   /** Save, or Save As when `saveAs` is set or the project has no file yet. Cancelling the dialog does nothing. */
   async save(saveAs: boolean): Promise<void> {
-    if (!this.workspace.hasRevision) throw new UserError("nothing_to_save", "There is nothing to save yet.");
+    if (!this.workspace.hasContent) throw new UserError("nothing_to_save", "There is nothing to save yet.");
     let path = this.meta.path;
     if (saveAs || !path) {
       const chosen = await this.options.dialogs.chooseSavePath(`${this.view().title}${PROJECT_EXTENSION}`);
@@ -242,7 +253,7 @@ export class ProjectService {
   }
 
   private runExport(input: ExportInput) {
-    if (!this.workspace.hasRevision) throw new UserError("nothing_to_export", "There is nothing to export yet.");
+    if (!this.workspace.hasRevision) throw new UserError("nothing_to_export", "There is nothing to export yet. Run the open document first.");
     const state = this.workspace.exportViewed();
     return buildExport(state.revision, state.runs, {
       format: input.format,
@@ -301,7 +312,11 @@ export class ProjectService {
   }
 
   private load(file: ProjectFile, path: string | null): void {
-    this.workspace.restore(file.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })));
+    this.workspace.restore({
+      activeDocumentId: file.activeDocumentId,
+      ...(file.settings ? { settings: file.settings } : {}),
+      documents: file.documents.map((d) => ({ ...d, versions: d.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })) })),
+    });
     this.meta = { id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };
     this.changes = 1;
     this.savedChanges = 1;
@@ -311,7 +326,7 @@ export class ProjectService {
     this.notice = null;
     const used = file.providerLabel;
     const current = this.options.provider?.view().baseUrl;
-    const runs = file.versions.flatMap((v) => v.runs);
+    const runs = file.documents.flatMap((d) => d.versions.flatMap((v) => v.runs));
     if (runs.some((r) => r.providerRefId === "main") && used && current && used !== current) {
       this.notice = `This project was made with the server at ${used}. Retries will use your current server at ${current}.`;
     }
@@ -319,11 +334,11 @@ export class ProjectService {
   }
 
   private buildFile(): ProjectFile {
-    const versions = this.workspace.exportAll();
+    const state = this.workspace.exportProject();
     const now = this.now().toISOString();
     this.meta.id ??= this.newId();
     this.meta.createdAt ??= now;
-    const usesServer = versions.some((v) => v.runs.some((r) => r.providerRefId === "main"));
+    const usesServer = state.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")));
     return buildProjectFile({
       id: this.meta.id,
       title: this.view().title,
@@ -331,7 +346,9 @@ export class ProjectService {
       updatedAt: now,
       version: this.changes,
       ...(usesServer && this.options.provider ? { providerLabel: this.options.provider.view().baseUrl } : {}),
-      versions,
+      settings: state.settings,
+      activeDocumentId: state.activeDocumentId,
+      documents: state.documents,
     });
   }
 
@@ -356,7 +373,7 @@ export class ProjectService {
   }
 
   private onWorkspaceChange(kind: ChangeKind): void {
-    if (!this.workspace.hasRevision) {
+    if (!this.workspace.hasContent) {
       this.emit();
       return;
     }
@@ -390,7 +407,7 @@ export class ProjectService {
    * translation request (where a failure stops the job, because progress could not be kept safe).
    */
   private async writeRecovery(): Promise<void> {
-    if (!this.workspace.hasRevision) return;
+    if (!this.workspace.hasContent) return;
     this.cancelTimer();
     try {
       const file = this.buildFile();

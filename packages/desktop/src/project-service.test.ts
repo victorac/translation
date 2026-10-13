@@ -319,7 +319,7 @@ describe("files that cannot be opened safely", () => {
 
   it("refuses a file whose text was changed outside the app, and offers the previous saved copy", async () => {
     const { dir, answers, make, path } = await twoSaves();
-    const tampered = readFileSync(path, "utf8").replace("最初", "最後");
+    const tampered = readFileSync(path, "utf8").replaceAll("最初", "最後");
     writeFileSync(path, tampered);
     const b = make({ recoveryPath: join(dir, "rb.json") });
     answers.open = path;
@@ -584,7 +584,7 @@ describe("versions in saved projects", () => {
     const { dir, answers, make } = env();
     const a = make();
     await runWholeJob(a, job({ models: [model("alpha")] }));
-    const v = a.workspace.exportAll()[0]!;
+    const v = a.workspace.exportVersions()[0]!;
     const old = { format: "ltw-project", schemaVersion: 1, project: { id: "p", title: "Old", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", version: 1 }, backend: v.backend, source: v.source, runs: v.runs };
     writeFileSync(join(dir, "old.ltw.json"), JSON.stringify(old));
     const b = make({ recoveryPath: join(dir, "r.json") });
@@ -628,7 +628,7 @@ describe("changed settings and saved projects", () => {
     await a.save(false);
     expect(a.view().dirty).toBe(false);
     const j = job({ models: [model("alpha")] });
-    a.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], glossary: [{ source: "段落", target: "paragraph" }] });
+    a.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], blockSize: "normal", glossary: [{ source: "段落", target: "paragraph" }] });
     expect(a.view().dirty).toBe(false);
   });
 
@@ -644,12 +644,136 @@ describe("changed settings and saved projects", () => {
     answers.open = join(dir, "o.ltw.json");
     await b.open(false);
     expect(b.workspace.snapshot().runs[0]!.outdated).toBe(0);
-    const synced = b.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], glossary: [{ source: "段落", target: "paragraph" }] });
+    const synced = b.workspace.syncSettings({ sourceLanguage: j.sourceLanguage, targetLanguage: j.targetLanguage, models: j.models, prompts: [], blockSize: "normal", glossary: [{ source: "段落", target: "paragraph" }] });
     expect(synced.runs[0]!.outdated).toBeGreaterThan(0);
     b.workspace.start({ ...j, glossary: [{ source: "段落", target: "paragraph" }] });
     await b.workspace.whenIdle();
     const after = b.workspace.snapshot();
     expect(after.runs[0]!.outdated).toBe(0);
     expect(Object.values(after.runs[0]!.blocks).some((c) => c.text?.includes("paragraph"))).toBe(true);
+  });
+});
+
+describe("documents in saved projects", () => {
+  const settings = (j = job({ models: [model("alpha")] })) => ({
+    sourceLanguage: j.sourceLanguage,
+    targetLanguage: j.targetLanguage,
+    blockSize: j.blockSize,
+    models: j.models,
+    glossary: [{ source: "段落", target: "paragraph" }],
+    prompts: [],
+  });
+
+  it("saves every document with its text, results and the project's shared settings, and reopens them", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    const j = job({ models: [model("alpha")] });
+    a.workspace.syncSettings(settings(j));
+    await runWholeJob(a, j);
+    const first = a.workspace.snapshot().activeDocumentId;
+    a.workspace.createDocument("Chapter 2");
+    a.workspace.setDraft(a.workspace.snapshot().activeDocumentId, "まだ実行していない章。");
+    a.workspace.createDocument("Chapter 3");
+    a.workspace.start({ ...j, text: "第三章の本文です。" });
+    await a.workspace.whenIdle();
+    a.workspace.selectDocument(first);
+    answers.save = join(dir, "book.ltw.json");
+    await a.save(false);
+
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "book.ltw.json");
+    await b.open(false);
+    const snap = b.workspace.snapshot();
+    expect(snap.documents.map((d) => [d.title, d.blocks > 0, d.hasText])).toEqual([["Document 1", true, true], ["Chapter 2", false, true], ["Chapter 3", true, true]]);
+    expect(snap.activeDocumentId).toBe(first);
+    expect(snap.settings).toEqual(settings(j));
+    expect(b.workspace.selectDocument(snap.documents[1]!.id).draftText).toBe("まだ実行していない章。");
+    expect(b.workspace.selectDocument(snap.documents[2]!.id).revision!.text).toBe("第三章の本文です。");
+    expect(b.view().dirty).toBe(false);
+  });
+
+  it("text typed but never run counts as work: it can be saved, makes the project unsaved, and survives a crash", async () => {
+    const { dir, recoveryPath, answers, make } = env();
+    const a = make();
+    expect(a.view().dirty).toBe(false);
+    a.workspace.setDraft(a.workspace.snapshot().activeDocumentId, "長い文章を書いている途中。");
+    expect(a.view().dirty).toBe(true);
+    await until(() => existsSync(recoveryPath));
+    const crashCopy = join(dir, "crash.ltw.json");
+    copyFileSync(recoveryPath, crashCopy);
+
+    const b = make({ recoveryPath: crashCopy });
+    expect(b.view().recovery).toMatchObject({ blocks: 0, models: 0, documents: 1 });
+    b.restoreRecovery();
+    expect(b.workspace.snapshot().draftText).toBe("長い文章を書いている途中。");
+
+    answers.save = join(dir, "draft.ltw.json");
+    await a.save(false); // saving is allowed with only a draft
+    expect(existsSync(join(dir, "draft.ltw.json"))).toBe(true);
+  });
+
+  it("switching documents is not a change to save, but adding, renaming and typing are", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    answers.save = join(dir, "d.ltw.json");
+    await a.save(false);
+    const first = a.workspace.snapshot().activeDocumentId;
+    expect(a.view().dirty).toBe(false);
+    a.workspace.createDocument();
+    expect(a.view().dirty).toBe(true);
+    await a.save(false);
+    a.workspace.selectDocument(first);
+    expect(a.view().dirty).toBe(false);
+    a.workspace.renameDocument(first, "Prologue");
+    expect(a.view().dirty).toBe(true);
+    await a.save(false);
+    a.workspace.setDraft(first, "変更。");
+    expect(a.view().dirty).toBe(true);
+  });
+
+  it("opens a project saved before documents existed as one document holding its text", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    const versions = a.workspace.exportVersions();
+    const old = { format: "ltw-project", schemaVersion: 2, project: { id: "p", title: "Old", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", version: 1 }, versions };
+    writeFileSync(join(dir, "v2.ltw.json"), JSON.stringify(old));
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "v2.ltw.json");
+    await b.open(false);
+    const snap = b.workspace.snapshot();
+    expect(b.view().openProblem).toBeNull();
+    expect(snap.documents).toHaveLength(1);
+    expect(snap.draftText).toBe(versions[0]!.source.exactText);
+    expect(snap.runs[0]!.label).toBe("alpha");
+    expect(snap.settings).toBeNull(); // the window keeps its own choices
+  });
+
+  it("exports the open document, and says so when it has nothing to export yet", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a, job({ models: [model("alpha")] }));
+    a.workspace.createDocument();
+    const input = { format: "text" as const, runIds: [], textVersion: "current" as const, allowPartial: false, formulaSafe: true };
+    expect(() => a.exportPreview(input)).toThrow(/Run the open document first/);
+    answers.export = join(dir, "x.txt");
+    a.workspace.selectDocument(a.workspace.snapshot().documents[0]!.id);
+    const runId = a.workspace.snapshot().runs[0]!.id;
+    await expect(a.exportFile({ ...input, runIds: [runId] })).resolves.toMatchObject({ path: join(dir, "x.txt") });
+  });
+
+  it("a new project starts with one empty document and forgets the old settings", async () => {
+    const { make } = env();
+    const a = make();
+    const j = job({ models: [model("alpha")] });
+    a.workspace.syncSettings(settings(j));
+    await runWholeJob(a, j);
+    a.workspace.createDocument();
+    a.newProject();
+    const snap = a.workspace.snapshot();
+    expect(snap.documents).toHaveLength(1);
+    expect(snap.settings).toBeNull();
+    expect(a.view().dirty).toBe(false);
   });
 });

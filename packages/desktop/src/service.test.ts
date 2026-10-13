@@ -342,7 +342,7 @@ describe("versions of the text and what Run does", () => {
     await done(s);
     s.start(input({ text: PARAS2 }));
     await done(s);
-    const state = s.exportAll();
+    const state = s.exportVersions();
     expect(state[1]!.source.parentId).toBe(state[0]!.source.id);
     const ids = (v: (typeof state)[number]) => new Set(v.source.blocks.map((b) => b.id));
     for (const run of state[1]!.runs) for (const k of Object.keys(run.outputs)) expect(ids(state[0]!).has(k)).toBe(false);
@@ -415,7 +415,7 @@ describe("versions of the text and what Run does", () => {
     expect(snap.runs.map((r) => r.label)).toEqual(["alpha"]);
     expect(snap.archived.map((a) => a.label)).toEqual(["beta"]);
     await s.whenIdle();
-    const stored = s.exportAll()[0]!.runs;
+    const stored = s.exportVersions()[0]!.runs;
     expect(stored.map((r) => [r.label, r.archived])).toEqual([["alpha", false], ["beta", true]]);
     expect(Object.values(stored[1]!.outputs).every((o) => o.state !== "running")).toBe(true);
   });
@@ -450,7 +450,7 @@ describe("versions of the text and what Run does", () => {
 
 
 describe("changed settings: Run and Retry use the current glossary", () => {
-  const syncOf = (i: StartJobInput) => ({ sourceLanguage: i.sourceLanguage, targetLanguage: i.targetLanguage, models: i.models, glossary: i.glossary, prompts: i.prompts });
+  const syncOf = (i: StartJobInput) => ({ sourceLanguage: i.sourceLanguage, targetLanguage: i.targetLanguage, models: i.models, glossary: i.glossary, prompts: i.prompts, blockSize: i.blockSize });
   const SECOND = [{ source: "二番目", target: "second" }];
   const finish = async (s: WorkspaceService) => {
     await s.whenIdle();
@@ -595,5 +595,184 @@ describe("text that is the request written back", () => {
     const last = snap.revision!.blocks.at(-1)!;
     expect(snap.revision!.blocks.length).toBeGreaterThan(2);
     expect(s.snapshot().runs[0]!.blocks[last.id]!.state).toBe("succeeded");
+  });
+});
+
+describe("documents in a project", () => {
+  const CH2 = "第二章の本文です。\n\n新しい登場人物が現れた。";
+  const idle = async (s: WorkspaceService) => {
+    await s.whenIdle();
+    return s.snapshot();
+  };
+
+  it("starts with one empty document", () => {
+    const snap = new WorkspaceService().snapshot();
+    expect(snap.documents).toEqual([expect.objectContaining({ title: "Document 1", blocks: 0, hasText: false })]);
+    expect(snap.activeDocumentId).toBe(snap.documents[0]!.id);
+    expect(snap.draftText).toBe("");
+    expect(snap.revision).toBeNull();
+  });
+
+  it("a new document is empty and active; the first document keeps its results", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha")] }));
+    const first = await idle(s);
+    const firstDoc = first.activeDocumentId;
+
+    const created = s.createDocument();
+    expect(created.documents.map((d) => d.title)).toEqual(["Document 1", "Document 2"]);
+    expect(created.activeDocumentId).not.toBe(firstDoc);
+    expect(created.revision).toBeNull();
+    expect(created.runs).toEqual([]);
+    expect(created.draftText).toBe("");
+
+    const back = s.selectDocument(firstDoc);
+    expect(back.revision!.text).toBe(TEXT);
+    expect(Object.values(back.runs[0]!.blocks).every((c) => c.state === "succeeded")).toBe(true);
+    expect(back.draftText).toBe(TEXT);
+  });
+
+  it("documents are independent: each has its own versions and runs, and the models are shared", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha")] }));
+    const one = await idle(s);
+    s.createDocument("Chapter 2");
+    s.start(input({ text: CH2, models: [model("alpha")] }));
+    const two = await idle(s);
+
+    expect(two.documents.map((d) => d.title)).toEqual(["Document 1", "Chapter 2"]);
+    expect(two.versions).toHaveLength(1);
+    expect(two.revision!.text).toBe(CH2);
+    expect(two.runs[0]!.id).not.toBe(one.runs[0]!.id);
+    expect(two.runs[0]!.label).toBe("alpha");
+    // editing the second document creates its second version without touching the first document
+    s.start(input({ text: CH2 + "\n\n追加。", models: [model("alpha")] }));
+    expect((await idle(s)).versions).toHaveLength(2);
+    expect(s.selectDocument(one.activeDocumentId).versions).toHaveLength(1);
+  });
+
+  it("the left rail's list shows each document's progress", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ models: [model("alpha"), model("beta")] }));
+    await idle(s);
+    s.createDocument("Draft only");
+    s.setDraft(s.snapshot().activeDocumentId, "まだ実行していない。");
+    const docs = s.snapshot().documents;
+    expect(docs[0]).toMatchObject({ title: "Document 1", models: 2, hasText: true });
+    expect(docs[0]!.total).toBe(docs[0]!.blocks * 2);
+    expect(docs[0]!.done).toBe(docs[0]!.total);
+    expect(docs[1]).toMatchObject({ title: "Draft only", blocks: 0, models: 0, done: 0, total: 0, hasText: true });
+  });
+
+  it("text typed into a document is kept with it, even before it has been run", () => {
+    const s = new WorkspaceService();
+    const first = s.snapshot().activeDocumentId;
+    s.setDraft(first, "最初の草稿。");
+    const second = s.createDocument().activeDocumentId;
+    s.setDraft(second, "別の草稿。");
+    expect(s.snapshot().draftText).toBe("別の草稿。");
+    expect(s.selectDocument(first).draftText).toBe("最初の草稿。");
+    expect(s.hasContent).toBe(true);
+    expect(() => s.setDraft("nope", "x")).toThrow(/does not exist/);
+  });
+
+  it("running stores the text exactly as it was typed", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    const raw = "一行目。\r\n\r\n二行目。";
+    s.start(input({ text: raw, models: [model("alpha")] }));
+    await idle(s);
+    expect(s.snapshot().draftText).toBe(raw);
+    expect(s.snapshot().revision!.text).toBe("一行目。\n\n二行目。");
+  });
+
+  it("rename and delete: names are required, the open document moves to its neighbour, the last one is emptied", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    const a = s.snapshot().activeDocumentId;
+    const b = s.createDocument().activeDocumentId;
+    s.createDocument();
+    expect(s.renameDocument(b, "  The party  ").documents[1]!.title).toBe("The party");
+    expect(() => s.renameDocument(b, "   ")).toThrow(/needs a name/);
+
+    const afterDelete = s.deleteDocument(b);
+    expect(afterDelete.documents.map((d) => d.title)).toEqual(["Document 1", "Document 3"]);
+    expect(afterDelete.activeDocumentId).toBe(afterDelete.documents[1]!.id); // it was not the open one, so nothing moved
+    s.selectDocument(a);
+    s.start(input({ models: [model("alpha")] }));
+    await idle(s);
+    const emptied = s.deleteDocument(a);
+    expect(emptied.documents.map((d) => d.title)).toEqual(["Document 3"]);
+    const last = s.deleteDocument(emptied.documents[0]!.id);
+    expect(last.documents).toHaveLength(1);
+    expect(last.documents[0]).toMatchObject({ title: "Document 1", hasText: false });
+    expect(last.revision).toBeNull();
+  });
+
+  it("work is global while a document can be switched freely: switching never stops it, and a second job waits", async () => {
+    const s = new WorkspaceService({ speedMs: 15 });
+    s.start(input({ models: [model("alpha")] }));
+    const firstDoc = s.snapshot().activeDocumentId;
+    const second = s.createDocument().activeDocumentId;
+    expect(s.snapshot().busy).toBe(true); // still translating the first document
+    expect(() => s.start(input({ text: "別の文章。", models: [model("alpha")] }))).toThrow(/already running/);
+    expect(() => s.deleteDocument(second)).toThrow(/Cancel the running/);
+    s.selectDocument(firstDoc);
+    await idle(s);
+    expect(s.snapshot().job?.state).toBe("completed");
+  });
+
+  it("a model waiting in another document is still reported", async () => {
+    const s = new WorkspaceService({ speedMs: 0 });
+    s.start(input({ demo: { ...demo, firstModelUnloaded: true } }));
+    for (let i = 0; i < 300 && !s.snapshot().waiting; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(s.snapshot().waiting).not.toBeNull();
+    s.createDocument();
+    expect(s.snapshot().waiting).toMatchObject({ code: "model_unavailable" });
+    s.cancel({ kind: "job" });
+    await s.whenIdle();
+  });
+
+  it("the project's settings are remembered, and only a real change counts as something to save", () => {
+    const s = new WorkspaceService();
+    const i = input({ glossary: [{ source: "魔王", target: "Demon King" }], models: [model("alpha")] });
+    const sync = (over: Record<string, unknown> = {}) => s.syncSettings({ sourceLanguage: i.sourceLanguage, targetLanguage: i.targetLanguage, models: i.models, glossary: i.glossary, prompts: i.prompts, blockSize: i.blockSize, ...over } as never);
+    const kinds: string[] = [];
+    s.onChange((k) => kinds.push(k));
+    expect(s.snapshot().settings).toBeNull();
+    sync();
+    expect(s.snapshot().settings).toMatchObject({ blockSize: "normal", glossary: [{ source: "魔王", target: "Demon King" }], models: [expect.objectContaining({ name: "alpha" })] });
+    sync(); // the same again
+    sync({ blockSize: "large" });
+    expect(kinds).toEqual(["view", "view", "state"]);
+    sync({ glossary: [{ source: "魔王", target: "" }] }); // half-typed: ignored
+    expect(s.snapshot().settings!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]);
+    expect(s.snapshot().settings!.blockSize).toBe("large");
+  });
+
+  it("the epoch changes when a project is started over or restored, not when documents are switched or text is typed", () => {
+    const s = new WorkspaceService();
+    const e0 = s.snapshot().epoch;
+    s.setDraft(s.snapshot().activeDocumentId, "x");
+    const other = s.createDocument().activeDocumentId;
+    s.selectDocument(s.snapshot().documents[0]!.id);
+    expect(s.snapshot().epoch).toBe(e0);
+    void other;
+    s.reset();
+    expect(s.snapshot().epoch).toBeGreaterThan(e0);
+    expect(s.snapshot().documents).toHaveLength(1);
+    expect(s.snapshot().draftText).toBe("");
+  });
+
+  it("the window's commands cover documents", async () => {
+    const s = new WorkspaceService();
+    const h = createHandler(s);
+    const id = s.snapshot().activeDocumentId;
+    expect(await h("1", "document.setText", { documentId: id, text: "草稿" })).toMatchObject({ ok: true, value: { draftText: "草稿" } });
+    const created = await h("2", "document.create", { title: "Chapter 2" });
+    expect(created).toMatchObject({ ok: true, value: { documents: [expect.anything(), expect.objectContaining({ title: "Chapter 2" })] } });
+    expect(await h("3", "document.select", { documentId: id })).toMatchObject({ ok: true, value: { activeDocumentId: id } });
+    expect(await h("4", "document.rename", { documentId: id, title: "Prologue" })).toMatchObject({ ok: true });
+    expect(await h("5", "document.select", { documentId: "ghost" })).toMatchObject({ ok: false, error: { code: "unknown_document" } });
+    expect(await h("6", "document.setText", { documentId: id })).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+    expect(await h("7", "document.delete", { documentId: id })).toMatchObject({ ok: true });
   });
 });

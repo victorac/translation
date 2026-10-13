@@ -9,6 +9,7 @@ import {
   describeSplit,
   looksLikeEcho,
   estimateTokens,
+  newId,
   normalizeGlossary,
   normalizeSource,
   parseUserMessage,
@@ -25,8 +26,11 @@ import {
   type BlockOutput,
   type CancelInput,
   type DemoOptions,
+  type DocumentView,
   type GlossaryEntry,
   type ModelRun,
+  type ProjectDocument,
+  type ProjectSettings,
   type ProjectVersion,
   type ProjectView,
   type PromptPreset,
@@ -83,6 +87,19 @@ interface Version {
   createdAt: string;
 }
 
+/** One text in the project, with its own versions of the text and the model runs made from them. */
+interface Doc {
+  id: string;
+  title: string;
+  createdAt: string;
+  /** The text in the editor. */
+  draft: string;
+  versions: Version[];
+  viewId: string | null;
+}
+
+const newDoc = (title: string): Doc => ({ id: newId(), title, createdAt: new Date().toISOString(), draft: "", versions: [], viewId: null });
+
 /** The real server connection can change between runs (address, key), so each request looks up the current one. */
 class CurrentProvider implements TranslationProvider {
   readonly kind = OPENAI_COMPATIBLE_KIND;
@@ -121,8 +138,12 @@ export class WorkspaceService {
   private practice: FakeProvider | null = null;
   private practiceOptions: FakeProviderOptions = {};
   private demo: DemoOptions = DEFAULT_DEMO;
-  private versions: Version[] = [];
-  private viewId: string | null = null;
+  private docs: Doc[] = [newDoc("Document 1")];
+  private activeDocId = this.docs[0]!.id;
+  /** Changes when a project is opened, restored or started, so the window reloads its choices. */
+  private epoch = 0;
+  /** The project's shared choices (models, glossary, styles, languages), or null until the window sends them. */
+  private settings: ProjectSettings | null = null;
   private jobIds: string[] = [];
   private waitingInfo = new Map<string, { code: string; message: string }>();
   private firstModel = "";
@@ -134,8 +155,31 @@ export class WorkspaceService {
 
   constructor(private readonly options: ServiceOptions = {}) {}
 
+  /** The open document. */
+  private get doc(): Doc {
+    return this.docs.find((d) => d.id === this.activeDocId) ?? this.docs[0]!;
+  }
+  private get versions(): Version[] {
+    return this.doc.versions;
+  }
+  private get viewId(): string | null {
+    return this.doc.viewId;
+  }
+  private set viewId(id: string | null) {
+    this.doc.viewId = id;
+  }
+  private allVersions(): Version[] {
+    return this.docs.flatMap((d) => d.versions);
+  }
+
+  /** The open document has been run at least once. */
   get hasRevision(): boolean {
     return this.versions.length > 0;
+  }
+
+  /** There is something worth saving: a run, or text typed in any document. */
+  get hasContent(): boolean {
+    return this.docs.some((d) => d.versions.length > 0 || d.draft.trim() !== "") || this.docs.length > 1;
   }
 
   onChange(listener: (kind: ChangeKind) => void): () => void {
@@ -161,6 +205,7 @@ export class WorkspaceService {
     const text = normalizeSource(input.text);
     if (text.trim() === "") throw new UserError("empty", "Paste some text to translate first.");
     const plans = this.validate(input);
+    this.doc.draft = input.text;
     this.currentPlans = new Map(plans.map((p) => [p.label, p]));
 
     if (input.backend === "provider") {
@@ -224,14 +269,29 @@ export class WorkspaceService {
    * Choices that cannot be used yet (for example a half-typed glossary row) are ignored until fixed.
    */
   syncSettings(input: SyncSettingsInput): WorkspaceSnapshot {
+    let usable = true;
     try {
       const plans = this.buildPlans(input.models, input.prompts, input.glossary);
       this.currentPlans = new Map(plans.map((p) => [p.label, p]));
     } catch {
-      // keep the last usable choices
+      usable = false; // keep the last usable choices
+    }
+    // The choices are part of the project. Only a real change counts as something to save.
+    let changed = false;
+    if (usable || input.models.length === 0) {
+      const next: ProjectSettings = {
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        blockSize: input.blockSize,
+        models: input.models,
+        glossary: input.glossary,
+        prompts: input.prompts,
+      };
+      changed = this.settings !== null && JSON.stringify(this.settings) !== JSON.stringify(next);
+      this.settings = next;
     }
     this.refreshOutdated();
-    this.notify("view");
+    this.notify(changed ? "state" : "view");
     return this.snapshot();
   }
 
@@ -322,7 +382,7 @@ export class WorkspaceService {
     const c = this.coordinator;
     this.outdated.clear();
     if (!c) return;
-    for (const v of this.versions) for (const id of v.runIds) this.outdated.set(id, this.outdatedBlocks(c, v, id));
+    for (const v of this.allVersions()) for (const id of v.runIds) this.outdated.set(id, this.outdatedBlocks(c, v, id));
   }
 
   private outdatedBlocks(c: Coordinator, v: Version, runId: string): Set<string> {
@@ -347,7 +407,7 @@ export class WorkspaceService {
   private refreshBlock(runId: string, blockId: string): void {
     const c = this.coordinator;
     if (!c) return;
-    const v = this.versions.find((x) => x.runIds.includes(runId));
+    const v = this.allVersions().find((x) => x.runIds.includes(runId));
     if (!v) return;
     const run = c.peekRun(runId);
     const plan = this.currentPlans.get(run.label);
@@ -465,6 +525,69 @@ export class WorkspaceService {
     };
   }
 
+  // ---- documents ----
+
+  createDocument(title?: string): WorkspaceSnapshot {
+    const name = title?.trim() || `Document ${this.docs.length + 1}`;
+    const doc = newDoc(name.slice(0, 200));
+    this.docs.push(doc);
+    this.activeDocId = doc.id;
+    this.notify("state");
+    return this.snapshot();
+  }
+
+  /** Switching documents only changes what is shown. It never stops work that is running. */
+  selectDocument(documentId: string): WorkspaceSnapshot {
+    this.findDoc(documentId);
+    this.activeDocId = documentId;
+    this.notify("view");
+    return this.snapshot();
+  }
+
+  renameDocument(documentId: string, title: string): WorkspaceSnapshot {
+    const doc = this.findDoc(documentId);
+    const name = title.trim();
+    if (name === "") throw new UserError("bad_title", "A document needs a name.");
+    doc.title = name.slice(0, 200);
+    this.notify("state");
+    return this.snapshot();
+  }
+
+  /** Removes a document and everything translated from it. The last document is emptied instead of removed. */
+  deleteDocument(documentId: string): WorkspaceSnapshot {
+    const doc = this.findDoc(documentId);
+    if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation before deleting a document.");
+    const index = this.docs.indexOf(doc);
+    if (this.docs.length === 1) {
+      const empty = newDoc("Document 1");
+      this.docs = [empty];
+      this.activeDocId = empty.id;
+    } else {
+      this.docs.splice(index, 1);
+      if (this.activeDocId === documentId) this.activeDocId = this.docs[Math.min(index, this.docs.length - 1)]!.id;
+    }
+    for (const v of doc.versions) for (const id of v.runIds) this.outdated.delete(id);
+    this.notify("state");
+    return this.snapshot();
+  }
+
+  /** The text in a document's editor. It is saved with the project even before it has been run. */
+  setDraft(documentId: string, text: string): WorkspaceSnapshot {
+    const doc = this.findDoc(documentId);
+    if (text.length > 5_000_000) throw new UserError("too_large", "That text is too long.");
+    if (doc.draft !== text) {
+      doc.draft = text;
+      this.notify("state");
+    }
+    return this.snapshot();
+  }
+
+  private findDoc(documentId: string): Doc {
+    const doc = this.docs.find((d) => d.id === documentId);
+    if (!doc) throw new UserError("unknown_document", "That document does not exist.");
+    return doc;
+  }
+
   // ---- versions and runs ----
 
   /** Look at an older (or the newest) version of the text and its results. */
@@ -495,7 +618,7 @@ export class WorkspaceService {
   }
 
   private findVersionOf(runId: string): Version {
-    const v = this.versions.find((x) => x.runIds.includes(runId));
+    const v = this.allVersions().find((x) => x.runIds.includes(runId));
     if (!v) throw new UserError("unknown_run", "That model run does not exist.");
     return v;
   }
@@ -510,28 +633,51 @@ export class WorkspaceService {
     return { revision: v.revision, runs: this.activeRuns(c, v), backend: v.backend };
   }
 
-  /** Everything a project file needs: every version, with every run including removed ones. */
-  exportAll(): ProjectVersion[] {
+  /** The open document's versions, each with every run including removed ones. */
+  exportVersions(): ProjectVersion[] {
     const c = this.coordinator;
     if (this.versions.length === 0 || !c) throw new UserError("nothing_to_save", "There is nothing to save yet.");
     return this.versions.map((v) => ({ source: v.revision, backend: v.backend, createdAt: v.createdAt, runs: v.runIds.map((id) => c.snapshotRun(id)) }));
   }
 
-  /** Replaces the open workspace with saved versions (already checked and settled by the caller). */
-  restore(versions: ProjectVersion[]): void {
+  /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null } {
+    const c = this.coordinator;
+    return {
+      documents: this.docs.map((d) => ({
+        id: d.id,
+        title: d.title,
+        createdAt: d.createdAt,
+        draft: d.draft,
+        versions: c ? d.versions.map((v) => ({ source: v.revision, backend: v.backend, createdAt: v.createdAt, runs: v.runIds.map((id) => c.snapshotRun(id)) })) : [],
+      })),
+      activeDocumentId: this.activeDocId,
+      settings: this.settings ? structuredClone(this.settings) : null,
+    };
+  }
+
+  /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
-    if (!this.options.provider && versions.some((v) => v.runs.some((r) => r.providerRefId === "main"))) {
+    if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
     }
     this.clear();
     const coordinator = this.ensureCoordinator();
-    for (const v of versions) {
-      coordinator.addRevision(v.source);
-      for (const run of v.runs) coordinator.restoreRun(run);
-      this.versions.push({ id: v.source.id, number: this.versions.length + 1, revision: v.source, backend: v.backend, runIds: v.runs.map((r) => r.id), createdAt: v.createdAt ?? new Date().toISOString() });
-    }
-    this.viewId = this.versions.at(-1)?.id ?? null;
-    this.firstModel = versions.at(-1)?.runs[0]?.modelId ?? "";
+    this.docs = project.documents.map((d) => {
+      const doc: Doc = { id: d.id, title: d.title, createdAt: d.createdAt, draft: d.draft, versions: [], viewId: null };
+      for (const v of d.versions) {
+        coordinator.addRevision(v.source);
+        for (const run of v.runs) coordinator.restoreRun(run);
+        doc.versions.push({ id: v.source.id, number: doc.versions.length + 1, revision: v.source, backend: v.backend, runIds: v.runs.map((r) => r.id), createdAt: v.createdAt ?? new Date().toISOString() });
+      }
+      doc.viewId = doc.versions.at(-1)?.id ?? null;
+      return doc;
+    });
+    this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
+    this.settings = project.settings ? structuredClone(project.settings) : null;
+    this.firstModel = this.versions.at(-1)?.runIds[0] ? coordinator.peekRun(this.versions.at(-1)!.runIds[0]!).modelId : "";
+    this.epoch++;
     this.refreshOutdated();
     this.notify("state");
   }
@@ -546,8 +692,10 @@ export class WorkspaceService {
   private clear(): void {
     this.coordinator = null;
     this.practice = null;
-    this.versions = [];
-    this.viewId = null;
+    this.docs = [newDoc("Document 1")];
+    this.activeDocId = this.docs[0]!.id;
+    this.settings = null;
+    this.epoch++;
     this.jobIds = [];
     this.waitingInfo.clear();
     this.outdated.clear();
@@ -625,18 +773,46 @@ export class WorkspaceService {
     const c = this.coordinator;
     const view = this.viewed();
     const project = this.options.projectView?.() ?? NO_PROJECT;
-    const base = { versions: [], latestText: null, viewingId: null, latestId: null, archived: [], job: null, backend: null, busy: false, waiting: null, demoModelUnloaded: false, project };
+    const documents = this.documentViews();
+
+    // Work is project-wide: a job in one document keeps the whole project busy, whichever document is open.
+    const jobs = c ? this.jobIds.map((id) => c.snapshotJob(id)) : [];
+    const last = jobs.at(-1);
+    const busy = jobs.some((j) => ["queued", "running", "waiting"].includes(j.state));
+    const waitingRun = c ? this.allVersions().flatMap((v) => v.runIds).map((id) => c.snapshotRun(id)).find((r) => r.state === "waiting" && !r.archived) : undefined;
+    const info = waitingRun ? this.waitingInfo.get(waitingRun.id) : undefined;
+    const job = last ? { id: last.id, state: last.state, ...(last.stopReason ? { stopReason: last.stopReason } : {}) } : null;
+    const waiting = waitingRun ? { runId: waitingRun.id, label: waitingRun.label, code: info?.code ?? "waiting", message: info?.message ?? "Waiting for the model." } : null;
+
+    const base = {
+      documents,
+      activeDocumentId: this.activeDocId,
+      draftText: this.doc.draft,
+      epoch: this.epoch,
+      settings: this.settings,
+      versions: [],
+      latestText: null,
+      viewingId: null,
+      latestId: null,
+      archived: [],
+      job,
+      backend: null,
+      busy,
+      waiting,
+      demoModelUnloaded: false,
+      project,
+    };
     if (!c || !view) return { ...base, revision: null, runs: [] };
 
     const all = view.runIds.map((id) => c.snapshotRun(id));
     const runs = all.filter((r) => !r.archived);
-    const jobs = this.jobIds.map((id) => c.snapshotJob(id));
-    const last = jobs.at(-1);
-    const busy = jobs.some((j) => ["queued", "running", "waiting"].includes(j.state));
-    const waitingRun = this.versions.flatMap((v) => v.runIds).map((id) => c.snapshotRun(id)).find((r) => r.state === "waiting" && !r.archived);
-    const info = waitingRun ? this.waitingInfo.get(waitingRun.id) : undefined;
     const revision = view.revision;
     return {
+      documents,
+      activeDocumentId: this.activeDocId,
+      draftText: this.doc.draft,
+      epoch: this.epoch,
+      settings: this.settings,
       revision: {
         id: revision.id,
         sourceLanguage: revision.sourceLanguage,
@@ -683,15 +859,38 @@ export class WorkspaceService {
       }),
       archived: all.filter((r) => r.archived).map((r) => ({ runId: r.id, label: r.label })),
       backend: this.versions.at(-1)!.backend,
-      job: last ? { id: last.id, state: last.state, ...(last.stopReason ? { stopReason: last.stopReason } : {}) } : null,
+      job,
       busy,
-      waiting: waitingRun ? { runId: waitingRun.id, label: waitingRun.label, code: info?.code ?? "waiting", message: info?.message ?? "Waiting for the model." } : null,
+      waiting,
       demoModelUnloaded: !!this.practice && this.demo.firstModelUnloaded && this.practice.isUnavailable(this.firstModel),
       project,
     };
   }
 
   // ---- internals ----
+
+  /** The left rail's list: each document with the progress of its newest version. */
+  private documentViews(): DocumentView[] {
+    const c = this.coordinator;
+    return this.docs.map((d) => {
+      const latest = d.versions.at(-1);
+      let done = 0;
+      let total = 0;
+      let models = 0;
+      if (latest && c) {
+        for (const id of latest.runIds) {
+          const run = c.peekRun(id);
+          if (run.archived) continue;
+          models++;
+          for (const o of Object.values(run.outputs)) {
+            total++;
+            if (o.state === "succeeded") done++;
+          }
+        }
+      }
+      return { id: d.id, title: d.title, blocks: latest?.revision.blocks.length ?? 0, models, done, total, hasText: d.draft.trim() !== "" || !!latest };
+    });
+  }
 
   private viewed(): Version | undefined {
     return this.versions.find((v) => v.id === this.viewId) ?? this.versions.at(-1);
