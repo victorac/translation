@@ -26,6 +26,9 @@ export interface ParsedKnowledge {
 
 const TERM = /^(.*?)\s*(?:=>|->|→|=|\t)\s*(.*)$/;
 
+/** "花子 / 花子" is a word followed by other ways it is written. */
+export const splitNames = (s: string): string[] => s.split(" / ").map((n) => n.trim()).filter(Boolean);
+
 export function parseKnowledge(text: string): ParsedKnowledge {
   const glossary: GlossaryEntry[] = [];
   const notes: KnowledgeNote[] = [];
@@ -49,13 +52,13 @@ export function parseKnowledge(text: string): ParsedKnowledge {
     } else {
       const [pair = "", ...hint] = line.split(/\s#\s/);
       const m = TERM.exec(pair.trim());
-      const source = m?.[1]?.trim() ?? "";
+      const [source = "", ...aliases] = splitNames(m?.[1] ?? "");
       const target = m?.[2]?.trim() ?? "";
       if (!m || source === "" || target === "") {
         lines.push({ kind: "problem", from, to, message: "Not understood. Write: source = translation # hint. Notes start with >." });
       } else {
         const note = hint.join(" # ").trim();
-        glossary.push({ source, target, ...(note ? { note } : {}) });
+        glossary.push({ source, target, ...(note ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) });
         lines.push({ kind: "term", from, to });
       }
     }
@@ -66,7 +69,7 @@ export function parseKnowledge(text: string): ParsedKnowledge {
 
 export const serializeNote = (n: KnowledgeNote): string => `> ${n.text}`;
 export const serializeNotes = (notes: readonly KnowledgeNote[]): string => notes.map(serializeNote).join("\n");
-export const serializeTerm = (g: GlossaryEntry): string => `${g.source} = ${g.target}${g.note ? ` # ${g.note}` : ""}`;
+export const serializeTerm = (g: GlossaryEntry): string => `${[g.source, ...(g.aliases ?? [])].join(" / ")} = ${g.target}${g.note ? ` # ${g.note}` : ""}`;
 
 /** What a run keeps from the project's knowledge: the terms, and the notes written as lines. */
 export function splitKnowledge(text: string): { glossary: GlossaryEntry[]; notes: string } {

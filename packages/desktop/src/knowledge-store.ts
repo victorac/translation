@@ -9,6 +9,8 @@ interface Row {
   source: string;
   target: string;
   hint: string;
+  category: string;
+  aliases: string;
   about: string | null;
   related: string;
   scope: string | null;
@@ -24,6 +26,8 @@ const toEntry = (r: Row): KnowledgeEntry => ({
   source: r.source,
   target: r.target,
   hint: r.hint,
+  category: r.category === "character" || r.category === "place" ? r.category : "term",
+  aliases: JSON.parse(r.aliases) as string[],
   text: r.text,
   about: r.about,
   related: JSON.parse(r.related) as string[],
@@ -46,14 +50,14 @@ export class KnowledgeStore {
   constructor(private readonly deps: EntryDeps = { newId, now: () => new Date().toISOString() }) {
     this.db.exec(`CREATE TABLE entries (
       id TEXT PRIMARY KEY, seq INTEGER NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, hint TEXT NOT NULL,
-      about TEXT, related TEXT NOT NULL, scope TEXT, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
+      category TEXT NOT NULL, aliases TEXT NOT NULL, about TEXT, related TEXT NOT NULL, scope TEXT, text TEXT NOT NULL, origin TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
   }
 
   private insert(e: KnowledgeEntry, seq: number = ++this.seq): void {
     this.db
-      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, about, related, scope, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(e.id, seq, e.kind, e.source, e.target, e.hint, e.about, JSON.stringify(e.related), e.scope ? JSON.stringify(e.scope) : null, e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
+      .prepare("INSERT OR REPLACE INTO entries (id, seq, kind, source, target, hint, category, aliases, about, related, scope, text, origin, status, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(e.id, seq, e.kind, e.source, e.target, e.hint, e.category, JSON.stringify(e.aliases), e.about, JSON.stringify(e.related), e.scope ? JSON.stringify(e.scope) : null, e.text, JSON.stringify(e.origin), e.status, e.updatedAt);
   }
 
   /** Replaces everything, for example when a project is opened. Does not count as a change. */
@@ -78,8 +82,8 @@ export class KnowledgeStore {
     const text = q.text?.trim();
     if (text) {
       const like = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-      where.push("(source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR hint LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')");
-      args.push(like, like, like, like);
+      where.push("(source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR hint LIKE ? ESCAPE '\\' OR aliases LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')");
+      args.push(like, like, like, like, like);
     }
     const clause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM entries${clause}`).get(...args) as { n: number }).n;
@@ -110,13 +114,13 @@ export class KnowledgeStore {
   save(input: EntryInput): KnowledgeEntry {
     const problems = entryProblems(input);
     if (problems.length > 0) throw new UserError("bad_entry", problems[0]!);
-    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), text: input.text.trim(), about: input.kind === "note" ? input.about : null };
+    const clean = { kind: input.kind, source: input.source.trim(), target: input.target.trim(), hint: input.hint.trim(), category: input.kind === "term" ? input.category : ("term" as const), aliases: input.kind === "term" ? input.aliases.map((a) => a.trim()).filter((a) => a !== "" && a !== input.source.trim()) : [], text: input.text.trim(), about: input.kind === "note" ? input.about : null };
     const before = input.id ? this.get(input.id) : undefined;
     if (input.id && !before) throw new UserError("no_entry", "That entry no longer exists.");
     if (!before && clean.kind === "term" && this.all().some((e) => e.kind === "term" && e.source === clean.source)) {
       throw new UserError("duplicate_entry", `"${clean.source}" is already listed. Edit that entry instead.`);
     }
-    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.text, before.about]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.text, clean.about]);
+    const unchanged = before && JSON.stringify([before.kind, before.source, before.target, before.hint, before.category, before.aliases, before.text, before.about]) === JSON.stringify([clean.kind, clean.source, clean.target, clean.hint, clean.category, clean.aliases, clean.text, clean.about]);
     const entry: KnowledgeEntry = {
       id: before?.id ?? this.deps.newId(),
       ...clean,

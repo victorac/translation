@@ -116,6 +116,8 @@ const schemas: Record<CommandName, z.ZodType> = {
     source: z.string().max(2000),
     target: z.string().max(2000),
     hint: z.string().max(2000),
+    category: z.enum(["character", "place", "term"]),
+    aliases: z.array(z.string().max(2000)).max(50),
     text: z.string().max(4000),
     about: z.string().max(200).nullable(),
     documentId: z.string().max(200).optional(),

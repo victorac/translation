@@ -7,6 +7,8 @@ export interface GlossaryEntry {
   source: string;
   target: string;
   note?: string;
+  /** Other ways the same word is written in the text. */
+  aliases?: string[];
 }
 
 export type AttemptState =

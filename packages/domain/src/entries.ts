@@ -1,9 +1,13 @@
 import { parseKnowledge, serializeNotes, serializeTerm, type BlockMaterial, type KnowledgeNote } from "./knowledge.js";
 import type { GlossaryEntry } from "./state.js";
 
+/** What a term is: a person, a place, or any other special word. */
+export type TermCategory = "character" | "place" | "term";
+
 /**
  * The knowledge base holds four kinds of entry:
- *  - term: a name or word, how to translate it, and a hint (who the person is, how they speak)
+ *  - term: a name or word (a character, a place or another special word), how to translate it, and a short summary
+ *    that is refined as more text is read
  *  - note: a fact. It is usually about one term ("addresses Taro as Yamada") and then belongs to that term
  *  - scene: what is going on around one block (where, who is present, who speaks to whom)
  *  - summary: an abridged version of a whole document
@@ -21,13 +25,17 @@ export interface EntryOrigin {
   block?: number;
 }
 
-/** What a scene or summary is about. A scene is tied to the text of one block, so it follows that text. */
+/** What a scene or summary is about. A scene is tied to the text of its blocks, so it follows that text. */
 export interface EntryScope {
   documentId: string;
-  /** Scenes: the hash of the block's text. */
-  blockHash?: string;
-  /** Scenes: the block's number, for showing. */
+  /** Scenes: the hashes of the text of each block in the scene. */
+  blockHashes?: string[];
+  /** Scenes: the number of the first block, for showing. */
   block?: number;
+  /** Scenes: the number of the last block, when the scene runs over several. */
+  blockEnd?: number;
+  /** Scenes saved before they could run over several blocks. */
+  blockHash?: string;
 }
 
 export interface KnowledgeEntry {
@@ -37,8 +45,12 @@ export interface KnowledgeEntry {
   source: string;
   /** Terms: how it should be translated. */
   target: string;
-  /** Terms: a short hint (gender, how they speak...). */
+  /** Terms: a short summary (who or what it is), refined as more text is read. */
   hint: string;
+  /** Terms: a person, a place or another word. */
+  category: TermCategory;
+  /** Terms: other ways the same word is written in the text. */
+  aliases: string[];
   /** Notes, scenes and summaries: the text itself. */
   text: string;
   /** Notes: the term this fact is about, if any. */
@@ -58,6 +70,8 @@ export interface EntryInput {
   source: string;
   target: string;
   hint: string;
+  category: TermCategory;
+  aliases: string[];
   text: string;
   about: string | null;
   /** For a new summary: the document it summarizes. */
@@ -100,7 +114,7 @@ export function splitEntries(entries: readonly KnowledgeEntry[]): { glossary: Gl
   const glossary: GlossaryEntry[] = [];
   const notes: KnowledgeNote[] = [];
   for (const e of entries) {
-    if (e.kind === "term") glossary.push({ source: e.source.trim(), target: e.target.trim(), ...(e.hint.trim() ? { note: e.hint.trim() } : {}) });
+    if (e.kind === "term") glossary.push({ source: e.source.trim(), target: e.target.trim(), ...(e.hint.trim() ? { note: e.hint.trim() } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) });
     else if (e.kind === "note") notes.push({ text: e.text.trim() });
   }
   return { glossary, notes: serializeNotes(notes) };
@@ -108,7 +122,7 @@ export function splitEntries(entries: readonly KnowledgeEntry[]): { glossary: Gl
 
 /** One line per term and note, in the format people paste in and copy out. Scenes and summaries are not included. */
 export function entriesToText(entries: readonly KnowledgeEntry[]): string {
-  const terms = entries.filter((e) => e.kind === "term").map((e) => serializeTerm({ source: e.source, target: e.target, ...(e.hint ? { note: e.hint } : {}) }));
+  const terms = entries.filter((e) => e.kind === "term").map((e) => serializeTerm({ source: e.source, target: e.target, ...(e.hint ? { note: e.hint } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) }));
   const named = new Map(entries.filter((e) => e.kind === "term").map((e) => [e.id, e.target]));
   const notes = entries.filter((e) => e.kind === "note").map((e) => `> ${e.about && named.has(e.about) ? `${named.get(e.about)}: ` : ""}${e.text}`);
   return [...terms, ...(terms.length > 0 && notes.length > 0 ? [""] : []), ...notes].join("\n");
@@ -119,14 +133,14 @@ export interface EntryDeps {
   now: () => string;
 }
 
-const base = (origin: EntryOrigin, status: EntryStatus, at: string) => ({ about: null, related: [] as string[], scope: null, origin, status, updatedAt: at });
+const base = (origin: EntryOrigin, status: EntryStatus, at: string) => ({ category: "term" as TermCategory, aliases: [] as string[], about: null, related: [] as string[], scope: null, origin, status, updatedAt: at });
 
 /** Reads pasted lines into entries. Lines that cannot be read are counted so the user can be told. */
 export function entriesFromText(text: string, origin: EntryOrigin, status: EntryStatus, deps: EntryDeps): { entries: KnowledgeEntry[]; unreadable: number } {
   const parsed = parseKnowledge(text);
   const at = deps.now();
   const entries: KnowledgeEntry[] = [
-    ...parsed.glossary.map((g): KnowledgeEntry => ({ id: deps.newId(), kind: "term", source: g.source, target: g.target, hint: g.note ?? "", text: "", ...base(origin, status, at) })),
+    ...parsed.glossary.map((g): KnowledgeEntry => ({ id: deps.newId(), kind: "term", source: g.source, target: g.target, hint: g.note ?? "", text: "", ...base(origin, status, at), aliases: g.aliases ?? [] })),
     ...parsed.notes.map((n): KnowledgeEntry => ({ id: deps.newId(), kind: "note", source: "", target: "", hint: "", text: n.text, ...base(origin, status, at) })),
   ];
   return { entries, unreadable: parsed.lines.filter((l) => l.kind === "problem").length };
@@ -138,6 +152,13 @@ export function entriesFromLegacy(glossary: readonly GlossaryEntry[], legacyNote
   return entriesFromText(text, { by: "user" }, "confirmed", deps).entries;
 }
 
+/** A scene saved with one block hash is a scene of one block. */
+function normalizeScope(s: EntryScope | null): EntryScope | null {
+  if (!s || s.blockHashes || !s.blockHash) return s;
+  const { blockHash, ...rest } = s;
+  return { ...rest, blockHashes: [blockHash] };
+}
+
 /** Entries from an older file lack the newer fields; fill them in. */
 export function normalizeEntry(e: Partial<KnowledgeEntry> & Pick<KnowledgeEntry, "id" | "kind" | "origin" | "status" | "updatedAt">): KnowledgeEntry {
   return {
@@ -146,10 +167,12 @@ export function normalizeEntry(e: Partial<KnowledgeEntry> & Pick<KnowledgeEntry,
     source: e.source ?? "",
     target: e.target ?? "",
     hint: e.hint ?? "",
+    category: e.category ?? "term",
+    aliases: e.aliases ?? [],
     text: e.text ?? "",
     about: e.about ?? null,
     related: e.related ?? [],
-    scope: e.scope ?? null,
+    scope: normalizeScope(e.scope ?? null),
     origin: e.origin,
     status: e.status,
     updatedAt: e.updatedAt,
@@ -165,7 +188,7 @@ export function normalizeEntry(e: Partial<KnowledgeEntry> & Pick<KnowledgeEntry,
  */
 export function blockMaterial(entries: readonly KnowledgeEntry[], chosenIds: readonly string[] | null, blockHash: string, documentId: string | null): BlockMaterial | null {
   if (entries.length === 0) return null;
-  const scene = entries.find((e) => e.kind === "scene" && e.scope?.blockHash === blockHash);
+  const scene = entries.find((e) => e.kind === "scene" && (e.scope?.blockHashes?.includes(blockHash) || e.scope?.blockHash === blockHash));
   const summary = documentId ? entries.find((e) => e.kind === "summary" && e.scope?.documentId === documentId) : undefined;
   if (chosenIds === null && !scene) return null;
   const chosen = new Set([...(chosenIds ?? []), ...(scene?.related ?? [])]);

@@ -8,6 +8,8 @@ const e = (id: string, over: Partial<KnowledgeEntry> = {}): KnowledgeEntry => ({
   source: id,
   target: id.toUpperCase(),
   hint: "",
+  category: "term",
+  aliases: [],
   text: "",
   about: null,
   related: [],

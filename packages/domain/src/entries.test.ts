@@ -24,7 +24,7 @@ describe("entries", () => {
   });
 
   it("explains what is missing", () => {
-    const base = { kind: "term" as const, source: "", target: "", hint: "", text: "", about: null };
+    const base = { kind: "term" as const, source: "", target: "", hint: "", category: "term" as const, aliases: [], text: "", about: null };
     expect(entryProblems(base)).toHaveLength(2);
     expect(entryProblems({ ...base, source: "a", target: "b" })).toEqual([]);
     expect(entryProblems({ ...base, kind: "note" })).toEqual(["Enter the text."]);
@@ -38,7 +38,7 @@ describe("entries", () => {
 });
 
 describe("the background for one block", () => {
-  const e = (id: string, over: Partial<KnowledgeEntry>): KnowledgeEntry => ({ id, kind: "term", source: "", target: "", hint: "", text: "", about: null, related: [], scope: null, origin: { by: "user" }, status: "confirmed", updatedAt: "t", ...over });
+  const e = (id: string, over: Partial<KnowledgeEntry>): KnowledgeEntry => ({ id, kind: "term", source: "", target: "", hint: "", category: "term" as const, aliases: [], text: "", about: null, related: [], scope: null, origin: { by: "user" }, status: "confirmed", updatedAt: "t", ...over });
   const entries = [
     e("hanako", { source: "花子", target: "Hanako", hint: "girl" }),
     e("taro", { source: "太郎", target: "Taro" }),

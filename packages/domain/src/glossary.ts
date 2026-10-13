@@ -29,7 +29,8 @@ export function normalizeGlossary(raw: readonly GlossaryEntry[]): NormalizedGlos
     if (source.length > MAX_TERM_CHARS || target.length > MAX_TERM_CHARS) return void problems.push(`${row} ("${source.slice(0, 20)}…") is too long.`);
     if (note && note.length > MAX_NOTE_CHARS) return void problems.push(`${row} ("${source}") has too long a note.`);
     bySource.delete(source);
-    bySource.set(source, { source, target, ...(note ? { note } : {}) });
+    const aliases = (e.aliases ?? []).map((a) => a.trim()).filter((a) => a !== "" && a !== source);
+    bySource.set(source, { source, target, ...(note ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) });
   });
   const entries = [...bySource.values()];
   if (entries.length > MAX_GLOSSARY_ENTRIES) problems.push(`The glossary has ${entries.length} entries; at most ${MAX_GLOSSARY_ENTRIES} are allowed.`);
@@ -71,7 +72,7 @@ const lower = (s: string): string => s.toLocaleLowerCase();
 /** Only the entries whose source term appears in the given texts, so each request carries what it needs. */
 export function relevantEntries(glossary: readonly GlossaryEntry[], ...texts: (string | null)[]): GlossaryEntry[] {
   const hay = texts.filter((t): t is string => !!t).map(lower);
-  return glossary.filter((g) => hay.some((h) => h.includes(lower(g.source))));
+  return glossary.filter((g) => [g.source, ...(g.aliases ?? [])].some((name) => hay.some((h) => h.includes(lower(name)))));
 }
 
 const CJK = /[぀-ヿ㐀-鿿豈-﫿가-힯]/gu;

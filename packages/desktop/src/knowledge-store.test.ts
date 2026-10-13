@@ -3,8 +3,8 @@ import { KnowledgeStore } from "./knowledge-store.js";
 
 let n = 0;
 const make = () => new KnowledgeStore({ newId: () => `e${++n}`, now: () => "2026-01-01T00:00:00.000Z" });
-const term = (source: string, target: string, hint = "") => ({ kind: "term" as const, source, target, hint, text: "", about: null });
-const note = (text: string) => ({ kind: "note" as const, source: "", target: "", hint: "", text, about: null });
+const term = (source: string, target: string, hint = "") => ({ kind: "term" as const, source, target, hint, text: "", about: null, category: "term" as const, aliases: [] });
+const note = (text: string) => ({ kind: "note" as const, source: "", target: "", hint: "", text, about: null, category: "term" as const, aliases: [] });
 
 describe("KnowledgeStore", () => {
   it("adds, lists in the order added, and counts", () => {
@@ -51,7 +51,7 @@ describe("KnowledgeStore", () => {
 
   it("confirms suggestions, removes entries, and skips repeats when adding many", () => {
     const s = make();
-    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", text: "", about: null, related: [], scope: null, origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
+    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", text: "", about: null, category: "term" as const, aliases: [], related: [], scope: null, origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
     expect(s.addMany([{ ...base, id: "a" }, { ...base, id: "b" }, { ...base, id: "c", source: "勇者" }])).toBe(2);
     expect(s.confirm(["a"])).toBe(1);
     expect(s.confirm()).toBe(1);

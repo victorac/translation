@@ -186,7 +186,7 @@ describe("glossary and prompt styles", () => {
     expect(Object.values(run.blocks)[0]!.text).toContain("paragraph");
     expect(run.outdated).toBe(0);
     s.syncSettings({ ...input({ glossary: GLOSSARY, models: [model("alpha")] }) });
-    s.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "Hanako is a girl who speaks politely.", about: null });
+    s.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "Hanako is a girl who speaks politely.", about: null, category: "term" as const, aliases: [] });
     expect(s.snapshot().runs[0]!.outdated).toBeGreaterThan(0);
     expect(s.knowledgeImport("段落 = passage\nnot a line")).toEqual({ added: 1, unreadable: 1 });
   });

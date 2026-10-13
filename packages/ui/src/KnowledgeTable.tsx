@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { entriesToText, entryProblems, type EntryInput, type KnowledgeEntry } from "@ltw/domain/pure";
+import { entriesToText, entryProblems, type EntryInput, type KnowledgeEntry, type TermCategory } from "@ltw/domain/pure";
 import { api } from "./api";
 import { useKnowledgeList } from "./useKnowledge";
 
 type Tab = "summary" | "terms" | "scenes";
 
-const input = (kind: KnowledgeEntry["kind"], over: Partial<EntryInput> = {}): EntryInput => ({ kind, source: "", target: "", hint: "", text: "", about: null, ...over });
-const fromEntry = (e: KnowledgeEntry): EntryInput => ({ id: e.id, kind: e.kind, source: e.source, target: e.target, hint: e.hint, text: e.text, about: e.about });
+const input = (kind: KnowledgeEntry["kind"], over: Partial<EntryInput> = {}): EntryInput => ({ kind, source: "", target: "", hint: "", category: "character", aliases: [], text: "", about: null, ...over });
+const fromEntry = (e: KnowledgeEntry): EntryInput => ({ id: e.id, kind: e.kind, source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: e.aliases, text: e.text, about: e.about });
 
 function fromWhere(e: KnowledgeEntry): string {
   if (e.origin.by === "user") return "Written by you";
@@ -37,16 +37,28 @@ function EntryForm({ initial, terms, onSave, onCancel }: { initial: EntryInput; 
       {e.kind === "term" ? (
         <div className="kb-fields">
           <label>
-            Word in the text
-            <input autoFocus value={e.source} onChange={(ev) => set({ source: ev.target.value })} />
+            Kind
+            <select value={e.category} onChange={(ev) => set({ category: ev.target.value as TermCategory })}>
+              <option value="character">Character</option>
+              <option value="place">Place</option>
+              <option value="term">Other term</option>
+            </select>
           </label>
           <label>
             Translate as
             <input value={e.target} onChange={(ev) => set({ target: ev.target.value })} />
           </label>
+          <label>
+            Written in the text as
+            <input autoFocus value={e.source} onChange={(ev) => set({ source: ev.target.value })} />
+          </label>
+          <label>
+            Also written as
+            <input value={e.aliases.join(", ")} placeholder="other spellings, nicknames" onChange={(ev) => set({ aliases: ev.target.value.split(/[,、，]/) })} />
+          </label>
           <label className="wide">
-            Hint
-            <input value={e.hint} placeholder="girl, speaks politely" onChange={(ev) => set({ hint: ev.target.value })} />
+            Summary
+            <input value={e.hint} placeholder="girl, the narrator's classmate, speaks politely" onChange={(ev) => set({ hint: ev.target.value })} />
           </label>
         </div>
       ) : (
@@ -106,7 +118,8 @@ export function KnowledgeTable({ rev, documentId, documentTitle }: { rev: number
   const loose = all.filter((e) => e.kind === "note" && (e.about === null || !byId.has(e.about)));
   const scenes = all.filter((e) => e.kind === "scene" && e.scope?.documentId === documentId).sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0));
   const summary = all.find((e) => e.kind === "summary" && e.scope?.documentId === documentId);
-  const scenesOf = (t: KnowledgeEntry) => scenes.filter((s) => s.related.includes(t.id)).map((s) => s.scope?.block ?? 0);
+  const range = (s: KnowledgeEntry) => (s.scope?.blockEnd && s.scope.blockEnd !== s.scope.block ? `${s.scope.block}–${s.scope.blockEnd}` : `${s.scope?.block ?? "?"}`);
+  const scenesOf = (t: KnowledgeEntry) => scenes.filter((s) => s.related.includes(t.id)).map(range);
 
   const save = async (e: EntryInput): Promise<string | null> => {
     const r = await api.invoke("knowledge.save", e);
@@ -246,65 +259,75 @@ export function KnowledgeTable({ rev, documentId, documentTitle }: { rev: number
             </div>
           )}
           {editing === "new:term" && <EntryForm initial={input("term")} terms={terms} onSave={save} onCancel={() => setEditing(null)} />}
-          <ul className="kb-rows">
-            {terms
-              .filter((t) => matches(t.source, t.target, t.hint, ...factsOf(t).map((f) => f.text)))
-              .map((t) => {
-                const seen = scenesOf(t);
-                return (
-                  <li key={t.id} className={t.status === "suggested" ? "kb-row suggested" : "kb-row"}>
-                    {editing === t.id ? (
-                      formFor(t)
-                    ) : (
-                      <>
-                        <div className="kb-main">
-                          <strong>{t.source}</strong> <span className="muted">→</span> {t.target}
-                          {t.hint && <span className="kb-hint"> · {t.hint}</span>} <Suggested e={t} />
-                        </div>
-                        <ul className="kb-facts">
-                          {factsOf(t).map((f) => (
-                            <li key={f.id}>
-                              {editing === f.id ? (
-                                formFor(f)
-                              ) : (
-                                <>
-                                  <span>{f.text}</span> <Suggested e={f} />
-                                  <Actions e={f} />
-                                </>
+          {(["character", "place", "term"] as const).map((cat) => {
+            const group = terms.filter((t) => t.category === cat && matches(t.source, ...t.aliases, t.target, t.hint, ...factsOf(t).map((f) => f.text)));
+            if (group.length === 0) return null;
+            return (
+              <section key={cat}>
+                <h4 className="kb-h">
+                  {cat === "character" ? "Characters" : cat === "place" ? "Places" : "Other terms"} {group.length}
+                </h4>
+                <ul className="kb-rows">
+                  {group.map((t) => {
+                    const seen = scenesOf(t);
+                    return (
+                      <li key={t.id} className={t.status === "suggested" ? "kb-row suggested" : "kb-row"}>
+                        {editing === t.id ? (
+                          formFor(t)
+                        ) : (
+                          <>
+                            <div className="kb-main">
+                              <strong>{t.source}</strong>
+                              {t.aliases.length > 0 && <span className="kb-hint"> / {t.aliases.join(" / ")}</span>} <span className="muted">→</span> {t.target}
+                              {t.hint && <span className="kb-hint"> · {t.hint}</span>} <Suggested e={t} />
+                            </div>
+                            <ul className="kb-facts">
+                              {factsOf(t).map((f) => (
+                                <li key={f.id}>
+                                  {editing === f.id ? (
+                                    formFor(f)
+                                  ) : (
+                                    <>
+                                      <span>{f.text}</span> <Suggested e={f} />
+                                      <Actions e={f} />
+                                    </>
+                                  )}
+                                </li>
+                              ))}
+                              {editing === `new:note:${t.id}` && (
+                                <li>
+                                  <EntryForm initial={input("note", { about: t.id })} terms={terms} onSave={save} onCancel={() => setEditing(null)} />
+                                </li>
                               )}
-                            </li>
-                          ))}
-                          {editing === `new:note:${t.id}` && (
-                            <li>
-                              <EntryForm initial={input("note", { about: t.id })} terms={terms} onSave={save} onCancel={() => setEditing(null)} />
-                            </li>
-                          )}
-                        </ul>
-                        <div className="kb-meta-row">
-                          <span className="hint">{seen.length > 0 ? `In scenes: ${seen.join(", ")}` : ""}</span>
-                          <span className="kb-row-actions">
-                            <button className="small" onClick={() => setEditing(`new:note:${t.id}`)}>
-                              Add fact
-                            </button>
-                            {t.status === "suggested" && (
-                              <button className="small" onClick={() => confirm([t.id])}>
-                                Confirm
-                              </button>
-                            )}
-                            <button className="small" onClick={() => setEditing(t.id)}>
-                              Edit
-                            </button>
-                            <button className="small" aria-label="Delete" onClick={() => void remove(t)}>
-                              ×
-                            </button>
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-          </ul>
+                            </ul>
+                            <div className="kb-meta-row">
+                              <span className="hint">{seen.length > 0 ? `In scenes: ${seen.join(", ")}` : ""}</span>
+                              <span className="kb-row-actions">
+                                <button className="small" onClick={() => setEditing(`new:note:${t.id}`)}>
+                                  Add fact
+                                </button>
+                                {t.status === "suggested" && (
+                                  <button className="small" onClick={() => confirm([t.id])}>
+                                    Confirm
+                                  </button>
+                                )}
+                                <button className="small" onClick={() => setEditing(t.id)}>
+                                  Edit
+                                </button>
+                                <button className="small" aria-label="Delete" onClick={() => void remove(t)}>
+                                  ×
+                                </button>
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
           {(loose.length > 0 || editing === "new:note") && (
             <>
               <h4 className="kb-h">Other notes</h4>
@@ -343,7 +366,7 @@ export function KnowledgeTable({ rev, documentId, documentTitle }: { rev: number
 
       {tab === "scenes" && (
         <div className="kb-section">
-          <p className="hint">What is happening around each block, with the people present. Each block is translated with its own scene.</p>
+          <p className="hint">What is happening, with the people present. A scene can run over several blocks, and each block is translated with the scene it is in.</p>
           <ul className="kb-rows">
             {scenes
               .filter((s) => matches(s.text, ...s.related.map((r) => byId.get(r)?.source ?? "")))
@@ -354,7 +377,7 @@ export function KnowledgeTable({ rev, documentId, documentTitle }: { rev: number
                   ) : (
                     <>
                       <div className="kb-main">
-                        <span className="tag">Block {s.scope?.block ?? "?"}</span> {s.text} <Suggested e={s} />
+                        <span className="tag">{s.scope?.blockEnd && s.scope.blockEnd !== s.scope.block ? "Blocks" : "Block"} {range(s)}</span> {s.text} <Suggested e={s} />
                       </div>
                       {s.related.length > 0 && (
                         <div className="kb-chips">
@@ -374,7 +397,7 @@ export function KnowledgeTable({ rev, documentId, documentTitle }: { rev: number
                 </li>
               ))}
           </ul>
-          {scenes.length === 0 && <p className="hint">No scenes yet. Extract knowledge describes the scene of every block.</p>}
+          {scenes.length === 0 && <p className="hint">No scenes yet. Extract knowledge describes the scenes of the text.</p>}
         </div>
       )}
     </div>

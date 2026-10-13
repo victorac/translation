@@ -88,7 +88,7 @@ const UNAVAILABLE = "(not available)";
  * because some models write structured input back out instead of translating it. The text to translate is last,
  * so the natural continuation is its translation.
  */
-export function renderUserMessage(glossary: { source: string; target: string; note?: string }[], context: RequestContext, sourceText: string, notes: readonly string[] = [], extras: { summary?: string | undefined; scene?: string | undefined } = {}): string {
+export function renderUserMessage(glossary: { source: string; target: string; note?: string; aliases?: string[] | undefined }[], context: RequestContext, sourceText: string, notes: readonly string[] = [], extras: { summary?: string | undefined; scene?: string | undefined } = {}): string {
   const parts: string[] = [];
   if (extras.summary) parts.push(`${SUMMARY_LABEL}\n${extras.summary}`);
   if (extras.scene) parts.push(`${SCENE_LABEL}\n${extras.scene}`);
@@ -96,7 +96,7 @@ export function renderUserMessage(glossary: { source: string; target: string; no
   if (glossary.length > 0) {
     const lines = glossary.map((g) => {
       const [first, ...others] = targetVariants(g.target);
-      return `- ${g.source} => ${first ?? g.target}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
+      return `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => ${first ?? g.target}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
     });
     parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
   }
@@ -110,7 +110,7 @@ export function renderUserMessage(glossary: { source: string; target: string; no
 }
 
 export interface ParsedUserMessage {
-  glossary: { source: string; target: string }[];
+  glossary: { source: string; target: string; aliases?: string[] }[];
   /** Absent when the message had no context section. */
   context: { source: string | null; translation: string | null } | null;
   sourceBlock: string;
@@ -129,7 +129,10 @@ export function parseUserMessage(content: string): ParsedUserMessage | null {
     const end = ctxAt > glossAt ? ctxAt : head.length;
     for (const line of head.slice(glossAt + GLOSSARY_LABEL.length, end).split("\n")) {
       const m = /^- (.+?) => (.+?)(?: \(or .*\))?(?: — .*)?$/.exec(line.trim());
-      if (m) glossary.push({ source: m[1]!, target: m[2]! });
+      if (m) {
+        const [source = m[1]!, ...aliases] = m[1]!.split(" / ");
+        glossary.push({ source, target: m[2]!, ...(aliases.length > 0 ? { aliases } : {}) });
+      }
     }
   }
   let context: ParsedUserMessage["context"] = null;
@@ -181,7 +184,7 @@ export function buildPrompt(
   const text = blockText(revision, block);
   const reserve = knowledgeReserve(run.glossary, run.notes ?? "", run.config.contextLimit, run.knowledge === true);
   const kb = fitMaterial(material ?? backupMaterial(run.glossary, run.notes ?? "", text), reserve);
-  const glossary = kb.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}) }));
+  const glossary = kb.glossary.map((g) => ({ source: g.source, target: g.target, ...(g.note ? { note: g.note } : {}), ...(g.aliases ? { aliases: g.aliases } : {}) }));
   const user = renderUserMessage(glossary, context, text, kb.notes, { summary: kb.summary, scene: kb.scene });
   return {
     messages: [
@@ -204,7 +207,7 @@ export function buildPrompt(
 export function blockSettingsHash(revision: SourceRevision, blockIndex: number, run: Pick<ModelRun, "modelId" | "config" | "prompt" | "glossary" | "notes">, material?: BlockMaterial): string {
   const text = blockText(revision, revision.blocks[blockIndex]!);
   const chosen = material ?? backupMaterial(run.glossary, run.notes ?? "", text);
-  const glossary = chosen.glossary.map((g) => (g.note ? [g.source, g.target, g.note] : [g.source, g.target]));
+  const glossary = chosen.glossary.map((g) => [g.source, g.target, ...(g.note ? [g.note] : []), ...(g.aliases && g.aliases.length > 0 ? [g.aliases.join("/")] : [])]);
   const notes = chosen.notes;
   return sha256Hex(
     JSON.stringify({

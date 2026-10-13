@@ -1147,8 +1147,8 @@ export class WorkspaceService {
     const out: KnownTerm[] = [];
     let left = capTokens;
     for (const t of entries.filter((e) => e.kind === "term")) {
-      const known = { source: t.source, target: t.target, hint: t.hint, facts: entries.filter((e) => e.kind === "note" && e.about === t.id).map((e) => e.text) };
-      const cost = estimateTokens([t.source, t.target, t.hint, ...known.facts].join(" "));
+      const known = { category: t.category, source: t.source, aliases: t.aliases, target: t.target, hint: t.hint, facts: entries.filter((e) => e.kind === "note" && e.about === t.id).map((e) => e.text) };
+      const cost = estimateTokens([t.source, ...t.aliases, t.target, t.hint, ...known.facts].join(" "));
       if (cost > left) break;
       left -= cost;
       out.push(known);
@@ -1163,7 +1163,7 @@ export class WorkspaceService {
   async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
     const abort = this.beginSideRequest();
     try {
-      const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && e.scope.block === input.block - 1);
+      const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && (e.scope.blockEnd ?? e.scope.block) === input.block - 1);
       const system = analysisSystemPrompt(input.sourceLanguage, input.targetLanguage);
       // The reply is a handful of short lines, so it needs far less room than a translation does.
       const replyTokens = Math.min(input.maxOutputTokens, ANALYSIS_REPLY_TOKENS);
@@ -1178,7 +1178,7 @@ export class WorkspaceService {
       // What is already known helps the model avoid repeating itself, but it gives way to the passage when room is short.
       const messages = [
         { role: "system" as const, content: system },
-        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), previousScene: previous?.text }, input.passage) },
+        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), previousScene: previous ? { text: previous.text, from: previous.scope?.block ?? input.block - 1, to: previous.scope?.blockEnd ?? previous.scope?.block ?? input.block - 1 } : undefined }, input.passage) },
       ];
       const reply = await this.askModel(
         {
@@ -1188,8 +1188,8 @@ export class WorkspaceService {
           messages,
           practiceReply: () =>
             input.passage.includes("彼")
-              ? "PERSON: 彼 = He # practice mode: an example, not written by a model\nFACT: 彼 | Practice mode: this fact is an example.\nSCENE: 彼 | Practice mode: this scene description is an example."
-              : "SCENE: Practice mode: this scene description is an example.",
+              ? `CHARACTER: 彼 = He | practice mode: an example, not written by a model\nFACT: 彼 | Practice mode: this fact is an example.\nSCENE: ${input.block > 1 && input.block % 2 === 0 ? "CONTINUES" : "NEW"} | 彼 | Practice mode: this scene description is an example.`
+              : `SCENE: ${input.block > 1 ? "CONTINUES" : "NEW"} | Practice mode: this scene description is an example.`,
         },
         abort,
       );
@@ -1347,7 +1347,7 @@ export class WorkspaceService {
         const user = parseUserMessage(req.messages[1]!.content);
         // Pretend to follow the glossary: swap each term it was sent for its preferred translation.
         let text = user?.sourceBlock ?? "";
-        for (const g of user?.glossary ?? []) text = text.replaceAll(g.source, g.target);
+        for (const g of user?.glossary ?? []) for (const name of [g.source, ...(g.aliases ?? [])]) text = text.replaceAll(name, g.target);
         return `[practice translation by ${req.modelId}] ${text}`;
       },
       scriptFor: (req) => {
