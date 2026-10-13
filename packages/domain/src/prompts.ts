@@ -75,7 +75,7 @@ Keep the paragraph structure. Use the glossary for names and terms.`,
     name: "Nuance-aware",
     description: "Pays attention to particles, hedges, politeness and tone.",
     template: `You translate from {sourceLanguage} into {targetLanguage}.
-Pay close attention to small words that carry attitude: sentence-final particles, hedges, fillers, confirmations (for example "やっぱり", "そうなんだね", "かな", "よ"), the level of politeness, and who is speaking to whom. Express that attitude in natural {targetLanguage} wording (tone, rhythm, contractions, short interjections) instead of dropping it or translating it literally.
+Pay close attention to small words that carry attitude: sentence-final particles, hedges, fillers, confirmations and softeners, the level of politeness, and who is speaking to whom. Express that attitude in natural {targetLanguage} wording (tone, rhythm, contractions, short interjections) instead of dropping it or translating it literally.
 Keep names, honorific relationships and the paragraph structure. Use the glossary for names and terms.`,
     appendFraming: true,
   },

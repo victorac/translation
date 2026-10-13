@@ -123,7 +123,28 @@ export function checkTranslation(input: {
       notes.push("Much of the reply is still in the source script, so parts may be untranslated.");
     }
   }
+  notes.push(...omissionNotes(input.source, out));
   return notes;
+}
+
+const quotePairs = (t: string): number => (t.match(/[「『“]/g)?.length ?? 0) + Math.floor((t.match(/"/g)?.length ?? 0) / 2);
+const paragraphs = (t: string): number => t.split(/\n\s*\n/).filter((p) => p.trim() !== "").length;
+
+/**
+ * Signs that part of the source was left out of the reply: fewer quoted lines or paragraphs than the source,
+ * or a reply far shorter than the source. A model can legitimately merge paragraphs, so this is only a hint.
+ */
+function omissionNotes(source: string, output: string): string[] {
+  const hints: string[] = [];
+  const srcQuotes = quotePairs(source);
+  const outQuotes = quotePairs(output);
+  if (srcQuotes >= 2 && outQuotes > 0 && outQuotes < srcQuotes) hints.push(`quoted lines: ${outQuotes} of ${srcQuotes}`);
+  const srcParas = paragraphs(source);
+  const outParas = paragraphs(output);
+  if (srcParas >= 2 && outParas < srcParas) hints.push(`paragraphs: ${outParas} of ${srcParas}`);
+  const compact = (t: string) => t.replace(/\s+/g, "").length;
+  if (compact(source) >= 40 && (source.match(CJK)?.length ?? 0) > 0 && compact(output) < compact(source) * 0.7) hints.push("much shorter than the source");
+  return hints.length > 0 ? [`The reply seems to have less than the source (${hints.join("; ")}), so something may have been left out.`] : [];
 }
 
 const ECHO_PATTERNS = [
