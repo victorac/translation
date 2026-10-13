@@ -1,5 +1,6 @@
 import type { ModelSetting, RunView, WorkspaceSnapshot } from "@ltw/domain";
 import { ConnectionStatus } from "./ConnectionStatus";
+import { Documents } from "./Documents";
 import { Menu, Popover } from "./Popover";
 import { ModelEditor } from "./ModelEditor";
 import { IconButton } from "./Cell";
@@ -30,6 +31,7 @@ export function Rail({
   onRunAgain,
   provider,
   onSettings,
+  docs,
 }: {
   snap: WorkspaceSnapshot | null;
   setup: SetupState;
@@ -42,6 +44,12 @@ export function Rail({
   onRunAgain: (label: string) => void;
   provider: ReturnType<typeof useProvider>;
   onSettings: () => void;
+  docs: {
+    onSelect: (id: string) => void;
+    onCreate: () => void;
+    onRename: (id: string, title: string) => void;
+    onDelete: (id: string) => void;
+  };
 }) {
   const runs = snap?.runs ?? [];
   const busy = snap?.busy ?? false;
@@ -61,7 +69,18 @@ export function Rail({
   };
 
   return (
-    <nav className="rail" aria-label="Models">
+    <nav className="rail" aria-label="Documents and models">
+      {snap && (
+        <Documents
+          documents={snap.documents}
+          activeId={snap.activeDocumentId}
+          busy={busy}
+          onSelect={docs.onSelect}
+          onCreate={docs.onCreate}
+          onRename={docs.onRename}
+          onDelete={docs.onDelete}
+        />
+      )}
       <div className="rail-head">
         <span className="rail-title">Models</span>
         <Popover

@@ -20,6 +20,7 @@ export function Grid({
   send,
   edited,
   readOnlyOld,
+  title,
 }: {
   snap: WorkspaceSnapshot;
   text: string;
@@ -32,6 +33,8 @@ export function Grid({
   /** The editor text differs from the newest version, so the results shown are from an earlier text. */
   edited: boolean;
   readOnlyOld: boolean;
+  /** The open document's name. */
+  title: string;
 }) {
   const blocks = snap.revision?.blocks ?? [];
   const hasBlocks = blocks.length > 0;
@@ -45,7 +48,7 @@ export function Grid({
     <div className="grid-scroll">
       <div className={edited ? "grid dimmed" : "grid"} style={{ gridTemplateColumns: template, gridTemplateRows: `auto repeat(${rows}, auto) minmax(0, 1fr)` }}>
         <div className="gh source-head" style={{ gridRow: 1, gridColumn: 1 }}>
-          <span className="gh-title">Source</span>
+          <span className="gh-title" title={title}>{title}</span>
           {hasBlocks && <span className="hint">{blocks.length} blocks</span>}
           {edited && <span className="tag warn-tag">edited</span>}
           {hasBlocks && (

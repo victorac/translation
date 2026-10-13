@@ -245,3 +245,8 @@ details > summary { cursor: pointer; }
 .conn { flex-wrap: wrap; }
 .conn-text { flex: 1; min-width: 6rem; }
 .quick-add { margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+
+.docs { border-bottom: 1px solid var(--border); max-height: 40%; overflow-y: auto; flex: none; padding-bottom: 0.25rem; }
+.rail-item.doc.active { background: var(--accent-soft); }
+.rail-item.doc.active .rail-name { font-weight: 600; }
+.rename { flex: 1; min-width: 0; padding: 0.1rem 0.3rem; }

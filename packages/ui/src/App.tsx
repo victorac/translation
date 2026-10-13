@@ -7,7 +7,7 @@ import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar } from "./Toolbar";
 import { Tray } from "./Tray";
 import { api } from "./api";
-import { labelOf, loadSetup, mergeRunModels, modelsFromRuns, saveSetup, toStartInput, type SetupState } from "./setup";
+import { labelOf, loadSetup, mergeRunModels, saveSetup, settingsOf, toStartInput, withSettings, type SetupState } from "./setup";
 import { useProvider } from "./useProvider";
 import { useSplitPreview } from "./useSplitPreview";
 import { useWorkspace } from "./useWorkspace";
@@ -29,11 +29,11 @@ export function App() {
 
   // Tell the background process which choices decide how blocks are translated, so Retry and Run use the current ones
   // and it can mark blocks translated under older choices.
-  const syncKey = JSON.stringify([setup.models, setup.glossary, setup.prompts, setup.sourceLanguage, setup.targetLanguage]);
+  const syncKey = JSON.stringify(settingsOf(setup));
   useEffect(() => {
     const timer = setTimeout(() => {
       const s = setupRef.current;
-      void api.invoke("settings.sync", { sourceLanguage: s.sourceLanguage, targetLanguage: s.targetLanguage, models: s.models, glossary: s.glossary, prompts: s.prompts });
+      void api.invoke("settings.sync", settingsOf(s));
     }, 250);
     return () => clearTimeout(timer);
   }, [syncKey]);
@@ -44,25 +44,40 @@ export function App() {
   const edited = snap?.latestText != null && normalizeSource(setup.text) !== snap.latestText;
   const effectiveMode: SourceMode = mode ?? (hasVersion ? "blocks" : "text");
 
-  // ---- keep the editor and the model list in step with the project ----
-  const seenLatest = useRef<string | null | undefined>(undefined);
+  // ---- keep the editor and the choices in step with the project ----
+  // The text belongs to the open document, and the models, glossary and styles to the project.
+  // They are taken from the project when it is opened or started and when another document is opened,
+  // never while typing.
+  const seen = useRef<{ epoch: number; doc: string }>({ epoch: -1, doc: "" });
   useEffect(() => {
     if (!snap) return;
-    const first = seenLatest.current === undefined;
-    if (!first && seenLatest.current === snap.latestId) return;
-    seenLatest.current = snap.latestId;
+    const epochChanged = seen.current.epoch !== snap.epoch;
+    const docChanged = seen.current.doc !== snap.activeDocumentId;
+    if (!epochChanged && !docChanged) return;
+    seen.current = { epoch: snap.epoch, doc: snap.activeDocumentId };
     const cur = setupRef.current;
-    if (snap.latestId === null) {
-      if (!first && cur.text !== "") setSetup({ ...cur, text: "" }); // a new project starts with an empty editor
-      return;
-    }
-    // A project was opened or restored (or this is the first load): show its text and models.
-    if (snap.latestText !== null && normalizeSource(cur.text) !== snap.latestText) {
-      const latestRuns = snap.viewingId === snap.latestId ? snap.runs : [];
-      setSetup({ ...cur, text: snap.latestText, ...(latestRuns.length > 0 ? { models: modelsFromRuns(latestRuns) } : {}) });
-      setMode(null);
-    }
-  }, [snap?.latestId]); // eslint-disable-line react-hooks/exhaustive-deps
+    const base = epochChanged && snap.settings ? withSettings(cur, snap.settings) : cur;
+    setSetup({ ...base, text: snap.draftText });
+    setMode(null);
+  }, [snap?.epoch, snap?.activeDocumentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Text typed into the editor is sent to the open document shortly after typing stops (and before switching documents).
+  const pendingText = useRef<{ documentId: string; text: string } | null>(null);
+  const textTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushText = async () => {
+    if (textTimer.current) clearTimeout(textTimer.current);
+    textTimer.current = null;
+    const p = pendingText.current;
+    pendingText.current = null;
+    if (p) await send("document.setText", p);
+  };
+  const onText = (text: string) => {
+    setSetup((s) => ({ ...s, text }));
+    if (!snap) return;
+    pendingText.current = { documentId: snap.activeDocumentId, text };
+    if (textTimer.current) clearTimeout(textTimer.current);
+    textTimer.current = setTimeout(() => void flushText(), 400);
+  };
 
   // Runs that exist (for example one just brought back) always have a model entry.
   const runKey = snap ? snap.runs.map((r) => r.label).join("\u0000") : "";
@@ -247,6 +262,18 @@ export function App() {
           onRunAgain={(label) => void run([label])}
           provider={provider}
           onSettings={() => setTab("server")}
+          docs={{
+            onSelect: (id) => {
+              if (snap && id === snap.activeDocumentId) return;
+              void flushText().then(() => send("document.select", { documentId: id }));
+            },
+            onCreate: () => void flushText().then(() => send("document.create", {})),
+            onRename: (id, title) => void send("document.rename", { documentId: id, title }),
+            onDelete: (id) => {
+              const d = snap?.documents.find((x) => x.id === id);
+              if (d && window.confirm(`Delete "${d.title}" and everything translated from it? This cannot be undone.`)) void send("document.delete", { documentId: id });
+            },
+          }}
         />
 
         <main className="center">
@@ -270,7 +297,8 @@ export function App() {
             <Grid
               snap={snap}
               text={setup.text}
-              onText={(text) => setSetup({ ...setup, text })}
+              onText={onText}
+              title={snap.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Source"}
               mode={effectiveMode}
               onMode={setMode}
               runs={visibleRuns}

@@ -1,4 +1,4 @@
-import type { Backend, BlockSize, DemoOptions, GlossaryEntry, ModelSetting, PromptPreset, RunView, StartJobInput } from "@ltw/domain";
+import type { Backend, BlockSize, DemoOptions, GlossaryEntry, ModelSetting, ProjectSettings, PromptPreset, RunView, StartJobInput } from "@ltw/domain";
 import { allPrompts, runLabel } from "@ltw/domain/pure";
 
 /** Everything the user has chosen: the working text and how to translate it. */
@@ -70,9 +70,25 @@ export function mergeRunModels(s: SetupState, runs: RunView[]): ModelSetting[] {
   return extra.length > 0 ? [...s.models, ...extra] : s.models;
 }
 
-const KEY = "ltw.setup.v2";
+/** The choices that belong to the project (the same fields, in the same order, as the project saves them). */
+export const settingsOf = (s: SetupState): ProjectSettings => ({
+  sourceLanguage: s.sourceLanguage,
+  targetLanguage: s.targetLanguage,
+  blockSize: s.blockSize,
+  models: s.models,
+  glossary: s.glossary,
+  prompts: s.prompts,
+});
 
-/** Remembers the working text, languages, models, glossary and your own styles between launches. Failure is harmless. */
+/** Takes the project's choices over the window's own. The translator choice and practice controls stay as they are. */
+export const withSettings = (s: SetupState, p: ProjectSettings): SetupState => ({ ...s, ...p, models: p.models.map((m) => ({ ...newModel(m.name), ...m })) });
+
+const KEY = "ltw.setup.v3";
+
+/**
+ * Remembers languages, models, glossary and your own styles between launches, as the starting choices for a new project.
+ * The text is not kept here: it belongs to the project's document. Failure is harmless.
+ */
 export function loadSetup(): SetupState {
   try {
     const raw = localStorage.getItem(KEY);
@@ -80,7 +96,6 @@ export function loadSetup(): SetupState {
       const s = JSON.parse(raw) as Partial<SetupState>;
       return {
         ...initialSetup,
-        ...(typeof s.text === "string" ? { text: s.text } : {}),
         ...(typeof s.sourceLanguage === "string" ? { sourceLanguage: s.sourceLanguage } : {}),
         ...(typeof s.targetLanguage === "string" ? { targetLanguage: s.targetLanguage } : {}),
         ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
@@ -99,7 +114,8 @@ export function loadSetup(): SetupState {
 
 export function saveSetup(s: SetupState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    const { text: _text, ...rest } = s;
+    localStorage.setItem(KEY, JSON.stringify(rest));
   } catch {
     /* storage unavailable: fine */
   }
