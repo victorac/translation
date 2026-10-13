@@ -208,8 +208,8 @@ const entrySchema = z.object({
   about: z.string().max(200).nullable().optional(),
   related: z.array(id).max(200).optional(),
   scope: z.object({ documentId: id, blockHash: z.string().max(100).optional(), blockHashes: z.array(z.string().max(100)).max(100_000).optional(), block: z.number().int().min(1).max(1e7).optional(), blockEnd: z.number().int().min(1).max(1e7).optional() }).nullable().optional(),
-  origin: z.object({ by: z.enum(["user", "model"]), model: z.string().max(300).optional(), documentTitle: z.string().max(500).optional(), block: z.number().int().min(1).max(1e7).optional() }),
-  status: z.enum(["suggested", "confirmed"]),
+  origin: z.object({ by: z.enum(["user", "model"]), model: z.string().max(300).optional(), documentId: z.string().max(200).optional(), documentTitle: z.string().max(500).optional(), block: z.number().int().min(1).max(1e7).optional() }),
+  status: z.enum(["suggested", "confirmed", "rejected"]),
   updatedAt: iso,
 });
 

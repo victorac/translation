@@ -4,6 +4,10 @@ import {
   blockText,
   blockMaterial,
   entriesFromLegacy,
+  entriesToDocument,
+  parseDocument,
+  reconcileDocument,
+  rejectedLine,
   entriesFromText,
   entriesToConsider,
   fitMaterial,
@@ -60,6 +64,7 @@ import {
   type EntryInput,
   type EntryQuery,
   type KnowledgeEntry,
+  type KnowledgeDocument,
   type KnowledgeList,
   type GlossaryEntry,
   type ModelRun,
@@ -722,7 +727,7 @@ export class WorkspaceService {
       })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
-      knowledge: { entries: this.knowledge.all(), research: Object.fromEntries(this.research) },
+      knowledge: { entries: this.knowledge.everything(), research: Object.fromEntries(this.research) },
     };
   }
 
@@ -1042,6 +1047,35 @@ export class WorkspaceService {
 
   // ---- names, hints and notes ----
 
+  private documentRefs() {
+    return this.docs.map((d) => ({ id: d.id, title: d.title }));
+  }
+
+  /** The knowledge base as a text document. */
+  knowledgeText(): KnowledgeDocument {
+    return { text: entriesToDocument(this.knowledge.all(), this.documentRefs()), problems: [], rev: this.knowledge.rev };
+  }
+
+  /**
+   * Applies an edited text document to the knowledge base. Lines that could not be understood are reported
+   * and leave their entries as they were.
+   */
+  knowledgeSetText(text: string): KnowledgeDocument {
+    const result = reconcileDocument(this.knowledge.everything(), parseDocument(text), this.documentRefs(), { newId, now: () => new Date().toISOString() });
+    const before = this.knowledge.rev;
+    this.knowledge.replaceWith(result.entries);
+    if (this.knowledge.rev !== before) this.knowledgeChanged();
+    return { text: entriesToDocument(this.knowledge.all(), this.documentRefs()), problems: result.problems, rev: this.knowledge.rev };
+  }
+
+  /** Before reading a document again: forget what a model suggested from it that nobody checked. */
+  beginExtraction(documentId: string): { discarded: number } {
+    const doc = this.docs.find((d) => d.id === documentId);
+    const discarded = this.knowledge.discardSuggested(documentId, doc?.title ?? "");
+    if (discarded > 0) this.knowledgeChanged();
+    return { discarded };
+  }
+
   knowledgeList(query: EntryQuery): KnowledgeList {
     const { entries, total } = this.knowledge.list(query);
     return { entries, total, counts: this.knowledge.counts(), rev: this.knowledge.rev };
@@ -1165,9 +1199,11 @@ export class WorkspaceService {
     try {
       const previous = this.knowledge.all().find((e) => e.kind === "scene" && e.scope?.documentId === input.documentId && (e.scope.blockEnd ?? e.scope.block) === input.block - 1);
       const system = analysisSystemPrompt(input.sourceLanguage, input.targetLanguage);
+      const everything = this.knowledge.everything();
+      const rejectedLines = this.knowledge.rejected().map((e) => rejectedLine(e, everything)).filter((l): l is string => l !== null).slice(0, 40);
       // The reply is a handful of short lines, so it needs far less room than a translation does.
       const replyTokens = Math.min(input.maxOutputTokens, ANALYSIS_REPLY_TOKENS);
-      const fixed = estimateTokens(system) + estimateTokens(input.passage) + estimateTokens(previous?.text ?? "") + replyTokens + DEFAULTS.messageOverheadTokens + 60;
+      const fixed = estimateTokens(system) + estimateTokens(input.passage) + estimateTokens(previous?.text ?? "") + estimateTokens(rejectedLines.join("\n")) + replyTokens + DEFAULTS.messageOverheadTokens + 60;
       const roomForKnown = input.contextLimit - fixed;
       if (roomForKnown < 0) {
         throw new UserError(
@@ -1178,7 +1214,7 @@ export class WorkspaceService {
       // What is already known helps the model avoid repeating itself, but it gives way to the passage when room is short.
       const messages = [
         { role: "system" as const, content: system },
-        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), previousScene: previous ? { text: previous.text, from: previous.scope?.block ?? input.block - 1, to: previous.scope?.blockEnd ?? previous.scope?.block ?? input.block - 1 } : undefined }, input.passage) },
+        { role: "user" as const, content: analysisUserMessage({ terms: this.knownTerms(Math.min(knowledgeCap(input.contextLimit), roomForKnown)), rejected: rejectedLines, previousScene: previous ? { text: previous.text, from: previous.scope?.block ?? input.block - 1, to: previous.scope?.blockEnd ?? previous.scope?.block ?? input.block - 1 } : undefined }, input.passage) },
       ];
       const reply = await this.askModel(
         {
@@ -1194,11 +1230,11 @@ export class WorkspaceService {
         abort,
       );
       if (reply === null) return { added: 0, canceled: true };
-      const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle, block: input.block };
+      const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle, block: input.block };
       const scope = { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block };
-      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, scope, { newId, now: () => new Date().toISOString() });
+      const merged = mergeSuggestions(this.knowledge.all(), parseAnalysisReply(reply), origin, scope, { newId, now: () => new Date().toISOString() }, this.knowledge.rejected());
       if (merged.added > 0 || JSON.stringify(merged.entries) !== JSON.stringify(this.knowledge.all())) {
-        this.knowledge.replaceWith(merged.entries);
+        this.knowledge.replaceLive(merged.entries);
         this.knowledgeChanged();
       }
       return { added: merged.added, canceled: false };
@@ -1256,10 +1292,10 @@ export class WorkspaceService {
         if (groups.length === 1) break;
       }
       const text = level.join(" ").trim();
-      const origin = { by: "model" as const, model: input.modelId, documentTitle: input.documentTitle };
+      const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle };
       const merged = mergeSummary(this.knowledge.all(), text, { documentId: input.documentId }, origin, { newId, now: () => new Date().toISOString() });
       if (merged.updated) {
-        this.knowledge.replaceWith(merged.entries);
+        this.knowledge.replaceLive(merged.entries);
         this.knowledgeChanged();
       }
       return { updated: merged.updated, canceled: false };

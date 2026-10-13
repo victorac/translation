@@ -132,6 +132,9 @@ export function App() {
     stopWork.current = false;
     setWorkNote(null);
     let added = 0;
+    // Reading again starts from what you accepted: suggestions nobody checked are dropped, and what you rejected stays rejected.
+    const begin = await api.invoke("knowledge.beginExtraction", { documentId: snap?.activeDocumentId ?? "" });
+    const discarded = begin.ok ? begin.value.discarded : 0;
     try {
       for (let i = 0; i < blockTexts.length; i++) {
         setWork({ what: "extract", at: i + 1, of: blockTexts.length });
@@ -164,7 +167,7 @@ export function App() {
         documentTitle: activeTitle,
       });
       if (!s2.ok) return setWorkNote(`${added} suggestions were added, but the summary could not be written: ${s2.error.message}`);
-      setWorkNote(`Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base. Please check them; the model can be wrong.`);
+      setWorkNote(`${discarded > 0 ? `Replaced ${discarded} unchecked ${discarded === 1 ? "suggestion" : "suggestions"}. ` : ""}Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""} to the knowledge base, marked with a ?. Accept what is right, fix or delete the rest, and read again if you like.`);
     } finally {
       setWork(null);
     }
@@ -441,7 +444,7 @@ export function App() {
                 showKnowledge={columns.showKnowledge}
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
                 knowledgeRev={snap.knowledge.rev}
-                documentId={snap.activeDocumentId}
+                knowledgeCounts={snap.knowledge}
               />
             ) : (
             <Grid

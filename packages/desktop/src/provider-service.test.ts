@@ -414,6 +414,44 @@ describe("suggested knowledge", () => {
     expect(service.knowledgeList({ kind: "scene" }).entries.every((e) => e.related.length === 0)).toBe(true);
   });
 
+  it("can be run again: unchecked suggestions are replaced, what was confirmed stays, and what was rejected is not suggested again", async () => {
+    const lm = await fakeLmStudio({ analysisReply: "CHARACTER: 花子 = Hanako | girl\nCHARACTER: 太郎 = Taro | boy\nFACT: 花子 | Is polite.\nSCENE: NEW | 花子 | A scene." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
+    // The user corrects and accepts one person, and deletes another from the text.
+    const doc = service.knowledgeText().text;
+    expect(doc).toContain("## 花子 = Hanako ?");
+    const edited = doc.replace("## 花子 = Hanako ?", "## 花子 = Hanako-san").replace(/## 太郎 = Taro \?[^\n]*\nboy\n\n/, "");
+    expect(service.knowledgeSetText(edited).problems).toEqual([]);
+    expect(service.snapshot().knowledge).toMatchObject({ terms: 1, suggested: 2 }); // the fact and the scene are still unchecked
+
+    // Reading again forgets the unchecked ones.
+    expect(service.beginExtraction(docId)).toEqual({ discarded: 2 });
+    expect(service.knowledgeList({}).entries.map((e) => e.kind)).toEqual(["term"]);
+    await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
+    const bodies = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
+    const second = bodies.at(-1)!.messages[1]!.content;
+    expect(second).toContain("CHARACTER: 花子 = Hanako-san | girl"); // the corrected, confirmed version is what the model is shown
+    expect(second).toContain("REJECTED (the user checked these and they are wrong; do not suggest them again):\nCHARACTER: 太郎 = Taro | boy");
+    const now = service.knowledgeList({}).entries;
+    expect(now.filter((e) => e.kind === "term").map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(["花子:Hanako-san:confirmed"]); // 太郎 came back from the model and was refused; 花子 was not duplicated
+    expect(now.filter((e) => e.kind === "note")).toHaveLength(1);
+  });
+
+  it("keeps a suggestion that something confirmed depends on when the text is read again", async () => {
+    const lm = await fakeLmStudio({ analysisReply: "CHARACTER: 花子 = Hanako | girl\nSCENE: NEW | 花子 | A scene." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
+    const doc = service.knowledgeText().text;
+    service.knowledgeSetText(doc.replace(/## Block 3 \| 花子 \?/, "## Block 3 | 花子")); // the scene is accepted, the person is not
+    expect(service.beginExtraction(docId)).toEqual({ discarded: 0 });
+    expect(service.knowledgeList({ kind: "term" }).entries).toHaveLength(1);
+  });
+
   it("lets a scene run over several blocks when the model says the passage continues it", async () => {
     const lm = await fakeLmStudio({ analysisReply: "SCENE: CONTINUES | At the gate, still talking." });
     const { provider, service } = setup();

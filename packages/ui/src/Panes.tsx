@@ -4,7 +4,7 @@ import type { PreviewBlock } from "./blockMarkers";
 import { Cell } from "./Cell";
 import type { SourceMode } from "./Grid";
 import { KNOWLEDGE_KEY, SOURCE_KEY } from "./layout";
-import { KnowledgeTable } from "./KnowledgeTable";
+import { KnowledgeEditor } from "./KnowledgeEditor";
 import { placeView, reconcile, setRatio, type Edge, type PaneNode, type Path } from "./paneTree";
 import { SourceEditor } from "./SourceEditor";
 import { countCells } from "./status";
@@ -36,7 +36,7 @@ interface Props {
   showKnowledge: boolean;
   onCloseKnowledge: () => void;
   knowledgeRev: number;
-  documentId: string;
+  knowledgeCounts: { terms: number; notes: number; suggested: number };
 }
 
 /** Source and translations as panes that can be resized, dragged next to or above each other, and closed. */
@@ -238,7 +238,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgeTable rev={p.knowledgeRev} documentId={p.documentId} documentTitle={p.title} />
+          <KnowledgeEditor rev={p.knowledgeRev} counts={p.knowledgeCounts} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />

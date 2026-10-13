@@ -13,13 +13,17 @@ export type TermCategory = "character" | "place" | "term";
  *  - summary: an abridged version of a whole document
  */
 export type EntryKind = "term" | "note" | "scene" | "summary";
-/** `suggested` entries were written by a model and not looked at yet; they are used just like confirmed ones. */
-export type EntryStatus = "suggested" | "confirmed";
+/**
+ * `suggested` entries were written by a model and not looked at yet; they are used just like confirmed ones.
+ * `rejected` entries are kept only so a model is not allowed to suggest the same thing again; they are used nowhere else.
+ */
+export type EntryStatus = "suggested" | "confirmed" | "rejected";
 
 /** Where an entry came from. A model's entry says which text it read. */
 export interface EntryOrigin {
   by: "user" | "model";
   model?: string;
+  documentId?: string;
   documentTitle?: string;
   /** Number of the block (starting at 1) the entry was found in. */
   block?: number;

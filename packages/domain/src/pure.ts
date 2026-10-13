@@ -9,3 +9,4 @@ export * from "./thinking.js";
 export * from "./knowledge.js";
 export * from "./entries.js";
 export * from "./research.js";
+export * from "./kbtext.js";

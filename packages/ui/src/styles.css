@@ -359,3 +359,16 @@ button.toggle .tag { margin-left: 0.35rem; }
 .kb-chips { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-top: 0.2rem; }
 .chip-static { font-size: 0.8em; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--accent-soft); color: var(--text); }
 .kb-h { margin: 0.6rem 0 0; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+.kbd { display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-height: 0; min-width: 0; }
+.kbd-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.kbd-help { margin: 0; }
+.kbd-editor { flex: 1; min-height: 12rem; min-width: 0; display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.kbd-editor .cm-editor { flex: 1; min-width: 0; }
+.cm-kbd-h1 { font-weight: 700; font-size: 1.05em; margin-top: 0.4rem; color: var(--accent); }
+.cm-kbd-h2 { font-weight: 600; margin-top: 0.3rem; }
+.cm-kbd-fact { color: var(--text); }
+.cm-kbd-flag { color: var(--warn); font-weight: 700; background: color-mix(in srgb, var(--warn) 18%, transparent); border-radius: 3px; }
+.cm-kbd-comment { color: var(--muted); font-size: 0.85em; font-style: italic; }
+.cm-kbd-problem { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.cm-kbd-msg { color: var(--danger); font-size: 0.85em; }

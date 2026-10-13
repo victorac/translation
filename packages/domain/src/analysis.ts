@@ -51,7 +51,7 @@ const CATEGORY_WORD: Record<TermCategory, string> = { character: "CHARACTER", pl
 
 /** The request for one passage, as plain labelled text. */
 export function analysisUserMessage(
-  known: { terms: readonly KnownTerm[]; previousScene?: { text: string; from: number; to: number } | undefined },
+  known: { terms: readonly KnownTerm[]; previousScene?: { text: string; from: number; to: number } | undefined; rejected?: readonly string[] | undefined },
   passage: string,
 ): string {
   const lines = known.terms.flatMap((t) => [
@@ -64,8 +64,21 @@ export function analysisUserMessage(
     const range = scene ? (scene.from === scene.to ? `block ${scene.from}` : `blocks ${scene.from} to ${scene.to}`) : "";
     parts.push(`KNOWN SO FAR:\n${[...lines, ...(scene ? [`The scene before this passage (${range}): ${scene.text}`] : [])].join("\n")}`);
   }
+  if (known.rejected && known.rejected.length > 0) {
+    parts.push(`REJECTED (the user checked these and they are wrong; do not suggest them again):\n${known.rejected.join("\n")}`);
+  }
   parts.push(`PASSAGE:\n${passage}`);
   return parts.join("\n\n");
+}
+
+/** How a rejected entry is shown to the model, in the same format it writes its own lines. */
+export function rejectedLine(e: KnowledgeEntry, entries: readonly KnowledgeEntry[]): string | null {
+  if (e.kind === "term") return `${CATEGORY_WORD[e.category]}: ${[e.source, ...e.aliases].join(" / ")} = ${e.target}${e.hint ? ` | ${e.hint}` : ""}`;
+  if (e.kind === "note") {
+    const about = e.about ? entries.find((t) => t.id === e.about) : undefined;
+    return about ? `FACT: ${about.source} | ${e.text}` : `FACT: ${e.text}`;
+  }
+  return null;
 }
 
 const cleanLine = (line: string): string =>
@@ -172,7 +185,7 @@ export interface AnalysisScope {
  *  - a fact is attached to the entry it is about, and is not repeated
  *  - the scene either continues the one before it, which grows to cover this block, or a new scene starts
  */
-export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: AnalysisResult, origin: EntryOrigin, scope: AnalysisScope, deps: EntryDeps): { entries: KnowledgeEntry[]; added: number } {
+export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: AnalysisResult, origin: EntryOrigin, scope: AnalysisScope, deps: EntryDeps, rejected: readonly KnowledgeEntry[] = []): { entries: KnowledgeEntry[]; added: number } {
   let next = [...entries];
   let added = 0;
   const at = deps.now();
@@ -185,8 +198,19 @@ export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: Anal
     added++;
   };
 
+  const rejectedTerms = rejected.filter((e) => e.kind === "term");
+  const rejectedNotes = rejected.filter((e) => e.kind === "note");
+  const nameOf = (id: string | null) => (id ? [...next, ...rejectedTerms].find((t) => t.id === id && t.kind === "term") : undefined);
+  const isRejectedFact = (aboutName: string | null, text: string) =>
+    rejectedNotes.some((n) => {
+      if (lower(n.text) !== lower(text)) return false;
+      const t = nameOf(n.about);
+      return aboutName === null ? n.about === null : !!t && [t.source, ...t.aliases].some((w) => lower(w) === lower(aboutName));
+    });
+
   for (const f of found.entities) {
     const hit = findTerm(next, f);
+    if (!hit && findTerm(rejectedTerms, f)) continue; // the user already said this one is wrong
     if (!hit) {
       next.push({ ...blank, id: deps.newId(), kind: "term", source: f.names[0]!, aliases: f.names.slice(1), target: f.target, hint: f.summary, category: f.category, origin, status: "suggested", updatedAt: at });
       added++;
@@ -215,6 +239,7 @@ export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: Anal
   for (const f of found.facts) {
     const about = f.about ? (termByName(f.about)?.id ?? null) : null;
     if (f.about && about === null) continue; // about someone who is not listed: skip rather than leave it floating
+    if (isRejectedFact(f.about, f.text)) continue;
     addFact(about, f.text);
   }
 

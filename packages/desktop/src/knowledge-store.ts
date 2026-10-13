@@ -33,7 +33,7 @@ const toEntry = (r: Row): KnowledgeEntry => ({
   related: JSON.parse(r.related) as string[],
   scope: r.scope ? (JSON.parse(r.scope) as KnowledgeEntry["scope"]) : null,
   origin: JSON.parse(r.origin) as EntryOrigin,
-  status: r.status === "suggested" ? "suggested" : "confirmed",
+  status: r.status === "suggested" ? "suggested" : r.status === "rejected" ? "rejected" : "confirmed",
   updatedAt: r.updated_at,
 });
 
@@ -68,13 +68,23 @@ export class KnowledgeStore {
     this.rev++;
   }
 
-  /** Every entry, in the order they were added. */
+  /** Every entry that is part of the knowledge, in the order they were added. Rejected entries are not. */
   all(): KnowledgeEntry[] {
+    return (this.db.prepare("SELECT * FROM entries WHERE status != 'rejected' ORDER BY seq").all() as unknown as Row[]).map(toEntry);
+  }
+
+  /** Entries the user checked and found wrong, kept so that a model does not suggest them again. */
+  rejected(): KnowledgeEntry[] {
+    return (this.db.prepare("SELECT * FROM entries WHERE status = 'rejected' ORDER BY seq").all() as unknown as Row[]).map(toEntry);
+  }
+
+  /** Entries that are part of the knowledge and entries that were rejected, for saving. */
+  everything(): KnowledgeEntry[] {
     return (this.db.prepare("SELECT * FROM entries ORDER BY seq").all() as unknown as Row[]).map(toEntry);
   }
 
   list(q: EntryQuery = {}, limit = 5000): { entries: KnowledgeEntry[]; total: number } {
-    const where: string[] = [];
+    const where: string[] = ["status != 'rejected'"];
     const args: SQLInputValue[] = [];
     if (q.kind) (where.push("kind = ?"), args.push(q.kind));
     if (q.status) (where.push("status = ?"), args.push(q.status));
@@ -93,11 +103,12 @@ export class KnowledgeStore {
 
   counts(): EntryCounts {
     const n = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n;
+    const live = "status != 'rejected'";
     return {
-      terms: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'term'"),
-      notes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'note'"),
-      scenes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'scene'"),
-      summaries: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'summary'"),
+      terms: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'term' AND " + live),
+      notes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'note' AND " + live),
+      scenes: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'scene' AND " + live),
+      summaries: n("SELECT COUNT(*) AS n FROM entries WHERE kind = 'summary' AND " + live),
       suggested: n("SELECT COUNT(*) AS n FROM entries WHERE status = 'suggested'"),
     };
   }
@@ -133,6 +144,7 @@ export class KnowledgeStore {
     // An edited entry keeps its place in the list.
     const place = before ? (this.db.prepare("SELECT seq FROM entries WHERE id = ?").get(before.id) as { seq: number }).seq : undefined;
     this.insert(entry, place);
+    if (entry.kind === "term") this.db.prepare("DELETE FROM entries WHERE status = 'rejected' AND kind = 'term' AND source = ?").run(entry.source);
     this.rev++;
     return entry;
   }
@@ -166,12 +178,36 @@ export class KnowledgeStore {
 
   /** Replaces the stored entries with a list that was worked out from them (for example after adding suggestions). */
   replaceWith(entries: readonly KnowledgeEntry[]): void {
-    const before = JSON.stringify(this.all());
-    if (before === JSON.stringify(entries)) return;
+    if (JSON.stringify(this.everything()) === JSON.stringify(entries)) return;
     this.db.exec("DELETE FROM entries");
     this.seq = 0;
     for (const e of entries) this.insert(e);
     this.rev++;
+  }
+
+  /** Replaces the entries that are part of the knowledge and keeps the rejected ones. */
+  replaceLive(entries: readonly KnowledgeEntry[]): void {
+    this.replaceWith([...entries, ...this.rejected()]);
+  }
+
+  /**
+   * Throws away what a model suggested from one document, so that reading it again starts from what was confirmed.
+   * A suggestion that something confirmed depends on (a fact about it, a scene listing it) is kept.
+   */
+  discardSuggested(documentId: string, documentTitle: string): number {
+    const live = this.all();
+    const fromHere = (e: KnowledgeEntry) =>
+      e.status === "suggested" && e.origin.by === "model" && (e.scope?.documentId === documentId || e.origin.documentId === documentId || (e.origin.documentId === undefined && e.origin.documentTitle === documentTitle));
+    const needed = new Set<string>();
+    for (const e of live) {
+      if (e.status === "confirmed" && e.about) needed.add(e.about);
+      if (e.status === "confirmed") for (const r of e.related) needed.add(r);
+    }
+    const gone = new Set(live.filter((e) => fromHere(e) && !needed.has(e.id)).map((e) => e.id));
+    for (const e of live) if (e.kind === "note" && e.about && gone.has(e.about)) gone.add(e.id);
+    if (gone.size === 0) return 0;
+    this.replaceLive(live.filter((e) => !gone.has(e.id)).map((e) => (e.kind === "scene" && e.related.some((r) => gone.has(r)) ? { ...e, related: e.related.filter((r) => !gone.has(r)) } : e)));
+    return gone.size;
   }
 
   /** Adds entries that are not yet there (a term with the same source, or a note with the same text, is skipped). Returns how many were added. */

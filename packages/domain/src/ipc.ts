@@ -121,6 +121,13 @@ export interface AnalyzeResult {
   canceled: boolean;
 }
 
+/** The knowledge base written as a text document, and what could not be understood when one was read back. */
+export interface KnowledgeDocument {
+  text: string;
+  problems: { line: number; message: string }[];
+  rev: number;
+}
+
 /** The project's names, hints and notes, as the window asks for them. */
 export interface KnowledgeList {
   entries: KnowledgeEntry[];
@@ -244,6 +251,9 @@ export interface CommandMap {
   "notes.cancel": undefined;
   "research.block": ResearchInput;
   "knowledge.summarize": SummarizeInput;
+  "knowledge.text": undefined;
+  "knowledge.setText": { text: string };
+  "knowledge.beginExtraction": { documentId: string };
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
   "knowledge.remove": { ids: string[] };
@@ -256,13 +266,16 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.text" | "knowledge.setText" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
   "research.block": ResearchResult;
   "knowledge.summarize": SummarizeResult;
+  "knowledge.text": KnowledgeDocument;
+  "knowledge.setText": KnowledgeDocument;
+  "knowledge.beginExtraction": { discarded: number };
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
   "knowledge.remove": { removed: number };
@@ -310,6 +323,9 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "notes.cancel",
   "research.block",
   "knowledge.summarize",
+  "knowledge.text",
+  "knowledge.setText",
+  "knowledge.beginExtraction",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",
