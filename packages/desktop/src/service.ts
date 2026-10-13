@@ -12,6 +12,7 @@ import {
   backlinksOf,
   classLabel,
   DEFAULT_CLASSES_TEXT,
+  dropLooseNotes,
   LEGACY_CLASSES_TEXT,
   fileText,
   listFiles,
@@ -763,7 +764,7 @@ export class WorkspaceService {
     this.settings = project.settings ? structuredClone(project.settings) : null;
     this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
     this.classesText = project.knowledge?.classes === undefined || project.knowledge.classes === LEGACY_CLASSES_TEXT ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
-    if (project.knowledge) this.knowledge.load(project.knowledge.entries);
+    if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
       // A project from before the knowledge store: bring its glossary and notes over once.
       this.knowledge.load(entriesFromLegacy(this.settings.glossary, this.settings.notes, this.settings.knowledge, { newId, now: () => new Date().toISOString() }));
@@ -1097,7 +1098,7 @@ export class WorkspaceService {
       }
     } else this.knowledge.replaceWith(result.entries);
     if (this.knowledge.rev !== before) this.knowledgeChanged();
-    const exists = id === "classes" || id === "notes" || this.knowledge.all().some((e) => e.id === id);
+    const exists = id === "classes" || this.knowledge.all().some((e) => e.id === id);
     if (!exists) throw new UserError("no_file", "That file no longer exists.");
     const file = this.knowledgeFile(id, result.problems);
     // The same checks on the tidied text, so the window can show the problems where the lines now are.
@@ -1181,13 +1182,7 @@ export class WorkspaceService {
   }
 
   knowledgeConfirm(ids?: string[]): { confirmed: number } {
-    // The notes file stands for every note that is not about a topic.
-    const loose = (() => {
-      const topicIds = new Set(this.knowledge.all().filter((e) => e.kind === "term").map((e) => e.id));
-      return this.knowledge.all().filter((e) => e.kind === "note" && (e.about === null || !topicIds.has(e.about))).map((e) => e.id);
-    })();
-    const expanded = ids?.flatMap((id) => (id === "notes" ? loose : [id]));
-    const confirmed = this.knowledge.confirm(expanded);
+    const confirmed = this.knowledge.confirm(ids);
     if (confirmed > 0) this.knowledgeChanged();
     return { confirmed };
   }

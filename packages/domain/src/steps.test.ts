@@ -114,6 +114,8 @@ describe("questions and answers", () => {
     expect(parseNameList("NONE")).toEqual([]);
     expect(parseShortText('  "Hanako"\nextra', 60)).toBe("Hanako");
     expect(parseShortText("Name: Taro", 60)).toBe("Taro");
+    expect(parseShortText("Taro Yamada.", 60, true)).toBe("Taro Yamada");
+    expect(parseShortText("She waits at the gate.", 60)).toBe("She waits at the gate.");
     expect(parseShortText("UNKNOWN", 60)).toBeNull();
     expect(parseShortText("x".repeat(80), 60)).toBeNull();
     expect(parseShortText("", 60)).toBeNull();

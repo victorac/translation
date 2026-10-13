@@ -152,15 +152,15 @@ export interface EntryDeps {
 
 const base = (origin: EntryOrigin, status: EntryStatus, at: string) => ({ category: "term" as TermCategory, aliases: [] as string[], attrs: {} as Record<string, string[]>, attrFlags: [] as string[], about: null, related: [] as string[], scope: null, origin, status, updatedAt: at });
 
-/** Reads pasted lines into entries. Lines that cannot be read are counted so the user can be told. */
+/** Reads pasted lines into topics. Lines that cannot be used (including notes, which belong in a topic's file) are counted so the user can be told. */
 export function entriesFromText(text: string, origin: EntryOrigin, status: EntryStatus, deps: EntryDeps): { entries: KnowledgeEntry[]; unreadable: number } {
   const parsed = parseKnowledge(text);
   const at = deps.now();
   const entries: KnowledgeEntry[] = [
     ...parsed.glossary.map((g): KnowledgeEntry => ({ id: deps.newId(), kind: "term", source: g.source, target: g.target, hint: g.note ?? "", text: "", ...base(origin, status, at), aliases: g.aliases ?? [] })),
-    ...parsed.notes.map((n): KnowledgeEntry => ({ id: deps.newId(), kind: "note", source: "", target: "", hint: "", text: n.text, ...base(origin, status, at) })),
   ];
-  return { entries, unreadable: parsed.lines.filter((l) => l.kind === "problem").length };
+  // A note that is not about one topic has nowhere to live, so it counts as something that could not be used.
+  return { entries, unreadable: parsed.lines.filter((l) => l.kind === "problem" || l.kind === "note").length };
 }
 
 /** The entries for a project saved before there was a knowledge store (a glossary and notes written as text). */
@@ -214,11 +214,16 @@ export function blockMaterial(entries: readonly KnowledgeEntry[], chosenIds: rea
   const terms = entries.filter((e) => e.kind === "term" && chosen.has(e.id));
   const termIds = new Set(terms.map((t) => t.id));
   const facts = entries.filter((e) => e.kind === "note" && e.about !== null && termIds.has(e.about)).map((e) => `${terms.find((t) => t.id === e.about)!.target}: ${e.text.trim()}`);
-  const plain = entries.filter((e) => e.kind === "note" && e.about === null && chosen.has(e.id)).map((e) => e.text.trim());
   return {
     glossary: splitEntries(terms).glossary,
-    notes: [...facts, ...plain],
+    notes: facts,
     ...(scene ? { scene: scene.text.trim() } : {}),
     ...(summary ? { summary: summary.text.trim() } : {}),
   };
+}
+
+/** Notes belong to a topic. A note that is about nothing (from an older project) is dropped. */
+export function dropLooseNotes(entries: readonly KnowledgeEntry[]): KnowledgeEntry[] {
+  const topics = new Set(entries.filter((e) => e.kind === "term").map((e) => e.id));
+  return entries.filter((e) => !(e.kind === "note" && (e.about === null || !topics.has(e.about))));
 }

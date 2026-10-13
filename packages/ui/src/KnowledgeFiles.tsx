@@ -258,7 +258,7 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
           </div>
         </>
       ) : (
-        <p className="hint kbf-empty">{files.length <= 2 ? "No topics yet. Make one with New topic, or use Extract knowledge to let a model read the text." : "Open a file from the list."}</p>
+        <p className="hint kbf-empty">{files.length <= 1 ? "No topics yet. Make one with New topic, or use Extract knowledge to let a model read the text." : "Open a file from the list."}</p>
       )}
     </div>
   );

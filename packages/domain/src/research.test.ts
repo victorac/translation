@@ -49,15 +49,15 @@ describe("research prompt and reply", () => {
 describe("what is remembered about a passage", () => {
   const fact = note("f", "A fact about a.", { about: "a" });
   const scene = e("sc", { kind: "scene", text: "A scene.", scope: { documentId: "d", blockHash: "h" } });
-  const all = [e("a"), e("b"), note("n", "x"), fact, scene];
+  const all = [e("a"), e("b"), note("n", "x", { about: "a" }), fact, scene];
 
-  it("considers terms and loose notes, not facts attached to a term, scenes or summaries", () => {
-    expect(entriesToConsider(all, undefined).map((x) => x.id)).toEqual(["a", "b", "n"]);
+  it("considers the topics, not the facts attached to them, scenes or summaries", () => {
+    expect(entriesToConsider(all, undefined).map((x) => x.id)).toEqual(["a", "b"]);
   });
 
   it("later considers only entries that are new or changed", () => {
-    const rec = updateRecord(undefined, all, all.filter((x) => ["a", "b", "n"].includes(x.id)), ["a"], "2026-02-01T00:00:00.000Z");
-    expect(rec).toEqual({ ids: ["a"], seen: ["a", "b", "n"], at: "2026-02-01T00:00:00.000Z" });
+    const rec = updateRecord(undefined, all, all.filter((x) => ["a", "b"].includes(x.id)), ["a"], "2026-02-01T00:00:00.000Z");
+    expect(rec).toEqual({ ids: ["a"], seen: ["a", "b"], at: "2026-02-01T00:00:00.000Z" });
     expect(entriesToConsider(all, rec)).toEqual([]);
     const later = [...all, e("c"), { ...e("b"), updatedAt: "2026-03-01T00:00:00.000Z" }].filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i);
     later[1] = { ...e("b"), updatedAt: "2026-03-01T00:00:00.000Z" };

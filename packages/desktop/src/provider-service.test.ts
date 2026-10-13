@@ -568,7 +568,7 @@ describe("topics as files", () => {
     const service = setupService();
     const { id } = service.knowledgeCreate("character", "花子");
     service.knowledgeCreate("place", "学園");
-    expect(service.knowledgeFiles().files.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "place:学園", "notes:Notes", "classes:Classes"]);
+    expect(service.knowledgeFiles().files.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "place:学園", "classes:Classes"]);
     expect(service.knowledgeFiles().classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term"]);
     expect(() => service.knowledgeCreate("character", "花子")).toThrow(/already a topic/);
     expect(service.knowledgeResolve("花子")).toEqual({ id, title: "花子" });
@@ -630,25 +630,18 @@ describe("checking the knowledge base", () => {
 });
 
 describe("accepting suggestions", () => {
-  it("accepts a topic together with its suggested attributes and facts, and the notes file accepts the loose notes", () => {
+  it("accepts a topic together with its suggested attributes and facts", () => {
     const service = new WorkspaceService({ speedMs: 0 });
     const id = service.knowledgeCreate("character", "花子").id;
     const text = service.knowledgeFile(id).text.replace("english: 花子", "english: Hanako").replace("gender:", "gender: female ?").replace("## Notes\n", "## Notes\n- Is polite. ?\n");
     service.knowledgeSetFile(id, text);
-    service.knowledgeSetFile("notes", "# Notes\n\n- Keep honorifics. ?\n");
-    const before = service.knowledgeFiles().files;
-    expect(before.find((f) => f.id === id)!.suggested).toBe(true); // an attribute and a fact are still unchecked
-    expect(before.find((f) => f.id === "notes")!.suggested).toBe(true);
+    expect(service.knowledgeFiles().files.find((f) => f.id === id)!.suggested).toBe(true); // an attribute and a fact are still unchecked
     expect(service.snapshot().knowledge.suggested).toBeGreaterThan(0);
 
     service.knowledgeConfirm([id]);
-    service.knowledgeConfirm(["notes"]);
-    const after = service.knowledgeFiles().files;
-    expect(after.find((f) => f.id === id)!.suggested).toBe(false);
-    expect(after.find((f) => f.id === "notes")!.suggested).toBe(false);
+    expect(service.knowledgeFiles().files.find((f) => f.id === id)!.suggested).toBe(false);
     expect(service.knowledgeFile(id).text).toContain("gender: female\n");
     expect(service.knowledgeFile(id).text).toContain("- Is polite.\n");
     expect(service.snapshot().knowledge.suggested).toBe(0);
   });
 });
-

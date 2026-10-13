@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CLASSES_TEXT, LEGACY_CLASSES_TEXT, parseClasses } from "./classes.js";
 import type { KnowledgeEntry } from "./entries.js";
-import { applyFile, backlinksOf, CLASSES_ID, fileText, listFiles, newTopic, NOTES_ID, resolveName, type FileContext } from "./topicfile.js";
+import { applyFile, backlinksOf, CLASSES_ID, fileText, listFiles, newTopic, resolveName, type FileContext } from "./topicfile.js";
 
 let n = 0;
 const deps = { newId: () => `n${++n}`, now: () => "2026-02-01T00:00:00.000Z" };
@@ -35,7 +35,6 @@ const entries: KnowledgeEntry[] = [
   base({ id: "o", source: "学園生徒会", target: "the student council", category: "organization", attrs: { "based in": ["学園"] } }),
   base({ id: "f1", kind: "note", about: "h", text: "Addresses [[太郎]] as Taro-kun.", status: "suggested", origin: model }),
   base({ id: "f2", kind: "note", about: "h", text: "Is the class president." }),
-  base({ id: "n1", kind: "note", text: "Keep honorifics." }),
   base({ id: "su", kind: "summary", text: "A short chapter.", scope: { documentId: "d1" } }),
   base({ id: "sc", kind: "scene", text: "At the gate.", related: ["h", "t"], scope: { documentId: "d1", blockHashes: ["a", "b"], block: 1, blockEnd: 2 }, status: "suggested", origin: model }),
   base({ id: "x", source: "幽霊", target: "ghost", status: "rejected" }),
@@ -94,14 +93,13 @@ the narrator's classmate
   it("writes scenes, summaries, the notes and the classes", () => {
     expect(fileText("sc", ctx)).toBe("---\ntype: scene\ndocument: Chapter 1\nblocks: 1-2\npresent: [[花子]], [[太郎]]\nstatus: suggested\n---\nAt the gate.\n");
     expect(fileText("su", ctx)).toBe("---\ntype: summary\ndocument: Chapter 1\n---\nA short chapter.\n");
-    expect(fileText(NOTES_ID, ctx)).toBe("# Notes\n\n- Keep honorifics.\n");
     expect(fileText(CLASSES_ID, ctx)).toBe(DEFAULT_CLASSES_TEXT);
     expect(fileText("nope", ctx)).toBeNull();
   });
 
   it("lists the files grouped by class, then scenes, summaries and the rest", () => {
     const list = listFiles(ctx);
-    expect(list.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "character:太郎", "place:学園", "organization:学園生徒会", "family:佐藤家", "scene:Block 1-2", "summary:Chapter 1", "notes:Notes", "classes:Classes"]);
+    expect(list.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "character:太郎", "place:学園", "organization:学園生徒会", "family:佐藤家", "scene:Block 1-2", "summary:Chapter 1", "classes:Classes"]);
     expect(list[0]).toMatchObject({ kind: "topic", suggested: true, groupLabel: "Characters", subtitle: "Hanako" });
   });
 
@@ -195,11 +193,7 @@ describe("editing the other files", () => {
     expect(su.entries.find((x) => x.id === "su")!.text).toBe("A quiet chapter.");
   });
 
-  it("edits the notes, and the classes", () => {
-    const notes = applyFile(entries, NOTES_ID, "# Notes\n\n- Keep honorifics.\n- Never translate onomatopoeia.\n", ctx, deps);
-    expect(notes.entries.filter((x) => x.kind === "note" && x.about === null).map((x) => x.text)).toEqual(["Keep honorifics.", "Never translate onomatopoeia."]);
-    const gone = applyFile(entries, NOTES_ID, "# Notes\n", ctx, deps);
-    expect(gone.entries.some((x) => x.id === "n1")).toBe(false);
+  it("edits the classes", () => {
     const classes = applyFile(entries, CLASSES_ID, "# item\nowner: link(character)\n", ctx, deps);
     expect(classes.classesText).toBe("# item\nowner: link(character)\n");
     expect(classes.problems).toEqual([]);

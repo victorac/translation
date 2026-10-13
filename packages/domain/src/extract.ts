@@ -70,6 +70,7 @@ const PHRASE: Record<string, string> = {
   family: "a family or clan",
   term: "another special word (an item, skill, title or term)",
 };
+const CJK = /[\u3040-\u30FF\u4E00-\u9FFF]/;
 const nameSet = (e: KnowledgeEntry) => [e.source, ...e.aliases];
 const lower = (s: string) => s.trim().toLocaleLowerCase();
 
@@ -202,11 +203,16 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     }
 
     const nameReply = await ask(englishName(c, category, context, input.targetLanguage));
-    const target = nameReply === null ? null : parseShortText(nameReply, 60);
+    const target = nameReply === null ? null : parseShortText(nameReply, 60, true);
     // An English name with Japanese characters in it is not a translation.
-    if (!target || (latin && /[\u3040-\u30FF\u4E00-\u9FFF]/.test(target))) continue;
-    const descReply = await ask(describe(c, context));
+    if (!target || (latin && CJK.test(target))) continue;
+    const descReply = await ask(describe(c, context, input.targetLanguage));
     let summary = descReply === null ? "" : (parseShortText(descReply, 200) ?? "");
+    // A description in the language of the passage, not the language of the translation, is not kept.
+    if (summary !== "" && latin && CJK.test(summary)) {
+      unsupported++;
+      summary = "";
+    }
     if (summary !== "" && !(await isSupported(summary, c, context))) summary = "";
     const created: KnowledgeEntry = {
       id: deps.newId(),
@@ -295,7 +301,7 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       } else if (!stopped) {
         const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage));
         const text = reply === null ? null : parseShortText(reply, 300);
-        if (text && (await isSupported(text, "this scene", passage.slice(0, 1500)))) {
+        if (text && !(latin && CJK.test(text)) && (await isSupported(text, "this scene", passage.slice(0, 1500)))) {
           entries.push({
             id: deps.newId(),
             kind: "scene",

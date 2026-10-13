@@ -170,6 +170,19 @@ describe("checking what the model says", () => {
     expect(r.unsupported).toBe(2); // the girl's description and the scene (the school had none)
   });
 
+  it("asks for descriptions in the language of the translation, and throws away one that comes back in the language of the passage", async () => {
+    const chinese = scripted(sensible({ describe: () => "山田太郎是該段文字的作者。" }));
+    const r = await extractBlock(base(chinese.asker, { candidates: ["花子"], listNames: false }));
+    expect(chinese.asked.find((q) => q.id === "describe")!.user).toContain("written in English");
+    expect(r.entries.find((e) => e.source === "花子")).toMatchObject({ target: "Hanako", hint: "" });
+    expect(r.unsupported).toBeGreaterThanOrEqual(1);
+  });
+
+  it("removes the full stop from an English name", async () => {
+    const r = await extractBlock(base(scripted(sensible({ "english-name": () => "Taro Yamada." })).asker, { candidates: ["花子"], listNames: false }));
+    expect(r.entries.find((e) => e.kind === "term")!.target).toBe("Taro Yamada");
+  });
+
   it("does not make a topic whose English name still has Japanese characters in it", async () => {
     const r = await extractBlock(base(scripted(sensible({ "english-name": () => "花子さん" })).asker, { candidates: ["花子"], listNames: false }));
     expect(r.entries.filter((e) => e.kind === "term")).toEqual([]);

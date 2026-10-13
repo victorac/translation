@@ -785,8 +785,10 @@ describe("names, hints and notes in saved projects", () => {
   it("saves the knowledge with the project, reopens it, and brings an older project's glossary over once", async () => {
     const { dir, answers, make } = env();
     const a = make();
-    a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", text: "", about: null, category: "term" as const, aliases: [] });
-    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", about: null, category: "term" as const, aliases: [] });
+    const king = a.workspace.knowledgeSave({ kind: "term", source: "魔王", target: "Demon King", hint: "villain", text: "", about: null, category: "term" as const, aliases: [] }).entry;
+    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", about: king.id, category: "term" as const, aliases: [] });
+    // A note that is about nothing has nowhere to live, and is dropped when the project is opened.
+    a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "A loose note.", about: null, category: "term" as const, aliases: [] });
     await a.workspace.researchBlock({ backend: "practice", modelId: "x", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage: "魔王が来た。" });
     expect(Object.keys(a.workspace.exportProject().knowledge.research)).toHaveLength(1);
     answers.save = join(dir, "kb.ltw.json");
@@ -807,7 +809,8 @@ describe("names, hints and notes in saved projects", () => {
     const c = make({ recoveryPath: join(dir, "r2.json") });
     answers.open = join(dir, "old.ltw.json");
     await c.open(false);
-    expect(c.workspace.knowledgeList({}).entries).toMatchObject([{ kind: "term", source: "勇者" }, { kind: "note", text: "Keep honorifics." }]);
+    expect(c.workspace.knowledgeList({}).entries).toMatchObject([{ kind: "term", source: "勇者" }]);
+    expect(c.workspace.knowledgeList({}).entries).toHaveLength(1); // the old loose note was left behind
     expect(c.workspace.snapshot().settings?.glossary).toEqual([]);
   });
 });

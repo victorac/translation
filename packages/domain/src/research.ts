@@ -63,8 +63,8 @@ export interface ResearchRecord {
   at: string;
 }
 
-/** The entries a researcher chooses from: terms, and notes that are not attached to a term. Facts travel with their term; scenes and summaries are tied to blocks and documents. */
-export const isCandidate = (e: KnowledgeEntry): boolean => e.kind === "term" || (e.kind === "note" && e.about === null);
+/** The entries a researcher chooses from: the topics. Facts travel with their topic; scenes and summaries are tied to blocks and documents. */
+export const isCandidate = (e: KnowledgeEntry): boolean => e.kind === "term";
 
 /** The entries that still need to be considered for a passage: ones never seen, or changed since. */
 export function entriesToConsider(entries: readonly KnowledgeEntry[], record: ResearchRecord | undefined): KnowledgeEntry[] {

@@ -237,11 +237,11 @@ export const englishName = (name: string, kind: string, context: string, targetL
   maxTokens: 30,
 });
 
-export const describe = (name: string, context: string): Question => ({
+export const describe = (name: string, context: string, targetLanguage: string): Question => ({
   id: "describe",
   kind: "text",
   system: `You write very short descriptions from a passage. ${RULE}`,
-  user: `In at most 15 words, say who or what 「${name}」 is, using only what the passage says. If it does not say, reply UNKNOWN.\n\nPASSAGE:\n${context}`,
+  user: `In at most 15 words, written in ${targetLanguage}, say who or what 「${name}」 is in the story (for example their role or how they relate to others), using only what the passage says. Do not mention the passage or the text itself. If it does not say, reply UNKNOWN.\n\nPASSAGE:\n${context}`,
   maxTokens: 50,
 });
 
@@ -266,7 +266,7 @@ export const sceneText = (passage: string, present: string[], targetLanguage: st
   id: "scene-text",
   kind: "text",
   system: `You describe scenes of a story in ${targetLanguage}. ${RULE}`,
-  user: `In one sentence of at most 25 words, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
+  user: `In one sentence of at most 25 words, written in ${targetLanguage}, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
   maxTokens: 80,
 });
 
@@ -304,10 +304,11 @@ export function parseNameList(reply: string): string[] {
 }
 
 /** The first line of a short answer, without quotes, or null if there is nothing usable. */
-export function parseShortText(reply: string, maxChars: number): string | null {
+export function parseShortText(reply: string, maxChars: number, dropFinalPeriod = false): string | null {
   const line = reply.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "");
   if (!line) return null;
   const clean = line.replace(/^["'「『“]+|["'」』”]+$/g, "").replace(/^(answer|name|description)\s*[:：]\s*/i, "").trim();
-  if (clean === "" || /^unknown\.?$/i.test(clean) || clean.length > maxChars) return null;
-  return clean;
+  const result = dropFinalPeriod ? clean.replace(/[.。]+$/, "").trim() : clean;
+  if (result === "" || /^unknown\.?$/i.test(result) || result.length > maxChars) return null;
+  return result;
 }

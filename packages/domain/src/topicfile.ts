@@ -32,7 +32,7 @@ export interface KbProblem {
   message: string;
 }
 
-export type FileKind = "topic" | "scene" | "summary" | "notes" | "classes";
+export type FileKind = "topic" | "scene" | "summary" | "classes";
 
 export interface FileInfo {
   id: string;
@@ -57,7 +57,6 @@ const lower = (s: string) => s.trim().toLocaleLowerCase();
 const same = (a: string, b: string) => lower(a) === lower(b);
 const oneLine = (s: string) => s.replace(/\s*\n\s*/g, " ").trim();
 const FLAG = /\s+\?\s*$/;
-export const NOTES_ID = "notes";
 export const CLASSES_ID = "classes";
 
 const splitList = (s: string) => s.split(/[,、，]/).map((v) => v.trim()).filter(Boolean);
@@ -97,8 +96,6 @@ export function listFiles(ctx: FileContext): FileInfo[] {
   for (const s of ctx.entries.filter((e) => e.kind === "summary")) {
     out.push({ id: s.id, kind: "summary", group: "summary", groupLabel: "Summaries", title: docTitle(ctx.docs, s.scope?.documentId), subtitle: "summary", suggested: s.status === "suggested" });
   }
-  const loose = ctx.entries.filter((e) => e.kind === "note" && (e.about === null || !topics.some((t) => t.id === e.about)));
-  out.push({ id: NOTES_ID, kind: "notes", group: "notes", groupLabel: "Other", title: "Notes", subtitle: `${loose.length}`, suggested: loose.some((n) => n.status === "suggested") });
   out.push({ id: CLASSES_ID, kind: "classes", group: "classes", groupLabel: "Other", title: "Classes", subtitle: "kinds of topic and their attributes", suggested: false });
   return out;
 }
@@ -119,11 +116,6 @@ function frontMatter(lines: string[]): string {
 
 export function fileText(id: string, ctx: FileContext): string | null {
   if (id === CLASSES_ID) return ctx.classesText;
-  if (id === NOTES_ID) {
-    const topicIds = new Set(ctx.entries.filter(isTopic).map((t) => t.id));
-    const loose = ctx.entries.filter((e) => e.kind === "note" && (e.about === null || !topicIds.has(e.about)));
-    return ["# Notes", "", ...loose.map((n) => `- ${oneLine(n.text)}${n.status === "suggested" ? " ?" : ""}`), ""].join("\n");
-  }
   const e = ctx.entries.find((x) => x.id === id);
   if (!e) return null;
   const status = e.status === "suggested" ? ["status: suggested"] : [];
@@ -171,7 +163,9 @@ export function backlinksOf(id: string, ctx: FileContext): { id: string; title: 
     const viaScene = e.kind === "scene" && e.related.includes(id);
     if (!(viaAttr || viaText || viaScene)) continue;
     // A fact belongs to the file of the topic it is about.
-    found.add(e.kind === "note" ? (e.about && ctx.entries.some((t) => t.id === e.about) ? e.about : NOTES_ID) : e.id);
+    if (e.kind === "note") {
+      if (e.about && ctx.entries.some((t) => t.id === e.about)) found.add(e.about);
+    } else found.add(e.id);
   }
   found.delete(id);
   return [...found].map((f) => ({ id: f, title: titleOf(f, ctx) })).filter((b) => b.title !== "");
@@ -262,22 +256,6 @@ export function applyFile(existing: readonly KnowledgeEntry[], id: string, text:
     return { entries: [...existing], problems: parsed.problems, classesText: text };
   }
   const live = existing.filter((e) => e.status !== "rejected");
-
-  if (id === NOTES_ID) {
-    const topicIds = new Set(live.filter(isTopic).map((t) => t.id));
-    const oldLoose = live.filter((e) => e.kind === "note" && (e.about === null || !topicIds.has(e.about)));
-    const bullets = text.split("\n").map((l) => /^[-*]\s+(.+)$/.exec(l.trim())?.[1]).filter((b): b is string => !!b).map((b) => ({ text: b.replace(FLAG, "").trim(), suggested: FLAG.test(` ${b}`) }));
-    const claimed = new Set<string>();
-    const next: KnowledgeEntry[] = [];
-    for (const b of bullets) {
-      const old = oldLoose.find((n) => !claimed.has(n.id) && same(n.text, b.text));
-      if (old) claimed.add(old.id);
-      next.push(old ? { ...old, status: statusOf(b.suggested), updatedAt: old.status === statusOf(b.suggested) ? old.updatedAt : at } : { ...blankEntry(deps.newId(), at), kind: "note", text: b.text, status: statusOf(b.suggested) });
-    }
-    const removed = oldLoose.filter((n) => !claimed.has(n.id));
-    const keep = existing.filter((e) => !oldLoose.some((n) => n.id === e.id));
-    return { entries: [...keep, ...next, ...removed.filter((n) => n.status === "suggested").map((n) => ({ ...n, status: "rejected" as const }))], problems };
-  }
 
   const entry = live.find((e) => e.id === id);
   if (!entry) return { entries: [...existing], problems: [{ line: 0, message: "That file no longer exists." }] };

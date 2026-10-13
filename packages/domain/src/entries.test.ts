@@ -7,20 +7,16 @@ const deps = { newId: () => `e${++n}`, now: () => "2026-01-01T00:00:00.000Z" };
 describe("entries", () => {
   const { entries, unreadable } = entriesFromText("魔王 = Demon King # villain\n> He speaks formally.\n> Keep honorifics.\nnot a line", { by: "user" }, "confirmed", deps);
 
-  it("reads pasted lines into terms and notes and counts the unreadable ones", () => {
-    expect(unreadable).toBe(1);
-    expect(entries).toMatchObject([
-      { kind: "term", source: "魔王", target: "Demon King", hint: "villain", status: "confirmed", origin: { by: "user" } },
-      { kind: "note", text: "He speaks formally." },
-      { kind: "note", text: "Keep honorifics." },
-    ]);
+  it("reads pasted lines into topics, and counts what cannot be used: notes (they belong in a topic's file) and lines it cannot read", () => {
+    expect(unreadable).toBe(3);
+    expect(entries).toMatchObject([{ kind: "term", source: "魔王", target: "Demon King", hint: "villain", status: "confirmed", origin: { by: "user" } }]);
   });
 
   it("gives a run what it needs and writes the same lines back out", () => {
     const s = splitEntries(entries);
     expect(s.glossary).toEqual([{ source: "魔王", target: "Demon King", note: "villain" }]);
-    expect(s.notes).toBe("> He speaks formally.\n> Keep honorifics.");
-    expect(entriesToText(entries)).toBe("魔王 = Demon King # villain\n\n> He speaks formally.\n> Keep honorifics.");
+    expect(s.notes).toBe("");
+    expect(entriesToText(entries)).toBe("魔王 = Demon King # villain");
   });
 
   it("explains what is missing", () => {
@@ -30,9 +26,9 @@ describe("entries", () => {
     expect(entryProblems({ ...base, kind: "note" })).toEqual(["Enter the text."]);
   });
 
-  it("brings an older project's glossary and notes over", () => {
+  it("brings an older project's glossary over, and leaves its loose notes behind", () => {
     const e = entriesFromLegacy([{ source: "魔王", target: "Demon King" }], "A fact.\n- Another.", undefined, deps);
-    expect(e.map((x) => x.kind)).toEqual(["term", "note", "note"]);
+    expect(e.map((x) => x.kind)).toEqual(["term"]);
     expect(entriesFromLegacy([], undefined, "勇者 = Hero", deps)).toHaveLength(1);
   });
 });
@@ -58,8 +54,8 @@ describe("the background for one block", () => {
     expect(m.notes).toEqual(["Hanako: Addresses Taro as Yamada."]); // the facts of terms that were not used stay out
   });
 
-  it("includes a plain note only when it was chosen, and another block's scene never leaks in", () => {
-    expect(blockMaterial(entries, ["n1"], "h2", "d1")).toMatchObject({ notes: ["Keep honorifics."], glossary: [] });
+  it("gives nothing but the summary for a block where nothing was chosen, and another block's scene never leaks in", () => {
+    expect(blockMaterial(entries, [], "h2", "d1")).toMatchObject({ notes: [], glossary: [], summary: "A short chapter." });
     expect(blockMaterial(entries, ["n1"], "h2", "d1")!.scene).toBeUndefined();
     expect(blockMaterial(entries, ["n1"], "h2", "other")!.summary).toBeUndefined();
   });
