@@ -10,6 +10,8 @@ const term = (id: string, source: string, target: string, over: Partial<Knowledg
   hint: "",
   category: "character",
   aliases: [],
+  attrs: {},
+  attrFlags: [],
   text: "",
   about: null,
   related: [],

@@ -811,3 +811,23 @@ describe("names, hints and notes in saved projects", () => {
     expect(c.workspace.snapshot().settings?.glossary).toEqual([]);
   });
 });
+
+describe("topics in saved projects", () => {
+  it("saves topics with their attributes and links, and the classes, and reopens them", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    const school = a.workspace.knowledgeCreate("place", "学園").id;
+    const hanako = a.workspace.knowledgeCreate("character", "花子").id;
+    a.workspace.knowledgeSetFile(hanako, a.workspace.knowledgeFile(hanako).text.replace("english: 花子", "english: Hanako").replace("gender:", "gender: female").replace("lives in:", "lives in: [[学園]]"));
+    a.workspace.knowledgeSetFile("classes", "# item\nowner: link(character)\n");
+    answers.save = join(dir, "topics.ltw.json");
+    await a.save(false);
+
+    const b = make({ recoveryPath: join(dir, "r.json") });
+    answers.open = join(dir, "topics.ltw.json");
+    await b.open(false);
+    expect(b.workspace.knowledgeFiles().classes.map((c) => c.name)).toEqual(["item"]);
+    expect(b.workspace.knowledgeList({ kind: "term" }).entries.find((e) => e.id === hanako)).toMatchObject({ target: "Hanako", attrs: { gender: ["female"], "lives in": ["学園"] } });
+    expect(b.workspace.knowledgeFile(school).backlinks).toEqual([{ id: hanako, title: "花子" }]);
+  });
+});

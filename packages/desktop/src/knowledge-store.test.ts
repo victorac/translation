@@ -51,7 +51,7 @@ describe("KnowledgeStore", () => {
 
   it("confirms suggestions, removes entries, and skips repeats when adding many", () => {
     const s = make();
-    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", text: "", about: null, category: "term" as const, aliases: [], related: [], scope: null, origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
+    const base = { id: "", kind: "term" as const, source: "魔王", target: "Demon King", hint: "", text: "", about: null, category: "term" as const, aliases: [], attrs: {}, attrFlags: [], related: [], scope: null, origin: { by: "model" as const }, status: "suggested" as const, updatedAt: "x" };
     expect(s.addMany([{ ...base, id: "a" }, { ...base, id: "b" }, { ...base, id: "c", source: "勇者" }])).toBe(2);
     expect(s.confirm(["a"])).toBe(1);
     expect(s.confirm()).toBe(1);

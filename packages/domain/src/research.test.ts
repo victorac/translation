@@ -10,6 +10,8 @@ const e = (id: string, over: Partial<KnowledgeEntry> = {}): KnowledgeEntry => ({
   hint: "",
   category: "term",
   aliases: [],
+  attrs: {},
+  attrFlags: [],
   text: "",
   about: null,
   related: [],

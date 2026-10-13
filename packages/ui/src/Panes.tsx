@@ -4,7 +4,7 @@ import type { PreviewBlock } from "./blockMarkers";
 import { Cell } from "./Cell";
 import type { SourceMode } from "./Grid";
 import { KNOWLEDGE_KEY, SOURCE_KEY } from "./layout";
-import { KnowledgeEditor } from "./KnowledgeEditor";
+import { KnowledgeFiles } from "./KnowledgeFiles";
 import { placeView, reconcile, setRatio, type Edge, type PaneNode, type Path } from "./paneTree";
 import { SourceEditor } from "./SourceEditor";
 import { countCells } from "./status";
@@ -238,7 +238,7 @@ function Leaf(
       {head}
       <div className="pane-body">
         {isKb ? (
-          <KnowledgeEditor rev={p.knowledgeRev} counts={p.knowledgeCounts} />
+          <KnowledgeFiles rev={p.knowledgeRev} counts={p.knowledgeCounts} />
         ) : isSource ? (
           (p.mode === "text" || !hasBlocks) && !p.readOnlyOld ? (
             <SourceEditor key={p.editorKey} value={p.text} onChange={p.onText} blocks={p.previewBlocks} placeholder="Paste or type the text here, add a model, then press Run." />

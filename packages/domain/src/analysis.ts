@@ -29,7 +29,7 @@ export function analysisSystemPrompt(sourceLanguage: string, targetLanguage: str
   return `You help a translator prepare to translate fiction from ${sourceLanguage} to ${targetLanguage}. Read the passage and report only facts that help avoid mistakes with names, pronouns, who is speaking and who is being spoken to. Do not translate the passage.
 
 Reply with plain lines and nothing else. The kinds of line are:
-1. CHARACTER: for a person, PLACE: for a place, TERM: for any other special word. Then the name as written in the passage (if the same thing is written in other ways, list them after " / "), then "=", then the name in ${targetLanguage}, then "|", then a short summary: for a character, gender, age group, role and how they speak. Example: CHARACTER: 花子 / 花ちゃん = Hanako | girl, the narrator's classmate, speaks politely
+1. CHARACTER: for a person, PLACE: for a place, ORGANIZATION: for a school, company, group or other organization, FAMILY: for a family or clan, TERM: for any other special word. Then the name as written in the passage (if the same thing is written in other ways, list them after " / "), then "=", then the name in ${targetLanguage}, then "|", then a short summary: for a character, gender, age group, role and how they speak. Example: CHARACTER: 花子 / 花ちゃん = Hanako | girl, the narrator's classmate, speaks politely
 2. ALIAS: a name as written, then "=", then the known name it is another way of writing. Use it when a name in the passage is the same as someone in KNOWN SO FAR. Example: ALIAS: 花ちゃん = 花子
 3. FACT: the name as written, then "|", then one short sentence that stays true throughout the story: how that person speaks, how they address others, how they are related to others. Example: FACT: 花子 | Addresses the narrator as Taro-kun.
 4. SCENE: exactly one line. First CONTINUES if this passage goes on in the same place and time as the scene before it, otherwise NEW. Then "|", the names of the people present as written, separated by commas, then "|", then one or two sentences describing the whole scene so far: where it is, what happens, who speaks to whom. Example: SCENE: CONTINUES | 花子, 太郎 | At the school gate after class, Hanako greets Taro and asks why he is waiting; Taro answers casually.
@@ -47,7 +47,7 @@ export interface KnownTerm {
   facts: string[];
 }
 
-const CATEGORY_WORD: Record<TermCategory, string> = { character: "CHARACTER", place: "PLACE", term: "TERM" };
+const categoryWord = (c: TermCategory): string => c.toLocaleUpperCase();
 
 /** The request for one passage, as plain labelled text. */
 export function analysisUserMessage(
@@ -55,7 +55,7 @@ export function analysisUserMessage(
   passage: string,
 ): string {
   const lines = known.terms.flatMap((t) => [
-    `${CATEGORY_WORD[t.category]}: ${[t.source, ...t.aliases].join(" / ")} = ${t.target}${t.hint ? ` | ${t.hint}` : ""}`,
+    `${categoryWord(t.category)}: ${[t.source, ...t.aliases].join(" / ")} = ${t.target}${t.hint ? ` | ${t.hint}` : ""}`,
     ...t.facts.map((f) => `  fact: ${f}`),
   ]);
   const scene = known.previousScene;
@@ -73,7 +73,7 @@ export function analysisUserMessage(
 
 /** How a rejected entry is shown to the model, in the same format it writes its own lines. */
 export function rejectedLine(e: KnowledgeEntry, entries: readonly KnowledgeEntry[]): string | null {
-  if (e.kind === "term") return `${CATEGORY_WORD[e.category]}: ${[e.source, ...e.aliases].join(" / ")} = ${e.target}${e.hint ? ` | ${e.hint}` : ""}`;
+  if (e.kind === "term") return `${categoryWord(e.category)}: ${[e.source, ...e.aliases].join(" / ")} = ${e.target}${e.hint ? ` | ${e.hint}` : ""}`;
   if (e.kind === "note") {
     const about = e.about ? entries.find((t) => t.id === e.about) : undefined;
     return about ? `FACT: ${about.source} | ${e.text}` : `FACT: ${e.text}`;
@@ -90,7 +90,12 @@ const cleanLine = (line: string): string =>
     .trim();
 
 const names = (s: string) => s.split(/[,、，]/).map((n) => n.trim()).filter(Boolean);
-const PREFIX = /^(character|person|place|term)\s*[:：]\s*(.+)$/i;
+const PREFIX = /^(character|person|place|organization|organisation|org|family|term)\s*[:：]\s*(.+)$/i;
+
+function categoryOf(word: string): TermCategory {
+  const w = word.toLocaleLowerCase();
+  return w === "person" ? "character" : w === "org" || w === "organisation" ? "organization" : w;
+}
 
 function parseEntity(category: TermCategory, body: string): FoundEntity | null {
   const m = /^(.*?)\s*(?:=>|->|→|=)\s*(.*)$/.exec(body);
@@ -134,7 +139,7 @@ export function parseAnalysisReply(reply: string): AnalysisResult {
       if (m && m[1]!.trim() !== "" && m[2]!.trim() !== "") aliases.push({ alias: m[1]!.trim(), of: m[2]!.trim() });
     } else {
       const p = PREFIX.exec(line);
-      const category: TermCategory = p ? (/^place$/i.test(p[1]!) ? "place" : /^term$/i.test(p[1]!) ? "term" : "character") : "term";
+      const category: TermCategory = p ? categoryOf(p[1]!) : "term";
       const e = parseEntity(category, p ? p[2]! : line);
       if (e && entities.length < MAX_ENTITIES_PER_PASSAGE) entities.push(e);
     }
@@ -189,7 +194,7 @@ export function mergeSuggestions(entries: readonly KnowledgeEntry[], found: Anal
   let next = [...entries];
   let added = 0;
   const at = deps.now();
-  const blank = { source: "", target: "", hint: "", category: "term" as TermCategory, aliases: [] as string[], text: "", about: null, related: [] as string[], scope: null } as const;
+  const blank = { source: "", target: "", hint: "", category: "term" as TermCategory, aliases: [] as string[], attrs: {} as Record<string, string[]>, attrFlags: [] as string[], text: "", about: null, related: [] as string[], scope: null } as const;
   const update = (id: string, patch: Partial<KnowledgeEntry>) => (next = next.map((e) => (e.id === id ? { ...e, ...patch, updatedAt: at } : e)));
   const termByName = (name: string) => next.find((e) => e.kind === "term" && [e.source, ...e.aliases].some((w) => lower(w) === lower(name)));
   const addFact = (about: string | null, text: string, status: "suggested" = "suggested") => {
@@ -286,7 +291,7 @@ export function mergeSummary(entries: readonly KnowledgeEntry[], text: string, s
     return { entries: entries.map((e, j) => (j === i ? { ...e, text, origin, updatedAt: at } : e)), updated: true };
   }
   return {
-    entries: [...entries, { id: deps.newId(), kind: "summary", source: "", target: "", hint: "", category: "term", aliases: [], text, about: null, related: [], scope: { documentId: scope.documentId }, origin, status: "suggested", updatedAt: at }],
+    entries: [...entries, { id: deps.newId(), kind: "summary", source: "", target: "", hint: "", category: "term", aliases: [], attrs: {}, attrFlags: [], text, about: null, related: [], scope: { documentId: scope.documentId }, origin, status: "suggested", updatedAt: at }],
     updated: true,
   };
 }

@@ -1,8 +1,8 @@
 import { parseKnowledge, serializeNotes, serializeTerm, type BlockMaterial, type KnowledgeNote } from "./knowledge.js";
 import type { GlossaryEntry } from "./state.js";
 
-/** What a term is: a person, a place, or any other special word. */
-export type TermCategory = "character" | "place" | "term";
+/** What kind of topic a term is. It is the name of a class (character, place, organization, family, term, or one you define). */
+export type TermCategory = string;
 
 /**
  * The knowledge base holds four kinds of entry:
@@ -55,6 +55,10 @@ export interface KnowledgeEntry {
   category: TermCategory;
   /** Terms: other ways the same word is written in the text. */
   aliases: string[];
+  /** Terms: the attributes of its class (gender, family...). Links are written as the name of the topic they point to. */
+  attrs: Record<string, string[]>;
+  /** Terms: the attributes a model filled in that nobody has checked yet. */
+  attrFlags: string[];
   /** Notes, scenes and summaries: the text itself. */
   text: string;
   /** Notes: the term this fact is about, if any. */
@@ -76,6 +80,7 @@ export interface EntryInput {
   hint: string;
   category: TermCategory;
   aliases: string[];
+  attrs?: Record<string, string[]> | undefined;
   text: string;
   about: string | null;
   /** For a new summary: the document it summarizes. */
@@ -113,12 +118,20 @@ export function entryProblems(e: EntryInput): string[] {
   return out;
 }
 
+/** What a term tells the translator about itself: its attributes (gender, speech style...) followed by its summary. */
+export function termNote(e: Pick<KnowledgeEntry, "attrs" | "hint">): string {
+  const attrs = Object.entries(e.attrs)
+    .filter(([, v]) => v.length > 0)
+    .map(([k, v]) => `${k}: ${v.join(", ")}`);
+  return [...attrs, e.hint.trim()].filter(Boolean).join("; ");
+}
+
 /** The terms and notes in the form a translation run keeps (used as a backup when no one has chosen background for a block). */
 export function splitEntries(entries: readonly KnowledgeEntry[]): { glossary: GlossaryEntry[]; notes: string } {
   const glossary: GlossaryEntry[] = [];
   const notes: KnowledgeNote[] = [];
   for (const e of entries) {
-    if (e.kind === "term") glossary.push({ source: e.source.trim(), target: e.target.trim(), ...(e.hint.trim() ? { note: e.hint.trim() } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) });
+    if (e.kind === "term") glossary.push({ source: e.source.trim(), target: e.target.trim(), ...(termNote(e) ? { note: termNote(e) } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) });
     else if (e.kind === "note") notes.push({ text: e.text.trim() });
   }
   return { glossary, notes: serializeNotes(notes) };
@@ -137,7 +150,7 @@ export interface EntryDeps {
   now: () => string;
 }
 
-const base = (origin: EntryOrigin, status: EntryStatus, at: string) => ({ category: "term" as TermCategory, aliases: [] as string[], about: null, related: [] as string[], scope: null, origin, status, updatedAt: at });
+const base = (origin: EntryOrigin, status: EntryStatus, at: string) => ({ category: "term" as TermCategory, aliases: [] as string[], attrs: {} as Record<string, string[]>, attrFlags: [] as string[], about: null, related: [] as string[], scope: null, origin, status, updatedAt: at });
 
 /** Reads pasted lines into entries. Lines that cannot be read are counted so the user can be told. */
 export function entriesFromText(text: string, origin: EntryOrigin, status: EntryStatus, deps: EntryDeps): { entries: KnowledgeEntry[]; unreadable: number } {
@@ -173,6 +186,8 @@ export function normalizeEntry(e: Partial<KnowledgeEntry> & Pick<KnowledgeEntry,
     hint: e.hint ?? "",
     category: e.category ?? "term",
     aliases: e.aliases ?? [],
+    attrs: e.attrs ?? {},
+    attrFlags: e.attrFlags ?? [],
     text: e.text ?? "",
     about: e.about ?? null,
     related: e.related ?? [],

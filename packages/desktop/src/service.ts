@@ -4,10 +4,17 @@ import {
   blockText,
   blockMaterial,
   entriesFromLegacy,
-  entriesToDocument,
-  parseDocument,
-  reconcileDocument,
+  applyFile,
+  backlinksOf,
+  classLabel,
+  DEFAULT_CLASSES_TEXT,
+  fileText,
+  listFiles,
+  newTopic,
+  parseClasses,
   rejectedLine,
+  resolveName,
+  titleOf,
   entriesFromText,
   entriesToConsider,
   fitMaterial,
@@ -64,7 +71,9 @@ import {
   type EntryInput,
   type EntryQuery,
   type KnowledgeEntry,
-  type KnowledgeDocument,
+  type FileContext,
+  type KnowledgeFile,
+  type KnowledgeFiles,
   type KnowledgeList,
   type GlossaryEntry,
   type ModelRun,
@@ -715,7 +724,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord> } } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes: string } } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -727,12 +736,12 @@ export class WorkspaceService {
       })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
-      knowledge: { entries: this.knowledge.everything(), research: Object.fromEntries(this.research) },
+      knowledge: { entries: this.knowledge.everything(), research: Object.fromEntries(this.research), classes: this.classesText },
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined } | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined; classes?: string | undefined } | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -752,6 +761,7 @@ export class WorkspaceService {
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
     this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
+    this.classesText = project.knowledge?.classes ?? DEFAULT_CLASSES_TEXT;
     if (project.knowledge) this.knowledge.load(project.knowledge.entries);
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
       // A project from before the knowledge store: bring its glossary and notes over once.
@@ -779,6 +789,7 @@ export class WorkspaceService {
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
     this.knowledge.load([]);
+    this.classesText = DEFAULT_CLASSES_TEXT;
     this.research.clear();
     this.epoch++;
     this.jobIds = [];
@@ -1051,21 +1062,82 @@ export class WorkspaceService {
     return this.docs.map((d) => ({ id: d.id, title: d.title }));
   }
 
-  /** The knowledge base as a text document. */
-  knowledgeText(): KnowledgeDocument {
-    return { text: entriesToDocument(this.knowledge.all(), this.documentRefs()), problems: [], rev: this.knowledge.rev };
+  /** The kinds of topic and their attributes, as the user last wrote them. */
+  private classesText = DEFAULT_CLASSES_TEXT;
+
+  private fileContext(): FileContext {
+    return { entries: this.knowledge.all(), classes: parseClasses(this.classesText).classes, classesText: this.classesText, docs: this.documentRefs() };
+  }
+
+  /** The files of the knowledge base: topics, scenes, summaries, the notes and the classes. */
+  knowledgeFiles(): KnowledgeFiles {
+    const ctx = this.fileContext();
+    return { files: listFiles(ctx), classes: ctx.classes.map((c) => ({ name: c.name, label: classLabel(c.name) })), rev: this.knowledge.rev };
+  }
+
+  knowledgeFile(id: string, problems: { line: number; message: string }[] = []): KnowledgeFile {
+    const ctx = this.fileContext();
+    const text = fileText(id, ctx);
+    if (text === null) throw new UserError("no_file", "That file no longer exists.");
+    return { id, title: titleOf(id, ctx), text, problems, backlinks: backlinksOf(id, ctx), rev: this.knowledge.rev };
   }
 
   /**
-   * Applies an edited text document to the knowledge base. Lines that could not be understood are reported
-   * and leave their entries as they were.
+   * Applies an edited file. Lines that could not be understood are reported and leave their entries as they were;
+   * the text that comes back is the file in its tidy form.
    */
-  knowledgeSetText(text: string): KnowledgeDocument {
-    const result = reconcileDocument(this.knowledge.everything(), parseDocument(text), this.documentRefs(), { newId, now: () => new Date().toISOString() });
+  knowledgeSetFile(id: string, text: string): KnowledgeFile {
+    const result = applyFile(this.knowledge.everything(), id, text, this.fileContext(), { newId, now: () => new Date().toISOString() });
     const before = this.knowledge.rev;
-    this.knowledge.replaceWith(result.entries);
+    if (result.classesText !== undefined) {
+      if (result.classesText !== this.classesText) {
+        this.classesText = result.classesText;
+        this.knowledge.touch();
+      }
+    } else this.knowledge.replaceWith(result.entries);
     if (this.knowledge.rev !== before) this.knowledgeChanged();
-    return { text: entriesToDocument(this.knowledge.all(), this.documentRefs()), problems: result.problems, rev: this.knowledge.rev };
+    const exists = id === "classes" || id === "notes" || this.knowledge.all().some((e) => e.id === id);
+    if (!exists) throw new UserError("no_file", "That file no longer exists.");
+    const file = this.knowledgeFile(id, result.problems);
+    // The same checks on the tidied text, so the window can show the problems where the lines now are.
+    const again = applyFile(this.knowledge.everything(), id, file.text, this.fileContext(), { newId, now: () => new Date().toISOString() });
+    return { ...file, tidyProblems: again.problems };
+  }
+
+  /** Makes a new, empty topic of a class and returns its file. */
+  knowledgeCreate(type: string, name: string): { id: string } {
+    const clean = name.trim();
+    if (clean === "") throw new UserError("bad_name", "Enter a name.");
+    const existing = resolveName(clean, this.knowledge.all());
+    if (existing) throw new UserError("duplicate_topic", `There is already a topic called "${existing.source}".`);
+    const topic = newTopic(type, clean, { newId, now: () => new Date().toISOString() });
+    this.knowledge.replaceWith([...this.knowledge.everything(), topic]);
+    this.knowledgeChanged();
+    return { id: topic.id };
+  }
+
+  /**
+   * Deletes a file. A topic a model suggested is remembered as rejected so it is not suggested again;
+   * anything else is removed for good. The notes and classes files cannot be deleted.
+   */
+  knowledgeDelete(id: string): { removed: boolean } {
+    const entry = this.knowledge.all().find((e) => e.id === id);
+    if (!entry) return { removed: false };
+    if (entry.kind === "term" && entry.status === "suggested") {
+      const all = this.knowledge.everything();
+      this.knowledge.replaceWith(
+        all
+          .filter((e) => !(e.kind === "note" && e.about === id && e.status === "confirmed"))
+          .map((e) => (e.id === id || (e.kind === "note" && e.about === id) ? { ...e, status: "rejected" as const } : e.kind === "scene" ? { ...e, related: e.related.filter((r) => r !== id) } : e)),
+      );
+    } else this.knowledge.remove([id]);
+    this.knowledgeChanged();
+    return { removed: true };
+  }
+
+  knowledgeResolve(name: string): { id: string | null; title: string | null } {
+    const hit = resolveName(name, this.knowledge.all());
+    return { id: hit?.id ?? null, title: hit?.source ?? null };
   }
 
   /** Before reading a document again: forget what a model suggested from it that nobody checked. */

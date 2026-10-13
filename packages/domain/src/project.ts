@@ -63,7 +63,7 @@ export interface ProjectFile {
   providerLabel?: string;
   settings?: ProjectSettings;
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
-  knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> };
+  knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord>; classes?: string };
   activeDocumentId: string;
   documents: ProjectDocument[];
 }
@@ -203,8 +203,10 @@ const entrySchema = z.object({
   target: z.string().max(2000),
   hint: z.string().max(2000),
   text: z.string().max(4000),
-  category: z.enum(["character", "place", "term"]).optional(),
+  category: z.string().max(100).optional(),
   aliases: z.array(z.string().max(2000)).max(50).optional(),
+  attrs: z.record(z.string().max(200), z.array(z.string().max(2000)).max(50)).optional(),
+  attrFlags: z.array(z.string().max(200)).max(200).optional(),
   about: z.string().max(200).nullable().optional(),
   related: z.array(id).max(200).optional(),
   scope: z.object({ documentId: id, blockHash: z.string().max(100).optional(), blockHashes: z.array(z.string().max(100)).max(100_000).optional(), block: z.number().int().min(1).max(1e7).optional(), blockEnd: z.number().int().min(1).max(1e7).optional() }).nullable().optional(),
@@ -219,7 +221,7 @@ const fileSchema = z.object({
   project: projectHead,
   providerLabel: z.string().max(2000).optional(),
   settings: settingsSchema.optional(),
-  knowledge: z.object({ entries: z.array(entrySchema).max(50_000), research: z.record(z.string().max(100), z.object({ ids: z.array(id).max(50_000), seen: z.array(id).max(50_000), at: iso })).optional() }).optional(),
+  knowledge: z.object({ entries: z.array(entrySchema).max(50_000), research: z.record(z.string().max(100), z.object({ ids: z.array(id).max(50_000), seen: z.array(id).max(50_000), at: iso })).optional(), classes: z.string().max(200_000).optional() }).optional(),
   activeDocumentId: id,
   documents: z.array(documentSchema).min(1).max(200),
 });
@@ -402,7 +404,7 @@ export function buildProjectFile(input: {
   version: number;
   providerLabel?: string;
   settings?: ProjectSettings | null;
-  knowledge?: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord> };
+  knowledge?: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes?: string | undefined };
   activeDocumentId: string;
   documents: ProjectDocument[];
 }): ProjectFile {
@@ -412,7 +414,7 @@ export function buildProjectFile(input: {
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
     ...(input.settings ? { settings: input.settings } : {}),
-    ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(Object.keys(input.knowledge.research).length > 0 ? { research: input.knowledge.research } : {}) } } : {}),
+    ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(Object.keys(input.knowledge.research).length > 0 ? { research: input.knowledge.research } : {}), ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,
   };

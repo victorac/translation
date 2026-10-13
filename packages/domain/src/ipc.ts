@@ -1,4 +1,5 @@
 import type { EntryCounts, EntryInput, EntryQuery, KnowledgeEntry } from "./entries.js";
+import type { FileInfo } from "./topicfile.js";
 import type { ProjectSettings } from "./project.js";
 import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
@@ -121,10 +122,23 @@ export interface AnalyzeResult {
   canceled: boolean;
 }
 
-/** The knowledge base written as a text document, and what could not be understood when one was read back. */
-export interface KnowledgeDocument {
+/** The files of the knowledge base, for the file list. */
+export interface KnowledgeFiles {
+  files: FileInfo[];
+  /** Classes a new topic can be made from. */
+  classes: { name: string; label: string }[];
+  rev: number;
+}
+
+/** One file of the knowledge base: its text, what could not be understood in it, and what links to it. */
+export interface KnowledgeFile {
+  id: string;
+  title: string;
   text: string;
   problems: { line: number; message: string }[];
+  /** After applying an edit: the same problems, placed on the lines of the tidied text. */
+  tidyProblems?: { line: number; message: string }[];
+  backlinks: { id: string; title: string }[];
   rev: number;
 }
 
@@ -251,8 +265,12 @@ export interface CommandMap {
   "notes.cancel": undefined;
   "research.block": ResearchInput;
   "knowledge.summarize": SummarizeInput;
-  "knowledge.text": undefined;
-  "knowledge.setText": { text: string };
+  "knowledge.files": undefined;
+  "knowledge.file": { id: string };
+  "knowledge.setFile": { id: string; text: string };
+  "knowledge.create": { type: string; name: string };
+  "knowledge.delete": { id: string };
+  "knowledge.resolve": { name: string };
   "knowledge.beginExtraction": { documentId: string };
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
@@ -266,15 +284,19 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.text" | "knowledge.setText" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
   "research.block": ResearchResult;
   "knowledge.summarize": SummarizeResult;
-  "knowledge.text": KnowledgeDocument;
-  "knowledge.setText": KnowledgeDocument;
+  "knowledge.files": KnowledgeFiles;
+  "knowledge.file": KnowledgeFile;
+  "knowledge.setFile": KnowledgeFile;
+  "knowledge.create": { id: string };
+  "knowledge.delete": { removed: boolean };
+  "knowledge.resolve": { id: string | null; title: string | null };
   "knowledge.beginExtraction": { discarded: number };
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
@@ -323,8 +345,12 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "notes.cancel",
   "research.block",
   "knowledge.summarize",
-  "knowledge.text",
-  "knowledge.setText",
+  "knowledge.files",
+  "knowledge.file",
+  "knowledge.setFile",
+  "knowledge.create",
+  "knowledge.delete",
+  "knowledge.resolve",
   "knowledge.beginExtraction",
   "knowledge.list",
   "knowledge.save",

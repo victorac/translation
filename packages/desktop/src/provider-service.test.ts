@@ -420,11 +420,17 @@ describe("suggested knowledge", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
-    // The user corrects and accepts one person, and deletes another from the text.
-    const doc = service.knowledgeText().text;
-    expect(doc).toContain("## 花子 = Hanako ?");
-    const edited = doc.replace("## 花子 = Hanako ?", "## 花子 = Hanako-san").replace(/## 太郎 = Taro \?[^\n]*\nboy\n\n/, "");
-    expect(service.knowledgeSetText(edited).problems).toEqual([]);
+    const files = service.knowledgeFiles().files;
+    const hanako = files.find((f) => f.title === "花子")!;
+    const taro = files.find((f) => f.title === "太郎")!;
+    expect(hanako).toMatchObject({ group: "character", suggested: true });
+
+    // The user corrects and accepts one person, and deletes another.
+    const text = service.knowledgeFile(hanako.id).text;
+    expect(text).toContain("status: suggested");
+    const edited = service.knowledgeSetFile(hanako.id, text.replace("status: suggested\n", "").replace("english: Hanako", "english: Hanako-san"));
+    expect(edited.problems).toEqual([]);
+    expect(service.knowledgeDelete(taro.id)).toEqual({ removed: true });
     expect(service.snapshot().knowledge).toMatchObject({ terms: 1, suggested: 2 }); // the fact and the scene are still unchecked
 
     // Reading again forgets the unchecked ones.
@@ -433,7 +439,7 @@ describe("suggested knowledge", () => {
     await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
     const bodies = lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
     const second = bodies.at(-1)!.messages[1]!.content;
-    expect(second).toContain("CHARACTER: 花子 = Hanako-san | girl"); // the corrected, confirmed version is what the model is shown
+    expect(second).toContain("CHARACTER: 花子 = Hanako-san | girl"); // the corrected, accepted version is what the model is shown
     expect(second).toContain("REJECTED (the user checked these and they are wrong; do not suggest them again):\nCHARACTER: 太郎 = Taro | boy");
     const now = service.knowledgeList({}).entries;
     expect(now.filter((e) => e.kind === "term").map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(["花子:Hanako-san:confirmed"]); // 太郎 came back from the model and was refused; 花子 was not duplicated
@@ -446,8 +452,8 @@ describe("suggested knowledge", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     await service.analyze(ask({ documentId: docId, documentTitle: "Document 1" }));
-    const doc = service.knowledgeText().text;
-    service.knowledgeSetText(doc.replace(/## Block 3 \| 花子 \?/, "## Block 3 | 花子")); // the scene is accepted, the person is not
+    const scene = service.knowledgeFiles().files.find((f) => f.kind === "scene")!;
+    service.knowledgeSetFile(scene.id, service.knowledgeFile(scene.id).text.replace("status: suggested\n", "")); // the scene is accepted, the person is not
     expect(service.beginExtraction(docId)).toEqual({ discarded: 0 });
     expect(service.knowledgeList({ kind: "term" }).entries).toHaveLength(1);
   });
@@ -558,5 +564,57 @@ describe("choosing the background for each block", () => {
     await service.researchBlock(ask("本文。", { contextLimit: 1400 }));
     expect(bodies(lm).length).toBeGreaterThan(1);
     await expect(service.researchBlock(ask("本文。".repeat(300), { contextLimit: 600, maxOutputTokens: 300 }))).rejects.toThrow(/do not fit/);
+  });
+});
+
+describe("topics as files", () => {
+  const setupService = () => new WorkspaceService({ speedMs: 0 });
+
+  it("lists topics by class, makes new ones, and refuses a name that is already used", () => {
+    const service = setupService();
+    const { id } = service.knowledgeCreate("character", "花子");
+    service.knowledgeCreate("place", "学園");
+    expect(service.knowledgeFiles().files.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "place:学園", "notes:Notes", "classes:Classes"]);
+    expect(service.knowledgeFiles().classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term"]);
+    expect(() => service.knowledgeCreate("character", "花子")).toThrow(/already a topic/);
+    expect(service.knowledgeResolve("花子")).toEqual({ id, title: "花子" });
+    expect(service.knowledgeResolve("誰か")).toEqual({ id: null, title: null });
+  });
+
+  it("edits a topic through its file, shows what links to it, and renames it everywhere", () => {
+    const service = setupService();
+    const hanako = service.knowledgeCreate("character", "花子").id;
+    const school = service.knowledgeCreate("place", "学園").id;
+    const text = service.knowledgeFile(hanako).text;
+    const done = service.knowledgeSetFile(hanako, text.replace("lives in:", "lives in: [[学園]]").replace("gender:", "gender: female").replace("english: 花子", "english: Hanako"));
+    expect(done.problems).toEqual([]);
+    expect(done.text).toContain("gender: female");
+    expect(service.knowledgeFile(school).backlinks).toEqual([{ id: hanako, title: "花子" }]);
+    // Rename the school; the link in Hanako's file follows.
+    const renamed = service.knowledgeSetFile(school, service.knowledgeFile(school).text.replace("name: 学園", "name: 学院"));
+    expect(renamed.problems).toEqual([]);
+    expect(service.knowledgeFile(hanako).text).toContain("lives in: [[学院]]");
+    // What the translating model is told about her includes the attributes.
+    const note = service.knowledgeList({ kind: "term" }).entries[0]!;
+    expect(note.attrs).toMatchObject({ gender: ["female"], "lives in": ["学院"] });
+  });
+
+  it("remembers a deleted suggestion as rejected, and removes anything else", () => {
+    const service = setupService();
+    const { id } = service.knowledgeCreate("character", "花子");
+    expect(service.knowledgeDelete(id)).toEqual({ removed: true });
+    expect(service.knowledgeFiles().files.some((f) => f.id === id)).toBe(false);
+    expect(service.knowledgeDelete("nope")).toEqual({ removed: false });
+    expect(() => service.knowledgeFile(id)).toThrow(/no longer exists/);
+  });
+
+  it("lets the user define their own classes, and says what is wrong in the definition", () => {
+    const service = setupService();
+    const result = service.knowledgeSetFile("classes", "# item\nowner: link(character)\nweight: text\n");
+    expect(result.problems).toEqual([]);
+    expect(service.knowledgeFiles().classes.map((c) => c.name)).toEqual(["item"]);
+    const item = service.knowledgeCreate("item", "魔剣");
+    expect(service.knowledgeFile(item.id).text).toContain("owner:\nweight:");
+    expect(service.knowledgeSetFile("classes", "owner: text").problems[0]!.message).toMatch(/Start with the name of a class/);
   });
 });
