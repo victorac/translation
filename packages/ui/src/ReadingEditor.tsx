@@ -87,6 +87,7 @@ export function ReadingEditor({ docKey, text, problems, onText }: { docKey: stri
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           EditorView.lineWrapping,
+          EditorView.theme({ "&": { backgroundColor: "transparent", color: "var(--text)" }, ".cm-content": { caretColor: "var(--text)" }, ".cm-cursor": { borderLeftColor: "var(--text)" } }),
           problemsField,
           decorations,
           EditorView.updateListener.of((u) => {
