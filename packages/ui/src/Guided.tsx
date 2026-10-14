@@ -285,8 +285,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
                   </label>
                   {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
 
-                  <h4>Names in this block</h4>
-                  {base.names.length === 0 && <p className="hint guided-hint">No names found. Add a word from the text below.</p>}
+                  <h4>Glossary in this block</h4>
+                  {base.names.length === 0 && <p className="hint guided-hint">Nothing from the glossary found in this block. Add a word from the text below.</p>}
                   <ul className="guided-glossary">
                     {base.names.map((n) => (
                       <NameRow

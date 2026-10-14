@@ -464,3 +464,8 @@ button.toggle .tag { margin-left: 0.35rem; }
 .name-attr-links .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0 0.35rem; border: 1px solid var(--border); border-radius: 1rem; color: var(--text); }
 .chip button { padding: 0 0.15rem; background: transparent; border: none; color: var(--muted); }
+
+.glossary-head .kind-select { flex: none; width: auto; max-width: 7.5rem; padding: 0.15rem 0.3rem; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+.check-mark { color: var(--warn); font-weight: 700; }
+.glossary-head .kind-select { max-width: 6.5rem; text-transform: none; letter-spacing: 0; font-size: 0.82em; }

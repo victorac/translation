@@ -667,6 +667,8 @@ describe("translating step by step", () => {
     await service.guidedInterpret(0);
     const kind = async (w: string) => (await service.guidedAddName(0, w)).blocks[0]!.interpretation!.names.find((n) => n.source === w)?.kind;
     expect(await kind("田")).toBe("term"); // one kanji: not a name
+    expect(await kind("掃除当番")).toBe("term"); // a word the user adds is a term, even when it could be read as a name
+    expect((await service.guidedAddName(0, "掃除当番")).blocks[0]!.interpretation!.names.find((n) => n.source === "掃除当番")!.english).toBe("");
     expect(await kind("魔法使い")).toBe("term");
     expect(await kind("桜台学園")).toBe("organization"); // ends like one
   });
@@ -705,6 +707,25 @@ describe("translating step by step", () => {
     service.guidedSetKind("花子", "term");
     expect(names().find((n) => n.source === "花子")).toMatchObject({ kind: "term", attrs: {} });
     expect(() => service.guidedSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
+    void read;
+  });
+
+  it("clears the English name a person or family got from its reading when it is changed to another kind, but not one the user wrote", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "鈴木花子は山田太郎に会った。", blockSize: "normal" });
+    const read = await service.guidedInterpret(0);
+    const english = (source: string) => service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === source)!.english;
+    expect(english("鈴木花子")).toBe("Suzuki Hanako");
+    service.guidedSetKind("鈴木花子", "term");
+    expect(english("鈴木花子")).toBe(""); // made from a reading, which means nothing for a term
+    // Written by the user, it stays.
+    const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
+    service.knowledgeSave({ id: taro.id, kind: "term", source: taro.source, target: "Taro", hint: "", category: "character", aliases: [], attrs: {}, text: "", about: null });
+    service.guidedSetKind("山田太郎", "term");
+    expect(english("山田太郎")).toBe("Taro");
     void read;
   });
 

@@ -1392,6 +1392,8 @@ export class WorkspaceService {
     const target = classes.find((c) => c.name === kind);
     if (!target) throw new UserError("bad_kind", `There is no kind of topic called ${kind}.`);
     this.knowledge.patch(e.id, (x) => {
+      // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
+      if (x.status === "suggested" && x.origin.by === "model" && (x.category === "character" || x.category === "family") && kind !== "character" && kind !== "family") x.target = "";
       x.category = kind;
       for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
       x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
@@ -1417,9 +1419,10 @@ export class WorkspaceService {
       const guess = nameGuess(word, readings[word]);
       // A word that is already another way to write a person's name stands for that person.
       const owner = this.knowledge.all().find((e) => e.kind === "term" && e.category === "character" && e.aliases.includes(word));
-      // A word the user adds is a term, unless it looks like a name (two to four kanji the dictionary can read) or ends like a family, place or organization.
-      const looksLikeName = guess.kind === "character" && /^[\u4E00-\u9FFF]{2,4}$/.test(word) && guess.english !== "";
-      const asTerm = owner !== undefined || (guess.kind === "character" && !looksLikeName);
+      // A word the user adds is a term, unless it ends like a family, a place or an organization. People are found by the dictionary;
+      // one it missed is changed to a person from the row.
+      // A word that stands for a person is a term as well.
+      const asTerm = owner !== undefined || guess.kind === "character";
       this.suggestTopic({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], ...(owner ? { refersTo: owner.source } : {}) }, { by: "user" });
     }
     if (!interp.names.some((n) => n.source === sourceName)) interp.names.push({ source: sourceName, english: "", kind: "term", aliases: [], reading: "", known: false });

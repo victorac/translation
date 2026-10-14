@@ -38,22 +38,23 @@ export function NameRow({ name, classes, topics, onOpen, onKind, onAttribute }: 
         <button className="glossary-row" onClick={onOpen} title="Open this topic in the knowledge base">
           <span className="name-source">{name.source}</span>
           <span className={name.english.trim() === "" ? "name-english missing" : "name-english"}>{name.english.trim() === "" ? "needs an English name" : name.english}</span>
-          <span className="tag">{KIND_LABEL[name.kind] ?? name.kind}</span>
-          {!name.known && <span className="tag warn-tag">to check</span>}
+          {!name.known && (
+            <span className="check-mark" title="Suggested by the app: not accepted yet">
+              ?
+            </span>
+          )}
         </button>
+        <select className="kind-select" aria-label={`Kind of ${name.source}`} title="What kind of topic this is" value={name.kind} onChange={(e) => onKind(e.target.value)}>
+          {classes.length === 0 && <option value={name.kind}>{KIND_LABEL[name.kind] ?? name.kind}</option>}
+          {classes.map((c) => (
+            <option key={c.name} value={c.name}>
+              {KIND_LABEL[c.name] ?? c.name}
+            </option>
+          ))}
+        </select>
       </div>
       {open && (
         <div className="name-attrs">
-          <label>
-            Kind
-            <select value={name.kind} onChange={(e) => onKind(e.target.value)}>
-              {classes.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {KIND_LABEL[c.name] ?? c.name}
-                </option>
-              ))}
-            </select>
-          </label>
           {options.map((a) => {
             const chosen = attrs[a.key] ?? [];
             if (a.kind === "choice")
