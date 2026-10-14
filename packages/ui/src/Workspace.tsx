@@ -304,8 +304,9 @@ export function Workspace({
     setWorking("translate");
     const found = await locate();
     // Paragraphs that share source text with the one under the cursor are written again together.
-    const range = (found ? rewriteRange(found, sel.from, sel.to) : null) ?? wholeParagraphs(translation, sel.from, sel.to)!;
-    const source = "source" in range ? range.source : null;
+    const grown = found ? rewriteRange(found, sel.from, sel.to) : null;
+    const range: { from: number; to: number } = grown ?? wholeParagraphs(translation, sel.from, sel.to)!;
+    const source = grown?.source ?? null;
     const place: { source?: { start: number; end: number } } = source ? { source } : {};
     const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: range.from, to: range.to, ...place }));
     if (s) {
