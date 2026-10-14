@@ -1,5 +1,6 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
+import { GLOSSARY_LABEL, NOTES_LABEL } from "./labels.js";
 import { glossaryLine, relevantEntries, targetVariants } from "./glossary.js";
 import { backupMaterial, fitMaterial, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
@@ -76,10 +77,10 @@ export function configHash(run: ModelRun): string {
 }
 
 const SOURCE_LABEL = "SOURCE_BLOCK:";
-export const GLOSSARY_LABEL = "GLOSSARY:";
+
 const SUMMARY_LABEL = "STORY SO FAR (a summary of the whole chapter; reference only, do not translate):";
 const SCENE_LABEL = "SCENE (what is happening around this block; reference only, do not translate):";
-export const NOTES_LABEL = "NOTES (background about the story and its people; use it to work out who is speaking and who is addressed; do not translate):";
+
 const CONTEXT_LABEL = "CONTEXT (reference only, do not translate):";
 const UNAVAILABLE = "(not available)";
 

@@ -81,6 +81,11 @@ export function Workspace({
   const area = useRef<HTMLTextAreaElement>(null);
   const [sel, setSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
   const [mapped, setMapped] = useState<{ start: number; end: number } | null>(null);
+  // The paragraph of the translation whose source is being shown (even when it is not known), and what the user has selected in the source.
+  const [mappedFor, setMappedFor] = useState<string | null>(null);
+  const [srcSel, setSrcSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
+  // Places the user has set by hand, which win over the model's answer: for a paragraph of the translation, in a block of the source.
+  const fixes = useRef(new Map<string, { start: number; end: number }>());
   const places = useRef(new Map<string, Located[]>());
   const asking = useRef<string | null>(null);
   const typedAt = useRef(0);
@@ -181,17 +186,19 @@ export function Workspace({
     });
   })();
   const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
-  const hits = mapped ? [mapped] : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  const hits = mappedFor !== null ? (mapped ? [mapped] : []) : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = mapped ? FROM_TRANSLATION : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
+  const looking = mappedFor !== null ? FROM_TRANSLATION : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   useEffect(() => {
     setFocus(null);
     setLineFocus(null);
     setMapped(null);
+    setMappedFor(null);
     setHit(0);
   }, [state?.current]);
   const look = (source: string) => {
     setMapped(null);
+    setMappedFor(null);
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
     setOpened((o) => {
@@ -203,12 +210,14 @@ export function Workspace({
   };
   const lookAtLine = (i: number) => {
     setMapped(null);
+    setMappedFor(null);
     setFocus(null);
     setLineFocus((f) => (f === i ? null : i));
     setHit(0);
   };
   const stopLooking = () => {
     setMapped(null);
+    setMappedFor(null);
     setFocus(null);
     setLineFocus(null);
   };
@@ -292,12 +301,20 @@ export function Workspace({
    */
   const placeKey = (): string | null => (block && model ? [documentId, model.name, block.index, block.text, translation].join("\u0000") : null);
 
+  /** A place set by hand is for one paragraph of the translation, in one block of the source. */
+  const fixKey = (paragraph: string): string => [documentId, block?.index, block?.text, paragraph].join("\u0000");
+  const withFixes = (found: Located[]): Located[] =>
+    found.map((p) => {
+      const fixed = fixes.current.get(fixKey(translation.slice(p.from, p.to)));
+      return fixed ? { ...p, source: fixed } : p;
+    });
+
   /** Where the paragraphs of the translation text come from: the model is asked once for each text, and the answer is kept. */
   const locate = async (): Promise<Located[] | null> => {
     const key = placeKey();
     if (!block || !model || key === null) return null;
     const known = places.current.get(key);
-    if (known) return known;
+    if (known) return withFixes(known);
     if (asking.current === key) return null;
     asking.current = key;
     setActivity((a) => a ?? { what: LOCATING, stop: true });
@@ -305,7 +322,7 @@ export function Workspace({
       const r = await api.invoke("guided.locate", { ...modelInput(block.index), text: translation });
       if (!r.ok) return null;
       places.current.set(key, r.value);
-      return r.value;
+      return withFixes(r.value);
     } finally {
       asking.current = null;
       setActivity((a) => (a?.what === LOCATING ? null : a));
@@ -317,6 +334,7 @@ export function Workspace({
   const findAgain = () => {
     const key = placeKey();
     if (key !== null) places.current.delete(key);
+    if (mappedFor !== null) fixes.current.delete(fixKey(mappedFor));
     follow();
   };
 
@@ -330,10 +348,12 @@ export function Workspace({
       void locate().then((found) => {
         if (!found) return;
         if ((area.current?.selectionStart ?? 0) !== from) return; // the cursor has moved on
+        const at = found.find((p) => from <= p.to && to >= p.from) ?? null;
         setFocus(null);
         setLineFocus(null);
         setHit(0);
-        setMapped(placeOf(found, from, to));
+        setMappedFor(at ? translation.slice(at.from, at.to) : null);
+        setMapped(at?.source ?? null);
       });
     }, 250);
   };
@@ -355,6 +375,7 @@ export function Workspace({
       setState(s);
       places.current.clear();
       setMapped(null);
+      setMappedFor(null);
     } else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setActivity(null);
     setWorking(null);
@@ -380,6 +401,20 @@ export function Workspace({
   const editorBlocks: PreviewBlock[] | null = inSync ? view.blocks.map((b) => ({ index: b.index, text: b.text, estimatedTokens: estimateTokens(b.text), boundaryKind: "paragraph" as const })) : null;
   const currentRange = inSync && block ? { from: starts[view.current]!, to: starts[view.current]! + block.text.length } : null;
   const editorHits: Hit[] = inSync && block ? hits.map((h, i) => ({ from: starts[view.current]! + h.start, to: starts[view.current]! + h.end, current: i === current })) : [];
+  /** The user says where the paragraph comes from: the text selected in the source. */
+  const blockStart = starts[view.current] ?? 0;
+  const selectedHere = inSync && block && srcSel.to > srcSel.from && srcSel.from >= blockStart && srcSel.to <= blockStart + block.text.length;
+  const useMySelection = () => {
+    if (mappedFor === null || !block || !selectedHere) return;
+    const raw = block.text.slice(srcSel.from - blockStart, srcSel.to - blockStart);
+    const start = srcSel.from - blockStart + (raw.length - raw.trimStart().length);
+    const end = srcSel.to - blockStart - (raw.length - raw.trimEnd().length);
+    if (end <= start) return;
+    fixes.current.set(fixKey(mappedFor), { start, end });
+    setMapped({ start, end });
+    setHit(0);
+  };
+
   // Moving to another block with the arrows or the numbers takes the editor there; clicking in the text does not need to.
   const [reveal, setReveal] = useState<{ at: number; n: number } | null>(null);
   useEffect(() => {
@@ -500,7 +535,7 @@ export function Workspace({
                 {looking}
               </Text>
               <Text size="1" color="gray">
-                {hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
+                {hits.length === 0 ? (mappedFor !== null ? "not known" : "not found in the text") : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
               </Text>
               <Flex gap="1">
                 <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
@@ -509,6 +544,11 @@ export function Workspace({
                 <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
                   <ArrowDownIcon />
                 </IconButton>
+                {looking === FROM_TRANSLATION && (
+                  <Button variant="ghost" size="1" color="gray" onClick={useMySelection} disabled={!selectedHere} title="Select the text in the source that this paragraph was made from, then press this">
+                    Use my selection
+                  </Button>
+                )}
                 {looking === FROM_TRANSLATION && (
                   <Button variant="ghost" size="1" color="gray" onClick={findAgain} title="Ask the model again where this paragraph comes from">
                     Find again
@@ -521,7 +561,7 @@ export function Workspace({
             </Flex>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} onSelection={(from, to) => setSrcSel({ from, to })} reveal={reveal} />
           </div>
         </section>
 

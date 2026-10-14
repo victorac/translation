@@ -1,5 +1,5 @@
 import { glossaryLine, targetVariants } from "./glossary.js";
-import { GLOSSARY_LABEL, NOTES_LABEL } from "./prompt.js";
+import { GLOSSARY_LABEL, NOTES_LABEL } from "./labels.js";
 import { splitSentences } from "./steps.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
