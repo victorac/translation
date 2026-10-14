@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { estimateTokens, normalizeSource, occurrencesOf, wholeParagraphs } from "@ltw/domain/pure";
+import { estimateTokens, normalizeSource, occurrencesOf, rewriteRange, wholeParagraphs } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState, Located } from "@ltw/domain";
 import { api } from "./api";
 import type { PreviewBlock } from "./blockMarkers";
@@ -300,13 +300,14 @@ export function Workspace({
 
   /** Writes the paragraph under the cursor (or the paragraphs the selection touches) again; the rest of the text stays as it is. */
   const retranslate = async () => {
-    const range = wholeParagraphs(translation, sel.from, sel.to);
-    if (!block || !model || !range) return;
+    if (!block || !model || !wholeParagraphs(translation, sel.from, sel.to)) return;
     setWorking("translate");
     const found = await locate();
-    const parts = (found ?? []).filter((p) => p.from >= range.from && p.to <= range.to && p.source).map((p) => p.source!);
-    const source = parts.length > 0 ? { start: Math.min(...parts.map((p) => p.start)), end: Math.max(...parts.map((p) => p.end)) } : null;
-    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: range.from, to: range.to, ...(source ? { source } : {}) }));
+    // Paragraphs that share source text with the one under the cursor are written again together.
+    const range = (found ? rewriteRange(found, sel.from, sel.to) : null) ?? wholeParagraphs(translation, sel.from, sel.to)!;
+    const source = "source" in range ? range.source : null;
+    const place: { source?: { start: number; end: number } } = source ? { source } : {};
+    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: range.from, to: range.to, ...place }));
     if (s) {
       setState(s);
       places.current.clear();

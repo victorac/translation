@@ -62,3 +62,25 @@ describe("checking a rewritten part", () => {
     expect(sentenceUnits("「一つ？　二つ。」\n三つ。").map((u) => u.text)).toEqual(["「一つ？　二つ。」", "三つ。"]);
   });
 });
+
+describe("paragraphs that are split or joined", () => {
+  it("clips a range that reaches into the next paragraph", () => {
+    const r = parseLocation("P1: S1-S6\nP2: S3-S4", 2, 8);
+    expect(r[0]).toEqual({ first: 1, last: 3 });
+    expect(r[1]).toEqual({ first: 3, last: 4 });
+  });
+  it("does not trust equal counts when the lengths drift apart", () => {
+    const source = "短い。\n長い長い長い長い長い長い長い長い長い長い長い長い長い長い。";
+    expect(locateByParagraphs(source, "A long text that was joined here and is long.\nB.")).toBeNull();
+  });
+  it("grows the range over paragraphs that share source text", async () => {
+    const { rewriteRange } = await import("./revise.js");
+    const located = [
+      { from: 0, to: 10, source: { start: 0, end: 20 } }, // one source paragraph written as two
+      { from: 12, to: 20, source: { start: 0, end: 20 } },
+      { from: 22, to: 40, source: { start: 22, end: 60 } },
+    ];
+    expect(rewriteRange(located, 14, 14)).toEqual({ from: 0, to: 20, source: { start: 0, end: 20 } });
+    expect(rewriteRange(located, 30, 30)).toEqual({ from: 22, to: 40, source: { start: 22, end: 60 } });
+  });
+});

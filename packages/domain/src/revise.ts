@@ -64,7 +64,7 @@ export function reviseSystem(style: string, sourceLanguage: string, targetLangua
     `${style}\n\n` +
     `Right now you are correcting a ${sourceLanguage} to ${targetLanguage} translation that is already written. The translation is shown with one part marked between ${REDO_OPEN} and ${REDO_CLOSE}; the marked part is one or more whole paragraphs. ` +
     `Write new words for that marked part, from the source text, so that they fit the text before and after it. Always use the exact ${targetLanguage} names given in GLOSSARY. ` +
-    `Reply with the replacement for the marked part only, about as long as the marked part and with the same number of paragraphs: no markers, no explanation, and never repeat the text before or after it.`
+    `Reply with the replacement for the marked part only, about as long as the marked part: no markers, no explanation, and never repeat the text before or after it.`
   );
 }
 
@@ -172,9 +172,16 @@ export function parseLocation(reply: string, paragraphs: number, sentences: numb
   for (let p = 1; p <= paragraphs; p++) {
     const r = found.get(p) ?? null;
     if (r && r.first >= floor) {
-      out.push(r);
+      out.push({ ...r });
       floor = r.first;
     } else out.push(null);
+  }
+  // A paragraph cannot reach past where the next one starts (they may share one sentence when a sentence is split between them).
+  for (let i = 0; i < out.length; i++) {
+    const r = out[i];
+    if (!r) continue;
+    const next = out.slice(i + 1).find((x) => x !== null);
+    if (next && r.last > next.first) r.last = Math.max(r.first, next.first);
   }
   return out;
 }
@@ -195,6 +202,38 @@ export function locateByParagraphs(source: string, translation: string): Located
   const s = paragraphsOf(source);
   const t = paragraphsOf(translation);
   if (s.length !== t.length || s.length === 0) return null;
+  // A paragraph that is joined or split somewhere makes the lengths drift apart even when the counts match: then the model is asked.
+  const ratio = t.reduce((n, p) => n + p.text.length, 0) / Math.max(1, s.reduce((n, p) => n + p.text.length, 0));
+  for (let i = 0; i < s.length; i++) {
+    if (s[i]!.text.length < 12 && t[i]!.text.length < 12) continue;
+    const r = t[i]!.text.length / Math.max(1, s[i]!.text.length) / ratio;
+    if (r < 0.33 || r > 3) return null;
+  }
   if (s.length === 1 && sentenceUnits(source).length > 1) return null; // one paragraph: the sentences say more
   return t.map((p, i) => ({ from: p.start, to: p.end, source: { start: s[i]!.start, end: s[i]!.end } }));
+}
+
+/**
+ * The translation paragraphs to write again, and the source text they stand for, when the paragraph under the cursor is wanted.
+ * A paragraph may share source sentences with its neighbours (one source paragraph written as two, or two written as one), so the
+ * range grows until the source text it covers belongs to no paragraph outside it. Null when the place is not known.
+ */
+export function rewriteRange(located: readonly Located[], from: number, to: number): { from: number; to: number; source: { start: number; end: number } | null } | null {
+  const at = located.map((p, i) => ({ p, i })).filter(({ p }) => p.from <= Math.max(from, to) && p.to >= Math.min(from, to));
+  if (at.length === 0) return null;
+  let lo = at[0]!.i;
+  let hi = at[at.length - 1]!.i;
+  const span = () => {
+    const sources = located.slice(lo, hi + 1).map((p) => p.source).filter((x): x is { start: number; end: number } => x !== null);
+    return sources.length === 0 ? null : { start: Math.min(...sources.map((x) => x.start)), end: Math.max(...sources.map((x) => x.end)) };
+  };
+  for (;;) {
+    const src = span();
+    if (!src) break;
+    const share = (i: number) => located[i]?.source && located[i]!.source!.start < src.end && located[i]!.source!.end > src.start;
+    if (lo > 0 && share(lo - 1)) lo--;
+    else if (hi < located.length - 1 && share(hi + 1)) hi++;
+    else break;
+  }
+  return { from: located[lo]!.from, to: located[hi]!.to, source: span() };
 }
