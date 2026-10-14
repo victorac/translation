@@ -71,7 +71,10 @@ import {
   parseLocation,
   placeLocation,
   paragraphsOf,
-  splitSentences,
+  sentenceUnits,
+  withoutEcho,
+  tooLong,
+  targetVariants,
   type Located,
   validatePrompt,
   type Backend,
@@ -1632,9 +1635,11 @@ export class WorkspaceService {
 
   /**
    * Writes the selected part of a block's translation again, with the glossary as it is now, and leaves the rest of the text as
-   * the user has it. The request has the whole source block and only the text near the part, so it fits a small context.
+   * the user has it. When the place the text comes from is known, only that source text and its glossary words are sent.
+   * The answer is checked: words repeated from around the part are dropped, an answer much longer than the part is asked for
+   * again, and so is one that leaves out a glossary name of that source text.
    */
-  async guidedRetranslate(input: GuidedModelInput & { index: number; text: string; from: number; to: number }): Promise<GuidedState> {
+  async guidedRetranslate(input: GuidedModelInput & { index: number; text: string; from: number; to: number; source?: { start: number; end: number } | undefined }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
     if (!block.interpretation) await this.guidedInterpret(input.index);
     this.guidedView();
@@ -1646,36 +1651,60 @@ export class WorkspaceService {
       this.commitWords(interp);
       this.guidedView();
       const system = reviseSystem(this.styleSystem(input), input.sourceLanguage, input.targetLanguage);
-      const glossary = glossaryFor(interp, block.text);
-      const notes = notesFor(interp, block.text);
-      // The text around the part is cut shorter until the request and the reply fit the context.
-      let user = "";
-      for (const window of [800, 400, 150, 0]) {
-        user = reviseMessage(glossary, notes, block.text, text, from, to, window);
-        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-        if (window === 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Select less, raise the context size, or use smaller blocks.`);
-      }
+      const known = input.source && input.source.start < input.source.end && input.source.end <= block.text.length;
+      const source = known ? block.text.slice(input.source!.start, input.source!.end) : block.text;
+      const glossary = glossaryFor(interp, source);
+      const notes = notesFor(interp, source);
       const original = text.slice(from, to);
-      const reply = await this.askModel(
-        {
-          backend: input.backend,
-          modelId: input.modelId,
-          maxOutputTokens: input.maxOutputTokens,
-          temperature: input.temperature,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          practiceReply: () => `${original.trim()} (written again)`,
-        },
-        abort,
-      );
-      if (reply === null) return this.guidedView(); // stopped
-      const part = revisedPart(reply, original);
-      if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the selected part.");
+      const before = text.slice(0, from);
+      const after = text.slice(to);
+      const names = glossary.map((g) => ({ source: g.source, aliases: g.aliases ?? [], wanted: targetVariants(g.target) })).filter((g) => g.wanted.length > 0);
+      let complaint = "";
+      let part: string | null = null;
+      let missing: string[] = [];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        // The text around the part is cut shorter until the request and the reply fit the context.
+        let user = "";
+        for (const window of [800, 400, 150, 0]) {
+          user = reviseMessage(glossary, notes, source, text, from, to, window, !!known) + complaint;
+          if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+          if (window === 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Select less, raise the context size, or use smaller blocks.`);
+        }
+        const reply = await this.askModel(
+          {
+            backend: input.backend,
+            modelId: input.modelId,
+            maxOutputTokens: input.maxOutputTokens,
+            temperature: input.temperature,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            practiceReply: () => `${original.trim()} (written again)`,
+          },
+          abort,
+        );
+        if (reply === null) return this.guidedView(); // stopped
+        part = revisedPart(withoutEcho(reply, before, after), original);
+        if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the selected part.");
+        if (tooLong(part, original)) {
+          complaint = `\n\nYour last answer was too long: it was not accepted. Write only the new words for the marked part, about ${original.trim().length} characters, and nothing before or after it.`;
+          part = null;
+          continue;
+        }
+        // The names of the glossary that belong to this source text must be in the paragraph that now stands there.
+        const result = text.slice(0, from) + part + text.slice(to);
+        const paragraph = paragraphsOf(result).find((p) => from <= p.end && from + part!.length >= p.start);
+        const hay = (paragraph?.text ?? part).toLocaleLowerCase();
+        missing = names.filter((g) => [g.source, ...g.aliases].some((n) => source.includes(n)) && !g.wanted.some((w) => hay.includes(w.toLocaleLowerCase()))).map((g) => `${g.source} => ${g.wanted[0]}`);
+        if (missing.length === 0) break;
+        complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Use them exactly as written.`;
+      }
+      if (part === null) throw new UserError("invalid_response", "The model wrote more than the selected part. Try again, or select a larger part.");
       block.translation = text.slice(0, from) + part + text.slice(to);
       block.status = "translated";
       block.error = null;
+      block.warning = missing.length > 0 ? `The new text does not use the glossary names: ${missing.join("; ")}. Fix it by hand or try again.` : null;
     } finally {
       this.analysisAbort = null;
     }
@@ -1693,7 +1722,7 @@ export class WorkspaceService {
     const byParagraph = locateByParagraphs(block.text, input.text);
     if (byParagraph) return byParagraph;
     const paragraphs = paragraphsOf(input.text).length;
-    const sentences = splitSentences(block.text).length;
+    const sentences = sentenceUnits(block.text).length;
     if (paragraphs === 0) return [];
     const abort = this.beginSideRequest();
     try {

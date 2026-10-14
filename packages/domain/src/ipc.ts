@@ -239,7 +239,7 @@ export interface CommandMap {
   "guided.translate": GuidedModelInput & { index: number };
   "guided.setTranslation": { index: number; text: string };
   /** Writes the selected part (from..to) of the translation text again, and keeps the rest of the text as it is. */
-  "guided.retranslate": GuidedModelInput & { index: number; text: string; from: number; to: number };
+  "guided.retranslate": GuidedModelInput & { index: number; text: string; from: number; to: number; source?: { start: number; end: number } };
   /** Where each paragraph of the translation text comes from in the source block. */
   "guided.locate": GuidedModelInput & { index: number; text: string };
   "knowledge.files": undefined;

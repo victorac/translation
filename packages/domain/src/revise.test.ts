@@ -51,3 +51,14 @@ describe("locating", () => {
     expect(paragraphsOf("a\n\n  b ")).toEqual([{ start: 0, end: 1, text: "a" }, { start: 5, end: 6, text: "b" }]);
   });
 });
+
+describe("checking a rewritten part", () => {
+  it("drops words repeated from around the part", async () => {
+    const { withoutEcho, tooLong, sentenceUnits } = await import("./revise.js");
+    expect(withoutEcho("had been enchanted by me. The Beast King's Fang, and then", "weapons used by adventurers in this guild, had been enchanted by me. ", ", and then more")).toBe("The Beast King's Fang");
+    expect(tooLong("x".repeat(120), "The Fang of the Beast King")).toBe(true);
+    expect(tooLong("The Beast King's Fang", "The Fang of the Beast King")).toBe(false);
+    // two sentences inside one quote are one piece
+    expect(sentenceUnits("「一つ？　二つ。」\n三つ。").map((u) => u.text)).toEqual(["「一つ？　二つ。」", "三つ。"]);
+  });
+});

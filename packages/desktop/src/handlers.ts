@@ -108,7 +108,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   "guided.setKind": z.object({ source: z.string().min(1).max(200), kind: z.string().min(1).max(100) }),
   "guided.translate": guidedModel,
   "guided.setTranslation": z.object({ index: z.number().int().min(0).max(100_000), text: z.string().max(5_000_000) }),
-  "guided.retranslate": guidedModel.extend({ text: z.string().max(5_000_000), from: z.number().int().min(0), to: z.number().int().min(0) }),
+  "guided.retranslate": guidedModel.extend({ text: z.string().max(5_000_000), from: z.number().int().min(0), to: z.number().int().min(0), source: z.object({ start: z.number().int().min(0), end: z.number().int().min(0) }).optional() }),
   "guided.locate": guidedModel.extend({ text: z.string().max(5_000_000) }),
   "notes.cancel": z.undefined(),
   "knowledge.list": z.object({ text: z.string().max(500).optional(), kind: z.enum(["term", "note", "scene", "summary"]).optional(), status: z.enum(["suggested", "confirmed"]).optional(), by: z.enum(["user", "model"]).optional() }),

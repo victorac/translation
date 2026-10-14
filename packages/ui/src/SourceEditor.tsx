@@ -118,8 +118,8 @@ const theme = EditorView.theme({
   ".cm-cursor": { borderLeftColor: "var(--text)" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
   ".cm-placeholder": { color: "var(--muted)" },
-  ".cm-hit": { backgroundColor: "color-mix(in srgb, var(--warn) 30%, transparent)", borderRadius: "3px" },
-  ".cm-hit-current": { backgroundColor: "color-mix(in srgb, var(--accent) 50%, transparent)", outline: "2px solid var(--accent)" },
+  ".cm-hit": { backgroundColor: "color-mix(in srgb, var(--warn) 14%, transparent)" },
+  ".cm-hit-current": { backgroundColor: "color-mix(in srgb, var(--accent) 12%, transparent)", boxShadow: "inset 0 -2px 0 var(--accent)" },
   ".cm-blk-current": { boxShadow: "inset 3px 0 0 var(--accent)" },
 });
 

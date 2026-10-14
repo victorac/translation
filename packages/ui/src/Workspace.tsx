@@ -53,7 +53,7 @@ export function Workspace({
   onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
 }) {
   const [state, setState] = useState<GuidedState | null>(null);
-  const [working, setWorking] = useState<"read" | "translate" | "locate" | null>(null);
+  const [working, setWorking] = useState<"read" | "translate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   const [translation, setTranslation] = useState("");
@@ -74,6 +74,9 @@ export function Workspace({
   const [sel, setSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
   const [mapped, setMapped] = useState<{ start: number; end: number } | null>(null);
   const places = useRef(new Map<string, Located[]>());
+  const asking = useRef<string | null>(null);
+  const typedAt = useRef(0);
+  const follower = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
   const block = state ? state.blocks[state.current] : undefined;
@@ -258,41 +261,56 @@ export function Workspace({
     targetLanguage: setup.targetLanguage,
   });
 
+  /** Where the paragraphs of the translation text come from: asked once for each text (the app answers by itself when the paragraphs match, the model is asked when they do not). */
+  const locate = async (): Promise<Located[] | null> => {
+    if (!block || !model) return null;
+    const key = `${block.index}:${translation}`;
+    const known = places.current.get(key);
+    if (known) return known;
+    if (asking.current === key) return null;
+    asking.current = key;
+    try {
+      const r = await api.invoke("guided.locate", { ...modelInput(block.index), text: translation });
+      if (!r.ok) return null;
+      places.current.set(key, r.value);
+      return r.value;
+    } finally {
+      asking.current = null;
+    }
+  };
+  const placeOf = (found: Located[], from: number, to: number) => found.find((p) => from <= p.to && to >= p.from)?.source ?? null;
+
+  /** Moving the cursor in the translation shows in the source what it was made from. */
+  const follow = () => {
+    if (follower.current) clearTimeout(follower.current);
+    follower.current = setTimeout(() => {
+      if (Date.now() - typedAt.current < 1500) return; // typing moves the cursor too; wait for it to stop
+      const from = area.current?.selectionStart ?? 0;
+      const to = area.current?.selectionEnd ?? from;
+      void locate().then((found) => {
+        if (!found) return;
+        if ((area.current?.selectionStart ?? 0) !== from) return; // the cursor has moved on
+        setFocus(null);
+        setLineFocus(null);
+        setHit(0);
+        setMapped(placeOf(found, from, to));
+      });
+    }, 250);
+  };
+
   /** Writes the selected part of the translation again and leaves the rest of the text as it is. */
   const retranslate = async () => {
     if (!block || !model || sel.from >= sel.to || translation.slice(sel.from, sel.to).trim() === "") return;
     setWorking("translate");
-    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: sel.from, to: sel.to }));
+    const found = await locate();
+    const source = found ? placeOf(found, sel.from, sel.to) : null;
+    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: sel.from, to: sel.to, ...(source ? { source } : {}) }));
     if (s) {
       setState(s);
       places.current.clear();
       setMapped(null);
     } else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setWorking(null);
-  };
-
-  /** Shows in the source the text that the paragraph under the cursor was made from. */
-  const showInSource = async (ask: boolean) => {
-    if (!block || !model) return;
-    const key = `${block.index}:${translation}`;
-    let found = places.current.get(key);
-    if (!found) {
-      if (!ask) return;
-      setWorking("locate");
-      const r = await call(() => api.invoke("guided.locate", { ...modelInput(block.index), text: translation }));
-      setWorking(null);
-      if (!r) return;
-      places.current.set(key, r);
-      found = r;
-    }
-    const from = area.current?.selectionStart ?? sel.from;
-    const to = area.current?.selectionEnd ?? sel.to;
-    const at = found.find((p) => from <= p.to && to >= p.from) ?? null;
-    setFocus(null);
-    setLineFocus(null);
-    setHit(0);
-    setMapped(at?.source ?? null);
-    if (ask && !at?.source) setError("Could not tell where that comes from.");
   };
 
   const saveTranslation = async () => {
@@ -612,18 +630,25 @@ export function Workspace({
                   variant="soft"
                   aria-label="Translation of this block"
                   value={translation}
-                  onChange={(e) => setTranslation(e.target.value)}
+                  onChange={(e) => {
+                    typedAt.current = Date.now();
+                    setTranslation(e.target.value);
+                  }}
                   onBlur={() => void saveTranslation()}
-                  onSelect={(e) => setSel({ from: e.currentTarget.selectionStart, to: e.currentTarget.selectionEnd })}
-                  onClick={() => void showInSource(false)}
+                  onSelect={(e) => {
+                    setSel({ from: e.currentTarget.selectionStart, to: e.currentTarget.selectionEnd });
+                    follow();
+                  }}
                   spellCheck={false}
                 />
+                {block.warning && (
+                  <Text as="p" size="1" color="amber" mx="3" role="status">
+                    {block.warning}
+                  </Text>
+                )}
                 <Flex gap="2" p="3" wrap="wrap" className="guided-foot">
                   <Button variant="soft" onClick={() => void retranslate()} disabled={working !== null || !model || translation.slice(sel.from, sel.to).trim() === ""} title="Write the selected part again, with the glossary as it is now. The rest of the text stays as it is.">
                     Retranslate selection
-                  </Button>
-                  <Button variant="soft" color="gray" onClick={() => void showInSource(true)} disabled={working !== null || !model} title="Show in the source what the paragraph under the cursor was made from">
-                    {working === "locate" ? "Looking…" : "Show in source"}
                   </Button>
                   <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
                     {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
