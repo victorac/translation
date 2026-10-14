@@ -51,6 +51,8 @@ const COMMANDS = new Set([
   "guided.setEnglish",
   "guided.setUse",
   "guided.translate",
+  "guided.retranslate",
+  "guided.locate",
   "guided.setTranslation",
   "knowledge.files",
   "knowledge.file",

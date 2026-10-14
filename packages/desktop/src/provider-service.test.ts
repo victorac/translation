@@ -454,6 +454,31 @@ describe("translating step by step", () => {
     expect(names().find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
   });
 
+  it("writes a selected part of a translation again and keeps the rest, and finds where a paragraph comes from", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。太郎も笑った。\n\n「おはよう」と花子は言った。", blockSize: "normal" });
+    await service.guidedTranslate({ ...model, index: 0 });
+    const mine = "Hanako laughed. Taro WRONG laughed.\n\nShe said good morning.";
+    const from = mine.indexOf("Taro WRONG laughed.");
+    const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from, to: from + "Taro WRONG laughed.".length });
+    const sent = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(sent).toContain("Hanako laughed. [[REDO]]Taro WRONG laughed.[[/REDO]]");
+    const text = done.blocks[0]!.translation;
+    expect(text.startsWith("Hanako laughed. ")).toBe(true);
+    expect(text.endsWith("\n\nShe said good morning.")).toBe(true);
+    expect(text).toContain("EN(qwen2.5-7b-instruct)"); // what the model wrote is in place of the part
+    expect(text).not.toContain("[[REDO]]");
+    // Same number of paragraphs: each comes from the paragraph in the same place, without asking the model.
+    const asked = bodies(lm).length;
+    const placed = await service.guidedLocate({ ...model, index: 0, text: "A.\n\nB." });
+    const src = done.blocks[0]!.text;
+    expect(placed.map((p) => src.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。太郎も笑った。", "「おはよう」と花子は言った。"]);
+    expect(bodies(lm).length).toBe(asked);
+  });
+
   it("gives a later block the end of the block before it, source and translation", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

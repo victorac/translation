@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { estimateTokens, normalizeSource, occurrencesOf } from "@ltw/domain/pure";
-import type { GuidedName, GuidedState } from "@ltw/domain";
+import type { GuidedName, GuidedState, Located } from "@ltw/domain";
 import { api } from "./api";
 import type { PreviewBlock } from "./blockMarkers";
 import { KnowledgeFiles } from "./KnowledgeFiles";
@@ -53,7 +53,7 @@ export function Workspace({
   onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
 }) {
   const [state, setState] = useState<GuidedState | null>(null);
-  const [working, setWorking] = useState<"read" | "translate" | null>(null);
+  const [working, setWorking] = useState<"read" | "translate" | "locate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   const [translation, setTranslation] = useState("");
@@ -69,6 +69,11 @@ export function Workspace({
   // The cursor was put in a block by the user; the editor then does not need to scroll to it.
   const fromCursor = useRef(false);
   const [topics, setTopics] = useState<TopicRef[]>([]);
+  // The part of the translation that is selected (or where the cursor is), and the part of the source it comes from.
+  const area = useRef<HTMLTextAreaElement>(null);
+  const [sel, setSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
+  const [mapped, setMapped] = useState<{ start: number; end: number } | null>(null);
+  const places = useRef(new Map<string, Located[]>());
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
   const block = state ? state.blocks[state.current] : undefined;
@@ -150,15 +155,17 @@ export function Workspace({
     });
   })();
   const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
-  const hits = lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  const hits = mapped ? [mapped] : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
+  const looking = mapped ? "From the translation" : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   useEffect(() => {
     setFocus(null);
     setLineFocus(null);
+    setMapped(null);
     setHit(0);
   }, [state?.current]);
   const look = (source: string) => {
+    setMapped(null);
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
     setOpened((o) => {
@@ -169,11 +176,13 @@ export function Workspace({
     setHit(0);
   };
   const lookAtLine = (i: number) => {
+    setMapped(null);
     setFocus(null);
     setLineFocus((f) => (f === i ? null : i));
     setHit(0);
   };
   const stopLooking = () => {
+    setMapped(null);
     setFocus(null);
     setLineFocus(null);
   };
@@ -235,6 +244,55 @@ export function Workspace({
     if (s) setState(s);
     else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setWorking(null);
+  };
+
+  const modelInput = (index: number) => ({
+    index,
+    backend: setup.backend,
+    modelId: model!.name,
+    contextLimit: model!.contextLimit,
+    maxOutputTokens: model!.maxOutputTokens,
+    temperature: model!.temperature,
+    promptId: model!.promptId,
+    sourceLanguage: setup.sourceLanguage,
+    targetLanguage: setup.targetLanguage,
+  });
+
+  /** Writes the selected part of the translation again and leaves the rest of the text as it is. */
+  const retranslate = async () => {
+    if (!block || !model || sel.from >= sel.to || translation.slice(sel.from, sel.to).trim() === "") return;
+    setWorking("translate");
+    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: sel.from, to: sel.to }));
+    if (s) {
+      setState(s);
+      places.current.clear();
+      setMapped(null);
+    } else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    setWorking(null);
+  };
+
+  /** Shows in the source the text that the paragraph under the cursor was made from. */
+  const showInSource = async (ask: boolean) => {
+    if (!block || !model) return;
+    const key = `${block.index}:${translation}`;
+    let found = places.current.get(key);
+    if (!found) {
+      if (!ask) return;
+      setWorking("locate");
+      const r = await call(() => api.invoke("guided.locate", { ...modelInput(block.index), text: translation }));
+      setWorking(null);
+      if (!r) return;
+      places.current.set(key, r);
+      found = r;
+    }
+    const from = area.current?.selectionStart ?? sel.from;
+    const to = area.current?.selectionEnd ?? sel.to;
+    const at = found.find((p) => from <= p.to && to >= p.from) ?? null;
+    setFocus(null);
+    setLineFocus(null);
+    setHit(0);
+    setMapped(at?.source ?? null);
+    if (ask && !at?.source) setError("Could not tell where that comes from.");
   };
 
   const saveTranslation = async () => {
@@ -548,8 +606,25 @@ export function Workspace({
               </div>
             ) : block.status === "translated" ? (
               <>
-                <TextArea className="guided-translation" variant="soft" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck={false} />
-                <Flex gap="2" p="3" className="guided-foot">
+                <TextArea
+                  ref={area}
+                  className="guided-translation"
+                  variant="soft"
+                  aria-label="Translation of this block"
+                  value={translation}
+                  onChange={(e) => setTranslation(e.target.value)}
+                  onBlur={() => void saveTranslation()}
+                  onSelect={(e) => setSel({ from: e.currentTarget.selectionStart, to: e.currentTarget.selectionEnd })}
+                  onClick={() => void showInSource(false)}
+                  spellCheck={false}
+                />
+                <Flex gap="2" p="3" wrap="wrap" className="guided-foot">
+                  <Button variant="soft" onClick={() => void retranslate()} disabled={working !== null || !model || translation.slice(sel.from, sel.to).trim() === ""} title="Write the selected part again, with the glossary as it is now. The rest of the text stays as it is.">
+                    Retranslate selection
+                  </Button>
+                  <Button variant="soft" color="gray" onClick={() => void showInSource(true)} disabled={working !== null || !model} title="Show in the source what the paragraph under the cursor was made from">
+                    {working === "locate" ? "Looking…" : "Show in source"}
+                  </Button>
                   <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
                     {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
                     {block.index < view.blocks.length - 1 && <ArrowRightIcon />}

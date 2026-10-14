@@ -53,6 +53,17 @@ const startInput = z.object({
     }),
   });
 
+const guidedModel = z.object({
+  index: z.number().int().min(0).max(100_000),
+  backend: z.enum(["provider", "practice"]),
+  modelId: z.string().min(1).max(300),
+  contextLimit: z.number().int().min(512).max(10_000_000),
+  maxOutputTokens: z.number().int().min(16).max(1_000_000),
+  temperature: z.number().min(0).max(2),
+  promptId: z.string().max(200).optional(),
+  sourceLanguage: z.string().max(100),
+  targetLanguage: z.string().max(100),
+});
 const syncInput = startInput.pick({ sourceLanguage: true, targetLanguage: true, models: true, glossary: true, notes: true, knowledge: true, prompts: true, blockSize: true });
 
 const schemas: Record<CommandName, z.ZodType> = {
@@ -95,18 +106,10 @@ const schemas: Record<CommandName, z.ZodType> = {
   "guided.setUse": z.object({ source: z.string().min(1).max(200), use: z.boolean() }),
   "guided.setEnglish": z.object({ source: z.string().min(1).max(200), english: z.string().max(300) }),
   "guided.setKind": z.object({ source: z.string().min(1).max(200), kind: z.string().min(1).max(100) }),
-  "guided.translate": z.object({
-    index: z.number().int().min(0).max(100_000),
-    backend: z.enum(["provider", "practice"]),
-    modelId: z.string().min(1).max(300),
-    contextLimit: z.number().int().min(512).max(10_000_000),
-    maxOutputTokens: z.number().int().min(16).max(1_000_000),
-    temperature: z.number().min(0).max(2),
-    promptId: z.string().max(200).optional(),
-    sourceLanguage: z.string().max(100),
-    targetLanguage: z.string().max(100),
-  }),
+  "guided.translate": guidedModel,
   "guided.setTranslation": z.object({ index: z.number().int().min(0).max(100_000), text: z.string().max(5_000_000) }),
+  "guided.retranslate": guidedModel.extend({ text: z.string().max(5_000_000), from: z.number().int().min(0), to: z.number().int().min(0) }),
+  "guided.locate": guidedModel.extend({ text: z.string().max(5_000_000) }),
   "notes.cancel": z.undefined(),
   "knowledge.list": z.object({ text: z.string().max(500).optional(), kind: z.enum(["term", "note", "scene", "summary"]).optional(), status: z.enum(["suggested", "confirmed"]).optional(), by: z.enum(["user", "model"]).optional() }),
   "knowledge.save": z.object({
@@ -208,6 +211,8 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "guided.setUse": (p) => service.guidedSetUse(p.source, p.use),
     "guided.translate": (p) => service.guidedTranslate(p),
     "guided.setTranslation": (p) => service.guidedSetTranslation(p.index, p.text),
+    "guided.retranslate": (p) => service.guidedRetranslate(p),
+    "guided.locate": (p) => service.guidedLocate(p),
     "knowledge.files": () => service.knowledgeFiles(),
     "knowledge.file": (p) => service.knowledgeFile(p.id),
     "knowledge.setFile": (p) => service.knowledgeSetFile(p.id, p.text),
