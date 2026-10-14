@@ -59,6 +59,8 @@ export interface GuidedBlock {
   status: GuidedStatus;
   /** Why the last attempt to translate it failed. */
   error: string | null;
+  /** Something to look at in the translation, such as paragraphs that seem to be missing. */
+  warning?: string | null;
 }
 
 export interface GuidedState {
@@ -190,19 +192,38 @@ export function interpretPassage(input: InterpretInput): Interpretation {
 const shorten = (text: string, n: number): string => (Array.from(text).length > n ? `${Array.from(text).slice(0, n).join("")}…` : text);
 
 /** The notes sent with the block: who is telling it, and who says the lines that are known. */
-export function notesFor(interp: Interpretation): string[] {
+export function notesFor(interp: Interpretation, only?: string): string[] {
   const english = (source: string): string => interp.names.find((n) => n.source === source)?.english || source;
   const notes: string[] = [];
   if (interp.narrator && interp.narratorWord) notes.push(`The narrator, who says ${interp.narratorWord} about himself or herself, is ${english(interp.narrator)}.`);
   for (const n of interp.names) if (n.kind === "character" && n.gender && n.english) notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
-  for (const l of interp.lines) if (l.speaker) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
+  for (const l of interp.lines) if (l.speaker && (only === undefined || only.includes(l.text))) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
   return notes;
 }
 
 /** The glossary entries sent with the block: every name that has an English form. */
-export function glossaryFor(interp: Interpretation): { source: string; target: string; aliases?: string[] }[] {
-  return interp.names.filter((n) => n.english.trim() !== "").map((n) => ({ source: n.source, target: n.english.trim(), ...(n.aliases.length > 0 ? { aliases: n.aliases } : {}) }));
+export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; aliases?: string[] }[] {
+  return interp.names.filter((n) => n.english.trim() !== "" && (only === undefined || [n.source, ...n.aliases].some((s) => only.includes(s)))).map((n) => ({ source: n.source, target: n.english.trim(), ...(n.aliases.length > 0 ? { aliases: n.aliases } : {}) }));
 }
+
+/** Pieces of a block for translating one at a time, so that a small model does not skip or cut off the end of a long one. Paragraphs are never split. */
+export function splitPieces(text: string, tokensPerPiece: number, count: (s: string) => number): string[] {
+  const pieces: string[] = [];
+  let current: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    current.push(line);
+    if (line.trim() !== "" && count(current.join("\n")) >= tokensPerPiece) {
+      pieces.push(current.join("\n").trim());
+      current = [];
+    }
+  }
+  const rest = current.join("\n").trim();
+  if (rest !== "") pieces.push(rest);
+  return pieces;
+}
+
+/** How many paragraphs (non-empty lines) a text has. */
+export const paragraphCount = (text: string): number => text.split(/\r?\n/).filter((l) => l.trim() !== "").length;
 
 /** The last `lines` lines of a text, but never more than `maxChars` characters. */
 export function lastLines(text: string, lines: number, maxChars: number): string {

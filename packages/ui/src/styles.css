@@ -405,9 +405,10 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-dots .dot.interpreted { border-color: var(--accent); }
 .guided-dots .dot.translated { background: var(--accent-soft); border-color: var(--accent); color: inherit; }
 .guided-dots .dot.here { outline: 2px solid var(--accent); outline-offset: 1px; }
-.guided-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.guided-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
-.guided-pane:last-child { border-right: none; }
+.guided-cols { flex: 1; min-height: 0; display: grid; }
+.guided-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.guided-handle { cursor: col-resize; background: var(--border); touch-action: none; }
+.guided-handle:hover, .guided-handle:active { background: var(--accent); }
 .guided-pane h3 { margin: 0; padding: 0.35rem 0.75rem; font-size: 0.85em; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); }
 .guided-pane h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
 .guided-body { flex: 1; min-height: 0; overflow: auto; padding: 0.75rem; }
@@ -420,4 +421,14 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .guided-names .tag { margin-left: 0.35rem; }
 .guided-actions { margin-top: 1rem; }
-@media (max-width: 1000px) { .guided-cols { grid-template-columns: 1fr; overflow: auto; } .guided-pane { border-right: none; border-bottom: 1px solid var(--border); } }
+
+
+.guided-empty { max-width: 32rem; margin: 2rem auto; padding: 0 1rem; display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+.guided-editor { flex: 1; min-height: 0; overflow: auto; }
+.reading-editor, .reading-editor .cm-editor { height: 100%; }
+.reading-editor .cm-editor { font-size: 0.92em; background: transparent; }
+.reading-editor .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0.5rem 0.25rem; }
+.reading-editor .cm-kbf-comment { color: var(--muted); }
+.guided-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); }
+.guided-translation { flex: 1; min-height: 0; resize: none; border: none; outline: none; padding: 0.75rem; background: transparent; color: inherit; font: inherit; line-height: 1.7; }
+.guided-warning { margin: 0; padding: 0.4rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }

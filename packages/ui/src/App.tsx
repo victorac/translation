@@ -117,113 +117,13 @@ export function App() {
     setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
     snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
 
-  // The researcher model reads the text for knowledge, and before translating it chooses the background for each block.
+  // Before translating, the researcher model chooses the background for each block.
   const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
-  const [work, setWork] = useState<{ what: "extract" | "choose" | "merge" | "summarize"; at: number; of: number } | null>(null);
+  const [work, setWork] = useState<{ what: "choose"; at: number; of: number } | null>(null);
   const [workNote, setWorkNote] = useState<string | null>(null);
-  /** The longer account behind the note: what was left out, replaced or flagged. */
-  const [workDetails, setWorkDetails] = useState<string[]>([]);
-  const [showDetails, setShowDetails] = useState(false);
   const stopWork = useRef(false);
   const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
   const blockTexts = split.preview?.blocks.map((b) => b.text) ?? [];
-  const sideRequest = researcher && !busy && !work;
-  const activeTitle = snap?.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Document";
-
-  /** The researcher reads the text block by block and adds what it finds to the knowledge base as suggestions. */
-  const extract = async () => {
-    const s = setupRef.current;
-    if (!researcher || blockTexts.length === 0) return;
-    stopWork.current = false;
-    setWorkNote(null);
-    setWorkDetails([]);
-    setShowDetails(false);
-    let added = 0;
-    const left: string[] = [];
-    const info: string[] = [];
-    // Reading again starts from what you accepted: suggestions nobody checked are dropped, and what you rejected stays rejected.
-    const begin = await api.invoke("knowledge.beginExtraction", { documentId: snap?.activeDocumentId ?? "" });
-    const discarded = begin.ok ? begin.value.discarded : 0;
-    try {
-      for (let i = 0; i < blockTexts.length; i++) {
-        setWork({ what: "extract", at: i + 1, of: blockTexts.length });
-        const r = await api.invoke("notes.analyze", {
-          backend: s.backend,
-          modelId: researcher.name,
-          contextLimit: researcher.contextLimit,
-          maxOutputTokens: researcher.maxOutputTokens,
-          sourceLanguage: s.sourceLanguage,
-          targetLanguage: s.targetLanguage,
-          passage: blockTexts[i]!,
-          documentId: snap?.activeDocumentId ?? "",
-          documentTitle: activeTitle,
-          block: i + 1,
-        });
-        if (stopWork.current || (r.ok && r.value.canceled)) break;
-        if (!r.ok) return setWorkNote(r.error.message);
-        added += r.value.added;
-        left.push(...r.value.notes);
-      }
-      if (stopWork.current) return setWorkNote(`Stopped. ${added} ${added === 1 ? "suggestion was" : "suggestions were"} added so far.`);
-      setWork({ what: "merge", at: 0, of: 0 });
-      const merged = await api.invoke("knowledge.mergeScenes", {
-        backend: s.backend,
-        modelId: researcher.name,
-        contextLimit: researcher.contextLimit,
-        maxOutputTokens: researcher.maxOutputTokens,
-        sourceLanguage: s.sourceLanguage,
-        targetLanguage: s.targetLanguage,
-        documentId: snap?.activeDocumentId ?? "",
-        documentTitle: activeTitle,
-      });
-      if (merged.ok) info.push(...(merged.value.joined > 0 ? [`${merged.value.joined} neighbouring ${merged.value.joined === 1 ? "scene was" : "scenes were"} joined into scenes of several blocks.`] : []));
-      else left.push(`Scenes could not be joined: ${merged.error.message}`);
-      setWork({ what: "summarize", at: 0, of: 0 });
-      const s2 = await api.invoke("knowledge.summarize", {
-        backend: s.backend,
-        modelId: researcher.name,
-        contextLimit: researcher.contextLimit,
-        maxOutputTokens: researcher.maxOutputTokens,
-        sourceLanguage: s.sourceLanguage,
-        targetLanguage: s.targetLanguage,
-        documentId: snap?.activeDocumentId ?? "",
-        documentTitle: activeTitle,
-      });
-      if (!s2.ok) return setWorkNote(`${added} suggestions were added, but the summary could not be written: ${s2.error.message}`);
-      // A last look over everything for names that clash and links that lead nowhere.
-      const checked = await api.invoke("knowledge.check");
-      const flagged = checked.ok ? checked.value.found : 0;
-      setWorkDetails([...info, ...(discarded > 0 ? [`${discarded} unchecked ${discarded === 1 ? "suggestion was" : "suggestions were"} replaced.`] : []), ...left, ...(flagged > 0 ? [`${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:" on the topics concerned.`] : [])]);
-      setWorkNote(`Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""}, marked with a ?.${left.length + flagged > 0 ? ` ${left.length + flagged} ${left.length + flagged === 1 ? "thing needs" : "things need"} a look.` : ""}`);
-    } finally {
-      setWork(null);
-    }
-  };
-
-  /** Writes the summary of a document again from its scenes, replacing the one there (even one the user accepted). */
-  const rewriteSummary = async (documentId: string) => {
-    const s = setupRef.current;
-    if (!researcher || work || busy) return;
-    const title = snap?.documents.find((d) => d.id === documentId)?.title ?? activeTitle;
-    setWorkNote(null);
-    setWork({ what: "summarize", at: 0, of: 0 });
-    try {
-      const r = await api.invoke("knowledge.summarize", {
-        backend: s.backend,
-        modelId: researcher.name,
-        contextLimit: researcher.contextLimit,
-        maxOutputTokens: researcher.maxOutputTokens,
-        sourceLanguage: s.sourceLanguage,
-        targetLanguage: s.targetLanguage,
-        documentId,
-        documentTitle: title,
-        rewrite: true,
-      });
-      setWorkNote(!r.ok ? r.error.message : r.value.canceled ? "Stopped." : r.value.updated ? "The summary was written again from the scenes. Please check it." : "There are no scenes to write a summary from. Extract knowledge first.");
-    } finally {
-      setWork(null);
-    }
-  };
 
   /** Before translating, the researcher chooses what matters for each block. Returns false if the user stopped it. */
   const prepare = async (): Promise<boolean> => {
@@ -323,9 +223,6 @@ export function App() {
         }}
         guided={{ open: guidedOpen, onToggle: () => setGuidedOpen((o) => !o) }}
         researcher={{ models: setup.models.map((m) => m.name), value: researcher?.name ?? null, onChange: (name) => setSetup((x) => ({ ...x, researcher: name })) }}
-        onExtract={() => void extract()}
-        canExtract={!!sideRequest && blockTexts.length > 0}
-        extractHint={!researcher ? "Add a model first" : blockTexts.length === 0 ? "Add some text first" : busy ? "Wait for the translation to finish" : "A model reads the text and suggests entries for the knowledge base"}
       />
 
       {project?.recovery && (
@@ -437,9 +334,7 @@ export function App() {
         <main className="center">
           {work && (
             <div className="strip">
-              <span>
-                {work.what === "summarize" ? "Writing the summary…" : work.what === "merge" ? "Joining the scenes…" : `${work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block ${work.at} of ${work.of}…`}
-              </span>
+              <span>{`Choosing the background, block ${work.at} of ${work.of}…`}</span>
               <button
                 className="small"
                 onClick={() => {
@@ -454,24 +349,10 @@ export function App() {
           {workNote && (
             <div className="strip">
               <span>{workNote}</span>
-              <span className="row">
-                {workDetails.length > 0 && (
-                  <button className="small" aria-expanded={showDetails} onClick={() => setShowDetails((d) => !d)}>
-                    {showDetails ? "Hide details" : "Details"}
-                  </button>
-                )}
-                <button className="small" onClick={() => (setWorkNote(null), setWorkDetails([]))}>
-                  Dismiss
-                </button>
-              </span>
+              <button className="small" onClick={() => setWorkNote(null)}>
+                Dismiss
+              </button>
             </div>
-          )}
-          {workNote && showDetails && workDetails.length > 0 && (
-            <ul className="strip-details">
-              {workDetails.map((d, i) => (
-                <li key={i}>{d}</li>
-              ))}
-            </ul>
           )}
           {snap && hasVersion && !viewingLatest && (
             <div className="strip">
@@ -514,7 +395,6 @@ export function App() {
                 onCloseKnowledge={() => columns.setShowKnowledge(false)}
                 knowledgeRev={snap.knowledge.rev}
                 knowledgeCounts={snap.knowledge}
-                onRewriteSummary={researcher && !work && !busy ? (id) => void rewriteSummary(id) : undefined}
               />
             ) : (
             <Grid

@@ -1,6 +1,8 @@
 import {
   allPrompts,
   glossaryFor,
+  paragraphCount,
+  splitPieces,
   interpretPassage,
   lastLines,
   notesFor,
@@ -12,15 +14,10 @@ import {
   type Interpretation,
   type KnownName,
   type NameKind,
-  extractBlock,
-  type Asker,
-  type Question,
   blockText,
   blockMaterial,
   entriesFromLegacy,
-  applyChecks,
   applyFile,
-  checkKnowledge,
   backlinksOf,
   classLabel,
   DEFAULT_CLASSES_TEXT,
@@ -37,10 +34,6 @@ import {
   fitMaterial,
   knowledgeCap,
   knowledgeReserve,
-  mergeScenes,
-  mergeSummary,
-  buildSummary,
-  SUMMARY_DIRECT_TOKENS,
   parseKnowledge,
   parseResearchReply,
   researchBatches,
@@ -72,14 +65,8 @@ import {
   stripThinking,
   validatePrompt,
   type Backend,
-  type AnalyzeInput,
-  type AnalyzeResult,
   type BlockCellView,
   type BlockMaterial,
-  type MergeScenesInput,
-  type MergeScenesResult,
-  type SummarizeInput,
-  type SummarizeResult,
   type BlockOutput,
   type CancelInput,
   type DemoOptions,
@@ -1160,28 +1147,6 @@ export class WorkspaceService {
     return { id: hit?.id ?? null, title: hit?.source ?? null };
   }
 
-  /**
-   * Looks over the whole knowledge base for things that cannot all be right (two topics sharing a name, links that lead
-   * nowhere...) and notes each one on the topic it is about, as a suggested note beginning with "Check:".
-   */
-  knowledgeCheck(): { found: number; added: number; removed: number } {
-    const issues = checkKnowledge(this.knowledge.all(), parseClasses(this.classesText).classes);
-    const result = applyChecks(this.knowledge.all(), this.knowledge.rejected(), issues, { newId, now: () => new Date().toISOString() });
-    if (result.added > 0 || result.removed > 0) {
-      this.knowledge.replaceLive(result.entries);
-      this.knowledgeChanged();
-    }
-    return { found: issues.length, added: result.added, removed: result.removed };
-  }
-
-  /** Before reading a document again: forget what a model suggested from it that nobody checked. */
-  beginExtraction(documentId: string): { discarded: number } {
-    const doc = this.docs.find((d) => d.id === documentId);
-    const discarded = this.knowledge.discardSuggested(documentId, doc?.title ?? "");
-    if (discarded > 0) this.knowledgeChanged();
-    return { discarded };
-  }
-
   knowledgeList(query: EntryQuery): KnowledgeList {
     const { entries, total } = this.knowledge.list(query);
     return { entries, total, counts: this.knowledge.counts(), rev: this.knowledge.rev };
@@ -1330,7 +1295,20 @@ export class WorkspaceService {
     this.knowledgeChanged();
   }
 
-  /** Translates a block with what the user confirmed, and the end of the block before it. */
+  /** The user's own correction of a translation. */
+  guidedSetTranslation(index: number, text: string): GuidedState {
+    const block = this.guidedBlock(index);
+    block.translation = text;
+    if (text.trim() !== "") block.status = "translated";
+    block.warning = null;
+    this.guidedChanged();
+    return this.guided!;
+  }
+
+  /**
+   * Translates a block with what the user confirmed. A long block goes in pieces, each with the end of the one before it,
+   * so that a small model does not skip or cut off the rest; a piece with fewer paragraphs than its source is asked for again.
+   */
   async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
     if (!block.interpretation) await this.guidedInterpret(input.index);
@@ -1340,38 +1318,53 @@ export class WorkspaceService {
       this.rememberInterpretation(interp);
       const system = renderPrompt(STANDARD_PROMPT, input.sourceLanguage, input.targetLanguage);
       const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
-      const glossary = glossaryFor(interp);
-      const notes = notesFor(interp);
-      let user = "";
-      // Overlap: the end of the block before, source and translation. Fewer lines if the context is tight.
-      for (const lines of [3, 2, 1, 0]) {
-        const context =
-          previous && previous.status === "translated" && lines > 0
-            ? { source: lastLines(previous.text, lines, 500), translation: lastLines(previous.translation, lines, 500), translationStatus: "available" as const }
-            : { source: null, translation: null, translationStatus: "none" as const };
-        user = renderUserMessage(glossary, context, block.text, notes);
-        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-        if (lines === 0) throw new UserError("context_overflow", `This block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-      }
+      // What fits: the pieces are made so that a piece, its translation and the request around it fit the model's context.
+      const room = input.contextLimit - estimateTokens(system) - DEFAULTS.messageOverheadTokens - 500;
+      const perPiece = Math.max(60, Math.min(350, Math.floor((room - input.maxOutputTokens / 2) / 3)));
+      const pieces = splitPieces(block.text, perPiece, estimateTokens);
       block.error = null;
-      const reply = await this.askModel(
-        {
-          backend: input.backend,
-          modelId: input.modelId,
-          maxOutputTokens: input.maxOutputTokens,
-          temperature: input.temperature,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
-        },
-        abort,
-      );
-      if (reply !== null) {
-        block.translation = reply.trim();
-        block.status = "translated";
+      block.warning = null;
+      const done: string[] = [];
+      let before: { source: string; translation: string } | null = previous && previous.status === "translated" ? { source: previous.text, translation: previous.translation } : null;
+      let short = 0;
+      for (const piece of pieces) {
+        const glossary = glossaryFor(interp, piece);
+        const paragraphs = paragraphCount(piece);
+        const notes = [...notesFor(interp, piece), ...(paragraphs > 1 ? [`SOURCE_BLOCK has ${paragraphs} paragraphs. Translate every one of them, in order, and leave nothing out.`] : [])];
+        let translation = "";
+        for (const attempt of [0, 1]) {
+          let user = "";
+          for (const lines of [3, 2, 1, 0]) {
+            const context = before && lines > 0 ? { source: lastLines(before.source, lines, 500), translation: lastLines(before.translation, lines, 500), translationStatus: "available" as const } : { source: null, translation: null, translationStatus: "none" as const };
+            user = renderUserMessage(glossary, context, piece, attempt === 0 ? notes : [...notes, "The first attempt left paragraphs out. Translate all of them."]);
+            if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+            if (lines === 0) throw new UserError("context_overflow", `A piece of this block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+          }
+          const reply = await this.askModel(
+            {
+              backend: input.backend,
+              modelId: input.modelId,
+              maxOutputTokens: input.maxOutputTokens,
+              temperature: input.temperature,
+              messages: [
+                { role: "system", content: system },
+                { role: "user", content: user },
+              ],
+              practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
+            },
+            abort,
+          );
+          if (reply === null) return this.guided!; // stopped
+          translation = reply.trim();
+          if (paragraphCount(translation) >= paragraphs) break;
+        }
+        if (paragraphCount(translation) < paragraphs) short += paragraphs - paragraphCount(translation);
+        done.push(translation);
+        before = { source: piece, translation };
       }
+      block.translation = done.join("\n\n");
+      block.status = "translated";
+      if (short > 0) block.warning = `The translation has fewer paragraphs than the source (${paragraphCount(block.translation)} of ${paragraphCount(block.text)}). Check that nothing was left out.`;
     } catch (e) {
       block.error = e instanceof UserError ? e.message : "The translation failed.";
       this.guidedChanged();
@@ -1435,174 +1428,6 @@ export class WorkspaceService {
     reply = stripThinking(reply);
     if (reply.trim() === "" && !ask.allowEmpty) throw new UserError("invalid_response", "The model returned no text. If it is a thinking model, raise its reply limit.");
     return reply;
-  }
-
-  /** What the practice translator answers to each kind of question: always the most harmless option. */
-  private practiceAnswer(q: Question): string {
-    const letter = (start: string) => String.fromCharCode(65 + Math.max(0, (q.options ?? []).findIndex((o) => o.startsWith(start))));
-    switch (q.id) {
-      case "list-names":
-        return "NONE";
-      case "classify":
-        return letter("a person");
-      case "same-as":
-        return letter("None");
-      case "english-name":
-        return "Practice name";
-      case "describe":
-        return "an example, not written by a model";
-      case "supported":
-        return letter("Yes");
-      case "role":
-        return letter("speaks or acts");
-      case "attribute":
-        return letter("Not stated");
-      case "relation":
-        return letter("No");
-      case "same-scene":
-        return letter("No");
-      case "narrator":
-        return letter("None");
-      case "scene-text":
-        return "Practice mode: this scene description is an example.";
-      case "condense":
-        return "Practice mode: this summary is an example.";
-      default:
-        return "";
-    }
-  }
-
-  /** Something that puts one narrow question to the chosen model (or the practice translator). */
-  private questionAsker(backend: Backend, modelId: string, abort: AbortController): Asker {
-    return {
-      ask: (q: Question) =>
-        this.askModel(
-          {
-            backend,
-            modelId,
-            maxOutputTokens: q.maxTokens,
-            temperature: 0,
-            allowEmpty: true,
-            messages: [
-              { role: "system", content: q.system },
-              { role: "user", content: q.user },
-            ],
-            practiceReply: () => this.practiceAnswer(q),
-          },
-          abort,
-        ),
-    };
-  }
-
-  /**
-   * Reads one passage for knowledge in layers: the program finds candidate names, then asks the model one narrow
-   * question at a time (what is this name, is it one we know, who is acting, what does the text say about them...) and
-   * checks each answer before using it. What it finds is added to the knowledge base as suggestions.
-   */
-  async analyze(input: AnalyzeInput): Promise<AnalyzeResult> {
-    const abort = this.beginSideRequest();
-    try {
-      // The longest question is the one that lists names, which needs the whole passage.
-      const fixed = estimateTokens(input.passage) + 260 + 150 + DEFAULTS.messageOverheadTokens + 60;
-      if (fixed > input.contextLimit) {
-        throw new UserError(
-          "context_overflow",
-          `This block needs about ${fixed} tokens to be read for knowledge, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size for this model (in its settings), or use smaller blocks.`,
-        );
-      }
-      const candidates = await findCandidateNames(input.passage);
-      const asker = this.questionAsker(input.backend, input.modelId, abort);
-      const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle, block: input.block };
-      const result = await extractBlock({
-        entries: this.knowledge.all(),
-        rejected: this.knowledge.rejected(),
-        classes: parseClasses(this.classesText).classes,
-        passage: input.passage,
-        scope: { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block },
-        origin,
-        candidates,
-        readings: readNames,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        asker,
-        deps: { newId, now: () => new Date().toISOString() },
-        shouldStop: () => abort.signal.aborted,
-      });
-      if (abort.signal.aborted) return { added: 0, canceled: true, notes: [] };
-      if (JSON.stringify(result.entries) !== JSON.stringify(this.knowledge.all())) {
-        this.knowledge.replaceLive(result.entries);
-        this.knowledgeChanged();
-      }
-      return { added: result.added, canceled: false, notes: result.problems };
-    } finally {
-      this.analysisAbort = null;
-    }
-  }
-
-  /**
-   * The second step of the scenes: every block has a scene description of its own, and here the ones that follow each
-   * other and belong together are joined into one scene.
-   */
-  async mergeScenesStep(input: MergeScenesInput): Promise<MergeScenesResult> {
-    const abort = this.beginSideRequest();
-    try {
-      const room = input.contextLimit - 400 - Math.min(input.maxOutputTokens, 500) - DEFAULTS.messageOverheadTokens - 100;
-      const result = await mergeScenes({
-        entries: this.knowledge.all(),
-        documentId: input.documentId,
-        title: input.documentTitle,
-        targetLanguage: input.targetLanguage,
-        asker: this.questionAsker(input.backend, input.modelId, abort),
-        room,
-        deps: { newId, now: () => new Date().toISOString() },
-        shouldStop: () => abort.signal.aborted,
-      });
-      if (result.canceled || abort.signal.aborted) return { joined: 0, canceled: true };
-      if (result.joined > 0) {
-        this.knowledge.replaceLive(result.entries);
-        this.knowledgeChanged();
-      }
-      return { joined: result.joined, canceled: false };
-    } finally {
-      this.analysisAbort = null;
-    }
-  }
-
-  /**
-   * Makes the summary of a document: its scene descriptions in order, shortened by the model only when they are too long,
-   * and checked against the scenes so it cannot add anything. A summary the user accepted is kept unless a rewrite is asked for.
-   */
-  async summarize(input: SummarizeInput): Promise<SummarizeResult> {
-    const abort = this.beginSideRequest();
-    try {
-      const scenes = this.knowledge
-        .all()
-        .filter((e) => e.kind === "scene" && e.scope?.documentId === input.documentId)
-        .sort((a, b) => (a.scope?.block ?? 0) - (b.scope?.block ?? 0))
-        .map((e) => e.text);
-      const done = this.knowledge.all().find((e) => e.kind === "summary" && e.scope?.documentId === input.documentId && e.status === "confirmed");
-      if (scenes.length === 0 || (done && !input.rewrite)) return { updated: false, canceled: false };
-      const room = input.contextLimit - 400 - Math.min(input.maxOutputTokens, 500) - DEFAULTS.messageOverheadTokens - 100;
-      if (room < 120 && estimateTokens(scenes.join(" ")) > SUMMARY_DIRECT_TOKENS) throw new UserError("context_overflow", "The model's context is too small to shorten the summary. Raise the context size for this model.");
-      const built = await buildSummary({
-        scenes,
-        title: input.documentTitle,
-        targetLanguage: input.targetLanguage,
-        asker: this.questionAsker(input.backend, input.modelId, abort),
-        room,
-        shouldStop: () => abort.signal.aborted,
-      });
-      if (built.canceled || abort.signal.aborted) return { updated: false, canceled: true };
-      const origin = { by: "model" as const, model: input.modelId, documentId: input.documentId, documentTitle: input.documentTitle };
-      const merged = mergeSummary(this.knowledge.all(), built.text, { documentId: input.documentId }, origin, { newId, now: () => new Date().toISOString() }, input.rewrite === true);
-      if (merged.updated) {
-        this.knowledge.replaceLive(merged.entries);
-        this.knowledgeChanged();
-      }
-      return { updated: merged.updated, canceled: false };
-    } finally {
-      this.analysisAbort = null;
-    }
   }
 
   // ---- choosing the background for each block ----

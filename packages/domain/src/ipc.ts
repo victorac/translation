@@ -63,22 +63,6 @@ export interface SplitPreview {
   notes: string[];
 }
 
-/** Ask a model to read one passage and suggest notes (people, who speaks to whom) that help with pronouns. */
-export interface AnalyzeInput {
-  backend: Backend;
-  modelId: string;
-  contextLimit: number;
-  maxOutputTokens: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  passage: string;
-  /** Where the passage is from, so what the model finds can say where it came from. */
-  documentId: string;
-  documentTitle: string;
-  /** Number of the block (starting at 1). */
-  block: number;
-}
-
 /** Ask a model which of the project's names, hints and notes matter for one block. */
 export interface ResearchInput {
   backend: Backend;
@@ -98,38 +82,6 @@ export interface ResearchResult {
   canceled: boolean;
 }
 
-/** Ask a model to write an abridged version of a document from the scene descriptions found in it. */
-export interface SummarizeInput {
-  backend: Backend;
-  modelId: string;
-  contextLimit: number;
-  maxOutputTokens: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  documentId: string;
-  documentTitle: string;
-  /** Replace a summary the user accepted too. */
-  rewrite?: boolean | undefined;
-}
-
-/** Join the scenes of neighbouring blocks that belong together. */
-export interface MergeScenesInput {
-  backend: Backend;
-  modelId: string;
-  contextLimit: number;
-  maxOutputTokens: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  documentId: string;
-  documentTitle: string;
-}
-
-export interface MergeScenesResult {
-  /** How many scenes were joined into the one before them. */
-  joined: number;
-  canceled: boolean;
-}
-
 /** Which model translates a block in the step-by-step way, and how. */
 export interface GuidedModelInput {
   backend: Backend;
@@ -145,21 +97,6 @@ export interface GuidedStartInput {
   documentId: string;
   text: string;
   blockSize: BlockSize;
-}
-
-export interface SummarizeResult {
-  /** False when there was nothing to summarize, or the user had already confirmed a summary. */
-  updated: boolean;
-  canceled: boolean;
-}
-
-export interface AnalyzeResult {
-  /** How many entries were added to (or filled in) the project's knowledge. */
-  added: number;
-  /** True when the user stopped it; nothing was added in that case. */
-  canceled: boolean;
-  /** Things that were left out or could not be done, in plain words. */
-  notes: string[];
 }
 
 /** The files of the knowledge base, for the file list. */
@@ -301,11 +238,8 @@ export interface CommandMap {
   "export.preview": ExportInput;
   "export.write": ExportInput;
   "source.preview": StartJobInput;
-  "notes.analyze": AnalyzeInput;
   "notes.cancel": undefined;
   "research.block": ResearchInput;
-  "knowledge.summarize": SummarizeInput;
-  "knowledge.mergeScenes": MergeScenesInput;
   "guided.get": undefined;
   "guided.start": GuidedStartInput;
   "guided.go": { index: number };
@@ -313,14 +247,13 @@ export interface CommandMap {
   "guided.save": { index: number; interpretation: Interpretation };
   "guided.translate": GuidedModelInput & { index: number };
   "guided.clear": undefined;
+  "guided.setTranslation": { index: number; text: string };
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
   "knowledge.create": { type: string; name: string };
   "knowledge.delete": { id: string };
   "knowledge.resolve": { name: string };
-  "knowledge.beginExtraction": { documentId: string };
-  "knowledge.check": undefined;
   "knowledge.list": EntryQuery;
   "knowledge.save": EntryInput;
   "knowledge.remove": { ids: string[] };
@@ -333,14 +266,11 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.mergeScenes" | "guided.get" | "guided.start" | "guided.go" | "guided.interpret" | "guided.save" | "guided.translate" | "guided.clear" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "guided.get" | "guided.start" | "guided.go" | "guided.interpret" | "guided.save" | "guided.translate" | "guided.clear" | "guided.setTranslation" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
-  "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
   "research.block": ResearchResult;
-  "knowledge.summarize": SummarizeResult;
-  "knowledge.mergeScenes": MergeScenesResult;
   "guided.get": GuidedState | null;
   "guided.start": GuidedState;
   "guided.go": GuidedState;
@@ -348,14 +278,13 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "guided.save": GuidedState;
   "guided.translate": GuidedState;
   "guided.clear": null;
+  "guided.setTranslation": GuidedState;
   "knowledge.files": KnowledgeFiles;
   "knowledge.file": KnowledgeFile;
   "knowledge.setFile": KnowledgeFile;
   "knowledge.create": { id: string };
   "knowledge.delete": { removed: boolean };
   "knowledge.resolve": { id: string | null; title: string | null };
-  "knowledge.beginExtraction": { discarded: number };
-  "knowledge.check": { found: number; added: number; removed: number };
   "knowledge.list": KnowledgeList;
   "knowledge.save": { entry: KnowledgeEntry };
   "knowledge.remove": { removed: number };
@@ -399,11 +328,8 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "export.preview",
   "export.write",
   "source.preview",
-  "notes.analyze",
   "notes.cancel",
   "research.block",
-  "knowledge.summarize",
-  "knowledge.mergeScenes",
   "guided.get",
   "guided.start",
   "guided.go",
@@ -411,14 +337,13 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "guided.save",
   "guided.translate",
   "guided.clear",
+  "guided.setTranslation",
   "knowledge.files",
   "knowledge.file",
   "knowledge.setFile",
   "knowledge.create",
   "knowledge.delete",
   "knowledge.resolve",
-  "knowledge.beginExtraction",
-  "knowledge.check",
   "knowledge.list",
   "knowledge.save",
   "knowledge.remove",

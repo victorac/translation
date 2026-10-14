@@ -229,6 +229,7 @@ const guidedSchema = z.object({
         translation: str,
         status: z.enum(["new", "interpreted", "translated"]),
         error: z.string().max(5000).nullable(),
+        warning: z.string().max(5000).nullable().optional(),
         interpretation: z
           .object({
             names: z.array(z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), gender: z.enum(["female", "male"]).nullable().optional() })).max(500),

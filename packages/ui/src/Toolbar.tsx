@@ -19,9 +19,6 @@ export function Toolbar({
   onSplit,
   knowledge,
   researcher,
-  onExtract,
-  canExtract,
-  extractHint,
   guided,
 }: {
   snap: WorkspaceSnapshot | null;
@@ -40,9 +37,6 @@ export function Toolbar({
   knowledge: { open: boolean; count: number; suggested: number; onToggle: () => void };
   /** The model that reads the text for knowledge and chooses the background for each block. */
   researcher: { models: string[]; value: string | null; onChange: (name: string) => void };
-  onExtract: () => void;
-  canExtract: boolean;
-  extractHint: string;
   /** The step-by-step translation: whether its screen is showing. */
   guided: { open: boolean; onToggle: () => void };
 }) {
@@ -108,9 +102,6 @@ export function Toolbar({
             ))}
           </select>
         </label>
-        <button onClick={onExtract} disabled={!canExtract || busy} title={extractHint}>
-          Extract knowledge
-        </button>
         {!busy && runHint && <span className="hint">{runHint}</span>}
         {busy ? (
           <button className="danger" onClick={() => void send("job.cancel", { kind: "job" })} title="Stop everything">

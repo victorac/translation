@@ -19,7 +19,7 @@ function loadTabs(): { open: string[]; active: string | null } {
  * The knowledge base as files: a list of topics (and scenes, summaries, notes and classes) you can search, open in tabs
  * and edit as text. Links between files can be followed, and each file shows what links to it.
  */
-export function KnowledgeFiles({ rev, counts, onRewriteSummary }: { rev: number; counts: { terms: number; notes: number; suggested: number }; onRewriteSummary?: ((documentId: string) => void) | undefined }) {
+export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: number; notes: number; suggested: number } }) {
   const [list, setList] = useState<FileList | null>(null);
   const [tabs, setTabs] = useState(loadTabs);
   const [query, setQuery] = useState("");
@@ -113,15 +113,6 @@ export function KnowledgeFiles({ rev, counts, onRewriteSummary }: { rev: number;
               Accept all
             </button>
           )}
-          <button
-            className="small"
-            onClick={() =>
-              void api.invoke("knowledge.check").then((r) => setMessage(r.ok ? (r.value.found === 0 ? "No problems found." : `${r.value.found} possible ${r.value.found === 1 ? "problem" : "problems"}. They are noted as "Check:" on the topics concerned.`) : r.error.message))
-            }
-            title="Look through the knowledge base for names that clash and links that lead nowhere"
-          >
-            Check
-          </button>
           <button className="small" onClick={() => setListOpen((o) => !o)} aria-expanded={listOpen}>
             {listOpen ? "Hide files" : "Files"}
           </button>
@@ -236,19 +227,6 @@ export function KnowledgeFiles({ rev, counts, onRewriteSummary }: { rev: number;
                 ))}
               </div>
             )}
-            {byId.get(active)?.kind === "summary" && byId.get(active)?.documentId && onRewriteSummary && (
-              <button
-                className="small"
-                onClick={() => {
-                  const f = byId.get(active)!;
-                  if (!f.suggested && !window.confirm("Replace your summary with a new one written from the scenes?")) return;
-                  onRewriteSummary(f.documentId!);
-                }}
-                title="Write the summary again from the scenes. If the scenes are short, it is just the scenes put together."
-              >
-                Rewrite summary
-              </button>
-            )}
             {byId.get(active)?.suggested && (
               <button className="small primary" onClick={() => void api.invoke("knowledge.confirm", { ids: [active] })} title="Accept what a model suggested in this file: the topic, its attributes and its notes">
                 Accept this file
@@ -271,7 +249,7 @@ export function KnowledgeFiles({ rev, counts, onRewriteSummary }: { rev: number;
           </div>
         </>
       ) : (
-        <p className="hint kbf-empty">{files.length <= 1 ? "No topics yet. Make one with New topic, or use Extract knowledge to let a model read the text." : "Open a file from the list."}</p>
+        <p className="hint kbf-empty">{files.length <= 1 ? "No topics yet. Make one with New topic, or add names as you translate step by step." : "Open a file from the list."}</p>
       )}
     </div>
   );
