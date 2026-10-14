@@ -217,3 +217,21 @@ describe("where a glossary word stands in a text", () => {
     expect(glossaryHits("何もない。", glossary)).toEqual([]);
   });
 });
+
+describe("names from another language, and quoted words", () => {
+  const passage = "その日、ジョン・スミスは旅団『銀の剣』に入った。ジョンは『魔力石』を拾った。ポーションを飲んだ。ポーションは苦い。";
+  const read = () => interpretPassage({ passage, candidates: ["ジョン", "ジョン・スミス", "銀の剣", "魔力石", "ポーション"], readings: {}, glossary: [] });
+  const by = (s: string) => read().names.find((n) => n.source === s)!;
+
+  it("keeps the whole name, with its parts alone as other ways to write it, romanized as it is written", () => {
+    expect(read().names.some((n) => n.source === "ジョン")).toBe(false);
+    expect(by("ジョン・スミス")).toMatchObject({ kind: "character", english: "Jon Sumisu", aliases: ["ジョン"] });
+  });
+
+  it("makes a quoted word a term, or an organization or a place when the word before it says so, and a repeated katakana word a term", () => {
+    expect(by("銀の剣").kind).toBe("organization"); // 旅団『…』
+    expect(by("魔力石").kind).toBe("term");
+    expect(by("ポーション").kind).toBe("term");
+    expect(by("ポーション").english).toBe(""); // not guessed for a term
+  });
+});

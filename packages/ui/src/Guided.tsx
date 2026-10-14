@@ -64,12 +64,26 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
     if (s) setState(s);
   };
 
-  // Opening this screen picks up where it was left, or starts on the text in the editor straight away.
+  /** Brings the blocks up to date with the text in the editor; a block that changed is read again by itself. */
+  const sync = async (s: GuidedState) => {
+    const now = await call(() => api.invoke("guided.sync", { documentId, text: setup.text, blockSize: setup.blockSize }));
+    const next = now ?? s;
+    setState(next);
+    const cur = next.blocks[next.current];
+    if (cur && cur.status === "new") await read(next.current);
+  };
+
+  // Opening this screen picks up where it was left, brought up to date with the text, or starts on the text in the editor straight away.
   useEffect(() => {
     void api.invoke("guided.get").then(async (r) => {
-      if (r.ok && r.value) setState(r.value);
+      if (r.ok && r.value) {
+        setState(r.value);
+        setLoaded(true);
+        if (setup.text.trim() !== "") await sync(r.value);
+        return;
+      }
       setLoaded(true);
-      if ((r.ok && r.value) || started.current || setup.text.trim() === "" || !model) return;
+      if (started.current || setup.text.trim() === "" || !model) return;
       started.current = true;
       const s = await call(() => api.invoke("guided.start", { documentId, text: setup.text, blockSize: setup.blockSize }));
       if (s) {
@@ -78,6 +92,21 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A change in the source while this is open (for example from another window) is followed too.
+  const seenText = useRef(setup.text);
+  useEffect(() => {
+    if (seenText.current === setup.text) return;
+    seenText.current = setup.text;
+    if (state && setup.text.trim() !== "") void sync(state);
+  }, [setup.text]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const readAll = async () => {
+    setWorking("read");
+    const s = await call(() => api.invoke("guided.readAll"));
+    setWorking(null);
+    if (s) setState(s);
+  };
 
   // When the glossary changes (a topic edited in the pane on the right), the names listed here follow it.
   const first = useRef(true);
@@ -263,6 +292,11 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
               ))}
             </select>
           </label>
+          {state.blocks.some((b) => !b.interpretation) && (
+            <button className="small" onClick={() => void readAll()} disabled={working !== null} title="Read every block that has not been read, so the glossary holds the words of the whole text">
+              {working === "read" ? "Reading…" : "Read all blocks"}
+            </button>
+          )}
           <button className="small" onClick={() => void startOver()}>
             Start over
           </button>

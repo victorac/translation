@@ -42,6 +42,8 @@ const COMMANDS = new Set([
   "guided.get",
   "guided.start",
   "guided.go",
+  "guided.sync",
+  "guided.readAll",
   "guided.interpret",
   "guided.save",
   "guided.addName",

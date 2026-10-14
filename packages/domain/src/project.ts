@@ -220,6 +220,7 @@ const entrySchema = z.object({
 
 const guidedSchema = z.object({
   documentId: id,
+  source: z.string().max(2_000_000).optional(),
   current: count,
   blocks: z
     .array(

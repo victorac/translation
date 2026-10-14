@@ -271,3 +271,16 @@ describe("turns carried from the block before", () => {
     expect(takeTurns("「一」\n「二」", findQuotes("「一」\n「二」"), [null, null], [hanako], null)).toEqual([null, null]);
   });
 });
+
+describe("names that write themselves in other ways", () => {
+  const text = "その日、ジョン・スミスは旅団『銀の剣』に入った。『魔力石』を拾った。ポーションを飲んだ。ポーションは苦い。ジョンは笑った。";
+
+  it("finds a katakana name with a middle dot, a word set in 『…』, and a katakana word that comes back", () => {
+    const found = mergeCandidates(text, patternCandidates(text));
+    expect(found).toEqual(expect.arrayContaining(["ジョン・スミス", "銀の剣", "魔力石", "ポーション"]));
+  });
+
+  it("does not take a katakana word that is said only once", () => {
+    expect(patternCandidates("ポーションを飲んだ。")).toEqual([]);
+  });
+});

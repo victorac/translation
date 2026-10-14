@@ -1254,9 +1254,44 @@ export class WorkspaceService {
     const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });
     this.guided = {
       documentId: input.documentId,
+      source: text,
       current: 0,
       blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", status: "new" as const, error: null })),
     };
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /**
+   * Brings the blocks up to date with the text in the editor. Nothing changes when the text is the same. When it is not, the text is
+   * split again and a block whose text is unchanged keeps what was read, set and translated; the others start again.
+   */
+  guidedSync(input: GuidedStartInput): GuidedState | null {
+    if (!this.guided) return null;
+    const text = normalizeSource(input.text);
+    if (text.trim() === "" || this.guided.source === text) return this.guidedView();
+    const old = this.guided;
+    const limits = BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
+    const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });
+    const kept = new Map(old.blocks.map((b) => [b.text, b]));
+    const blocks = chunks.map((c, index) => {
+      const body = text.slice(c.startOffset, c.endOffset);
+      const same = kept.get(body);
+      return same ? { ...same, index } : { index, text: body, interpretation: null, translation: "", status: "new" as const, error: null };
+    });
+    const here = old.blocks[old.current]?.text;
+    this.guided = { documentId: old.documentId, source: text, current: Math.max(0, blocks.findIndex((b) => b.text === here)), blocks };
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** Reads every block that has not been read yet, in order, so the glossary holds the words of the whole text. */
+  async guidedReadAll(): Promise<GuidedState> {
+    const g = this.guided;
+    if (!g) throw new UserError("no_block", "Start from the text first.");
+    const was = g.current;
+    for (const b of [...g.blocks]) if (!b.interpretation) await this.guidedInterpret(b.index);
+    g.current = was;
     this.guidedChanged();
     return this.guidedView();
   }

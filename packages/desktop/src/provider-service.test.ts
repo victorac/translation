@@ -754,6 +754,33 @@ describe("translating step by step", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
   });
 
+  it("follows a change in the source: a block whose text is the same keeps what was done, and the others start again", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    const paragraph = (i: number) => `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`;
+    const text = Array.from({ length: 40 }, (_, i) => paragraph(i)).join("\n");
+    const start = { documentId: docId, text, blockSize: "small" as const };
+    const first = service.guidedStart(start);
+    expect(first.blocks.length).toBeGreaterThan(2);
+    await service.guidedReadAll();
+    expect(service.guidedGet()!.blocks.every((b) => b.interpretation)).toBe(true);
+    await service.guidedTranslate({ ...model, index: 0 });
+
+    // The same text changes nothing.
+    expect(service.guidedSync(start)!.blocks[0]!.status).toBe("translated");
+    // Text added at the end: the blocks before it keep their work.
+    const longer = service.guidedSync({ ...start, text: `${text}\n${paragraph(99)}` })!;
+    expect(longer.blocks[0]).toMatchObject({ status: "translated" });
+    expect(longer.blocks.length).toBeGreaterThanOrEqual(first.blocks.length);
+    expect(longer.blocks.at(-1)!.status).toBe("new");
+    // The first paragraph changed: that block starts again.
+    const edited = service.guidedSync({ ...start, text: text.replace(paragraph(0), "全く違う文。") })!;
+    expect(edited.blocks[0]).toMatchObject({ status: "new", translation: "", interpretation: null });
+    expect(service.guidedSync({ documentId: docId, text: "", blockSize: "small" })!.blocks.length).toBe(edited.blocks.length); // an empty editor leaves it alone
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

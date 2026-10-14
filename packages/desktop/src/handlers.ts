@@ -80,6 +80,8 @@ const schemas: Record<CommandName, z.ZodType> = {
   "source.preview": startInput,
   "guided.get": z.undefined(),
   "guided.start": z.object({ documentId: id, text: z.string().max(2_000_000), blockSize: z.enum(["small", "normal", "large"]) }),
+  "guided.sync": z.object({ documentId: id, text: z.string().max(2_000_000), blockSize: z.enum(["small", "normal", "large"]) }),
+  "guided.readAll": z.undefined(),
   "guided.go": z.object({ index: z.number().int().min(0).max(100_000) }),
   "guided.interpret": z.object({ index: z.number().int().min(0).max(100_000) }),
   "guided.save": z.object({
@@ -204,6 +206,8 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "guided.get": () => service.guidedGet(),
     "guided.start": (p) => service.guidedStart(p),
     "guided.go": (p) => service.guidedGo(p.index),
+    "guided.sync": (p) => service.guidedSync(p),
+    "guided.readAll": () => service.guidedReadAll(),
     "guided.interpret": (p) => service.guidedInterpret(p.index),
     "guided.save": (p) => service.guidedSave(p.index, p.narrator, p.speakers, p.fill === true),
     "guided.addName": (p) => service.guidedAddName(p.index, p.source),

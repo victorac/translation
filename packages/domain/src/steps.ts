@@ -117,6 +117,14 @@ export function patternCandidates(text: string): string[] {
   for (const m of text.matchAll(honorific)) out.push(m[1]!);
   const kinds = new RegExp(`[${KANJI_KATAKANA}]{1,8}(?:学園|学院|高校|学校|大学|家|一族|組|会社|商会|団|城|村|町|王国|帝国|島)`, "g");
   for (const m of text.matchAll(kinds)) out.push(m[0]);
+  // A name from another language written in katakana, its parts set apart by a middle dot (ジョン・スミス).
+  for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{2,}(?:・[\u30A1-\u30FA\u30FC]{2,})+/g)) out.push(m[0]);
+  // What is set in 『…』 is a name or a term of the story: it is named or called so.
+  for (const m of text.matchAll(/『([^』\n]{2,12})』/g)) out.push(m[1]!);
+  // A katakana word that comes back is a term of the story.
+  const counts = new Map<string, number>();
+  for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{3,}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+  for (const [word, n] of counts) if (n >= 2) out.push(word);
   return out;
 }
 

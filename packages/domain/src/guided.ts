@@ -72,6 +72,8 @@ export interface GuidedBlock {
 
 export interface GuidedState {
   documentId: string;
+  /** The text the blocks were made from, so a change in the source is noticed. */
+  source?: string;
   blocks: GuidedBlock[];
   /** The block the user is working on. */
   current: number;
@@ -96,9 +98,30 @@ export function readingLetters(reading: readonly string[] | undefined): string {
 }
 
 /** The English name of a person or family from the dictionary; other kinds are left for the user, who is shown the reading. */
-function englishFor(kind: NameKind, reading: readonly string[] | undefined): string {
+function englishFor(kind: NameKind, reading: readonly string[] | undefined, source = ""): string {
+  // A name written in katakana is its own reading: it is romanized as it stands, part by part (the user fixes the spelling).
+  if (kind === "character" && /^[\u30A1-\u30FA\u30FC・]+$/.test(source)) {
+    const parts = source.split("・").map((p) => romanize(p));
+    return parts.every((p) => p) ? parts.map((p) => p![0]!.toUpperCase() + p!.slice(1)).join(" ") : "";
+  }
   if (!reading || (kind !== "character" && kind !== "family")) return "";
   return nameFromReadings(reading, kind === "family") ?? "";
+}
+
+/**
+ * What kind of name a word in this passage probably is. A word set in 『…』 is a term, or an organization or a place when the
+ * word before it says so (the guild 『…』); a katakana word without a middle dot is a term; otherwise it is judged by how it ends.
+ */
+export function guessKindIn(passage: string, source: string): NameKind {
+  const quoted = passage.indexOf(`『${source}』`);
+  if (quoted >= 0) {
+    const before = passage.slice(Math.max(0, quoted - 8), quoted);
+    if (/(ギルド|クラン|パーティ|団|軍|組織|商会|教団|学園|学院)$/.test(before)) return "organization";
+    if (/(国|王国|帝国|街|町|村|都|城|島)$/.test(before)) return "place";
+    return "term";
+  }
+  if (/^[\u30A1-\u30FA\u30FC]+$/.test(source)) return "term";
+  return guessKind(source);
 }
 
 /**
@@ -121,7 +144,7 @@ export function guessGender(passage: string, names: readonly string[], otherName
 /** A first guess at a name that is not in the glossary yet: what kind it is, and its English form where the dictionary gives one. */
 export function nameGuess(source: string, reading: readonly string[] | undefined): { kind: NameKind; english: string; reading: string } {
   const kind = guessKind(source);
-  return { kind, english: englishFor(kind, reading), reading: readingLetters(reading) };
+  return { kind, english: englishFor(kind, reading, source), reading: readingLetters(reading) };
 }
 
 const namesOf = (n: { source: string; aliases: readonly string[] }): string[] => [n.source, ...n.aliases];
@@ -188,9 +211,17 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   for (const c of rest) {
     if (taken(c)) continue;
     if (names.some((n) => n.source.length > c.length && n.source.includes(c) && passage.split(n.source).join("").indexOf(c) < 0)) continue;
-    const kind = guessKind(c);
+    const kind = guessKindIn(passage, c);
     const reading = input.readings[c];
-    names.push({ source: c, english: englishFor(kind, reading), kind, aliases: [], reading: readingLetters(reading), known: false, gender: null });
+    names.push({ source: c, english: englishFor(kind, reading, c), kind, aliases: [], reading: readingLetters(reading), known: false, gender: null });
+  }
+  // A name with a middle dot is written by one of its parts alone as well (ジョン for ジョン・スミス): that is the same person.
+  for (const p of names.filter((n) => n.kind === "character" && n.source.includes("・"))) {
+    for (const part of p.source.split("・").filter((x) => x.length >= 2)) {
+      const other = names.findIndex((n) => n !== p && n.source === part);
+      if (other >= 0) names.splice(other, 1);
+      if (passage.split(p.source).join("|").includes(part) && !namesOf(p).includes(part)) p.aliases.push(part);
+    }
   }
   // The given name written alone (花子 for 鈴木花子) is the same person: it becomes one of that person's names.
   for (const p of names.filter((n) => n.kind === "character" && n.source.length >= 4)) {
