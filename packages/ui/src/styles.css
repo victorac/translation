@@ -469,3 +469,15 @@ button.toggle .tag { margin-left: 0.35rem; }
 
 .check-mark { color: var(--warn); font-weight: 700; }
 .glossary-head .kind-select { max-width: 6.5rem; text-transform: none; letter-spacing: 0; font-size: 0.82em; }
+
+.glossary-search { width: 100%; margin: 0.25rem 0 0.5rem; }
+.glossary-group { margin-bottom: 0.4rem; }
+.glossary-group h5 { margin: 0.5rem 0 0.2rem; font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+.glossary-source { flex: none; max-width: 45%; text-align: left; padding: 0.25rem 0.5rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glossary-source.focused { background: var(--accent-soft); border-color: var(--accent); }
+.english-input { flex: 1; min-width: 0; padding: 0.25rem 0.4rem; }
+.english-input.missing { border-color: var(--warn); }
+.source-find { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }
+.source-find-word { font-weight: 600; }
+.source-text mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 3px; }
+.source-text mark.current { background: color-mix(in srgb, var(--accent) 55%, transparent); outline: 2px solid var(--accent); }

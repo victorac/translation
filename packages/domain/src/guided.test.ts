@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { guessGender, glossaryFor, withoutLongerNames, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
+import { glossaryHits, occurrencesOf, guessGender, glossaryFor, withoutLongerNames, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
 
 const readings = { 鈴木花子: ["スズキ", "ハナコ"], 山田太郎: ["ヤマダ", "タロウ"], 山田家: ["ヤマダ", "カ"], 桜台学園: ["サクラダイ", "ガクエン"] };
 
@@ -192,5 +192,28 @@ describe("a name that stands for a person", () => {
     const r = interpretPassage({ passage: "花子は笑った。\n「山田、お待たせ」\n「遅いぞ」", candidates: [], readings: {}, glossary });
     // 山田 is spoken to, so the line is not his: it is Hanako's, and the reply is his.
     expect(r.lines.map((l) => l.speaker)).toEqual(["花子", "山田太郎"]);
+  });
+});
+
+describe("where a glossary word stands in a text", () => {
+  const sources = ["山田太郎", "山", "鈴木花子"];
+
+  it("finds each place, in order, with the positions of the text itself", () => {
+    const text = "山田太郎は山を見た。山は高い。";
+    expect(occurrencesOf(text, ["山"], sources)).toEqual([{ start: 5, end: 6 }, { start: 10, end: 11 }]); // not the 山 inside 山田太郎
+    expect(occurrencesOf(text, ["山田太郎"], sources)).toEqual([{ start: 0, end: 4 }]);
+  });
+
+  it("takes several ways of writing a name together, without overlaps", () => {
+    const text = "太郎は鈴木花子。花子は笑った。";
+    expect(occurrencesOf(text, ["鈴木花子", "花子"], ["鈴木花子", "花子"]).map((r) => text.slice(r.start, r.end))).toEqual(["鈴木花子", "花子"]);
+    expect(occurrencesOf(text, ["鈴木花子", "花子"], sources).map((r) => r.start)).toEqual([3, 8]);
+  });
+
+  it("lists the glossary words that stand in the block", () => {
+    const glossary = [{ source: "山田太郎", aliases: [] as string[] }, { source: "山", aliases: [] as string[] }, { source: "川", aliases: ["河"] }, { source: "鈴木花子", aliases: [] as string[] }];
+    expect(glossaryHits("山田太郎が来た。", glossary).map((e) => e.source)).toEqual(["山田太郎"]);
+    expect(glossaryHits("山田太郎は山を見た。河が流れる。", glossary).map((e) => e.source)).toEqual(["山田太郎", "山", "川"]);
+    expect(glossaryHits("何もない。", glossary)).toEqual([]);
   });
 });

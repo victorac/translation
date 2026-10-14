@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { occurrencesOf } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
 import { KnowledgeFiles } from "./KnowledgeFiles";
@@ -35,6 +36,10 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   const [widths, setWidths] = useState<number[]>(loadWidths);
   const [topic, setTopic] = useState<{ id: string; n: number } | null>(null);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const [focus, setFocus] = useState<string | null>(null);
+  const [hit, setHit] = useState(0);
+  const [filter, setFilter] = useState("");
+  const sourceBox = useRef<HTMLDivElement>(null);
   const [topics, setTopics] = useState<TopicRef[]>([]);
   const started = useRef(false);
 
@@ -95,6 +100,30 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const people = (base?.names ?? []).filter((n) => n.kind === "character");
+
+  // The word being looked at: where it stands in the block, for the source pane.
+  const focused = base?.names.find((n) => n.source === focus) ?? null;
+  const hits = focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
+  useEffect(() => {
+    sourceBox.current?.querySelector("mark.current")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focus, current, state?.current]);
+  useEffect(() => {
+    setFocus(null);
+    setHit(0);
+  }, [state?.current]);
+  const look = (source: string) => {
+    setFocus((f) => (f === source ? null : source));
+    setHit(0);
+  };
+
+  // The words of this block's glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
+  const q = filter.trim().toLocaleLowerCase();
+  const kindLabel = (kind: string): string => classes.find((c) => c.name === kind)?.label ?? kind;
+  const shownNames = (base?.names ?? []).filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
+  const firstAt = (n: GuidedName): number => occurrencesOf(block?.text ?? "", [n.source, ...n.aliases], topics.map((t) => t.source))[0]?.start ?? Number.MAX_SAFE_INTEGER;
+  const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
+  const groups = kinds.map((kind) => ({ kind, names: shownNames.filter((n) => n.kind === kind).sort((a, b) => firstAt(a) - firstAt(b)) })).filter((g) => g.names.length > 0);
   const label = (p: GuidedName): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
   const speakers = (base?.lines ?? []).map((l) => l.speaker);
 
@@ -255,7 +284,42 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
         <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
           <section className="guided-pane">
             <h3>Source</h3>
-            <div className="guided-body source-text">{block.text}</div>
+            {focused && (
+              <div className="source-find">
+                <span className="source-find-word">{focused.source}</span>
+                <span className="hint">{hits.length === 0 ? "does not stand on its own here" : `${current + 1} of ${hits.length}`}</span>
+                <span className="row">
+                  <button className="small" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
+                    ↑
+                  </button>
+                  <button className="small" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
+                    ↓
+                  </button>
+                  <button className="small" onClick={() => setFocus(null)} aria-label="Stop looking">
+                    ×
+                  </button>
+                </span>
+              </div>
+            )}
+            <div className="guided-body source-text" ref={sourceBox}>
+              {hits.length === 0
+                ? block.text
+                : (() => {
+                    const parts: React.ReactNode[] = [];
+                    let at = 0;
+                    hits.forEach((h, i) => {
+                      parts.push(block.text.slice(at, h.start));
+                      parts.push(
+                        <mark key={i} className={i === current ? "current" : undefined}>
+                          {block.text.slice(h.start, h.end)}
+                        </mark>,
+                      );
+                      at = h.end;
+                    });
+                    parts.push(block.text.slice(at));
+                    return parts;
+                  })()}
+            </div>
           </section>
 
           <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
@@ -285,21 +349,35 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
                   </label>
                   {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
 
-                  <h4>Glossary in this block</h4>
+                  <h4>
+                    Glossary in this block <span className="hint">{base.names.length}</span>
+                  </h4>
                   {base.names.length === 0 && <p className="hint guided-hint">Nothing from the glossary found in this block. Add a word from the text below.</p>}
-                  <ul className="guided-glossary">
-                    {base.names.map((n) => (
-                      <NameRow
-                        key={n.source}
-                        name={n}
-                        classes={classes}
-                        topics={topics}
-                        onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
-                        onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
-                        onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
-                      />
-                    ))}
-                  </ul>
+                  {base.names.length > 0 && <input className="glossary-search" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+                  {base.names.length > 0 && groups.length === 0 && <p className="hint guided-hint">Nothing matches.</p>}
+                  {groups.map((g) => (
+                    <section key={g.kind} className="glossary-group">
+                      <h5>
+                        {kindLabel(g.kind)} <span className="hint">{g.names.length}</span>
+                      </h5>
+                      <ul className="guided-glossary">
+                        {g.names.map((n) => (
+                          <NameRow
+                            key={n.source}
+                            name={n}
+                            classes={classes}
+                            topics={topics}
+                            focused={focus === n.source}
+                            onFocus={() => look(n.source)}
+                            onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
+                            onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
+                            onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
+                            onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
+                          />
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
                   <form
                     className="row"
                     onSubmit={(e) => {

@@ -729,6 +729,31 @@ describe("translating step by step", () => {
     void read;
   });
 
+  it("lists every glossary word that stands in a block, also ones added to the glossary later, and lets the user write the English name", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "鈴木花子は魔法の杖を持っていた。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
+    expect(names().some((n) => n.source === "魔法")).toBe(false);
+
+    // A word added to the glossary afterwards, from anywhere, shows up in the block by itself.
+    service.knowledgeSave({ kind: "term", source: "魔法", target: "magic", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+    expect(names().find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true });
+    // A word that is not in this block is not listed.
+    service.knowledgeSave({ kind: "term", source: "竜", target: "dragon", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+    expect(names().some((n) => n.source === "竜")).toBe(false);
+
+    // The user writes the English name on the row: the glossary has it, and the topic is accepted.
+    const before = names().find((n) => n.source === "鈴木花子")!;
+    expect(before.known).toBe(false);
+    service.guidedSetEnglish("鈴木花子", "  Hanako Suzuki ");
+    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ english: "Hanako Suzuki", known: true });
+    expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

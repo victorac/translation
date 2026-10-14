@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AttributeDef, GuidedName } from "@ltw/domain";
 
 export interface ClassInfo {
@@ -19,8 +19,12 @@ const KIND_LABEL: Record<string, string> = { character: "person", family: "famil
  * One name of the block: a line to read at a glance, which opens to the choices its topic has. What is offered comes from the
  * classes file: the kind of topic, and every attribute that is a choice or a link to another topic. Free text stays in the topic file.
  */
-export function NameRow({ name, classes, topics, onOpen, onKind, onAttribute }: { name: GuidedName; classes: ClassInfo[]; topics: TopicRef[]; onOpen: () => void; onKind: (kind: string) => void; onAttribute: (key: string, values: string[]) => void }) {
+export function NameRow({ name, classes, topics, focused, onFocus, onOpen, onEnglish, onKind, onAttribute }: { name: GuidedName; classes: ClassInfo[]; topics: TopicRef[]; focused: boolean; onFocus: () => void; onOpen: () => void; onEnglish: (english: string) => void; onKind: (kind: string) => void; onAttribute: (key: string, values: string[]) => void }) {
   const [open, setOpen] = useState(false);
+  const [english, setEnglish] = useState(name.english);
+  // The glossary may change the English name from elsewhere (the topic file); the box follows it unless it is being typed in.
+  useEffect(() => setEnglish(name.english), [name.english]);
+  const commit = () => english.trim() !== name.english.trim() && onEnglish(english);
   const def = classes.find((c) => c.name === name.kind);
   const attrs = name.attrs ?? {};
   // Only the choices there is something to choose from: a link to a kind of topic that has none yet is left out until it has one.
@@ -35,15 +39,29 @@ export function NameRow({ name, classes, topics, onOpen, onKind, onAttribute }: 
         <button className="chev" aria-expanded={open} aria-label={`Choices for ${name.source}`} title="Kind and choices" onClick={() => setOpen((o) => !o)}>
           {open ? "▾" : "▸"}
         </button>
-        <button className="glossary-row" onClick={onOpen} title="Open this topic in the knowledge base">
-          <span className="name-source">{name.source}</span>
-          <span className={name.english.trim() === "" ? "name-english missing" : "name-english"}>{name.english.trim() === "" ? "needs an English name" : name.english}</span>
-          {!name.known && (
-            <span className="check-mark" title="Suggested by the app: not accepted yet">
-              ?
-            </span>
-          )}
+        <button className={focused ? "glossary-source focused" : "glossary-source"} onClick={onFocus} aria-pressed={focused} title="Show where it appears in the block">
+          {name.source}
         </button>
+        <input
+          className={name.english.trim() === "" ? "english-input missing" : "english-input"}
+          aria-label={`English name of ${name.source}`}
+          value={english}
+          placeholder="English name"
+          onChange={(e) => setEnglish(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setEnglish(name.english);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+        />
+        {!name.known && (
+          <span className="check-mark" title="Suggested by the app: not accepted yet. Changing anything here accepts it.">
+            ?
+          </span>
+        )}
         <select className="kind-select" aria-label={`Kind of ${name.source}`} title="What kind of topic this is" value={name.kind} onChange={(e) => onKind(e.target.value)}>
           {classes.length === 0 && <option value={name.kind}>{KIND_LABEL[name.kind] ?? name.kind}</option>}
           {classes.map((c) => (

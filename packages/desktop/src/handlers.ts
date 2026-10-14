@@ -90,6 +90,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   }),
   "guided.addName": z.object({ index: z.number().int().min(0).max(100_000), source: z.string().min(1).max(100) }),
   "guided.setAttribute": z.object({ source: z.string().min(1).max(200), key: z.string().min(1).max(100), values: z.array(z.string().max(200)).max(50) }),
+  "guided.setEnglish": z.object({ source: z.string().min(1).max(200), english: z.string().max(300) }),
   "guided.setKind": z.object({ source: z.string().min(1).max(200), kind: z.string().min(1).max(100) }),
   "guided.translate": z.object({
     index: z.number().int().min(0).max(100_000),
@@ -208,6 +209,7 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "guided.addName": (p) => service.guidedAddName(p.index, p.source),
     "guided.setAttribute": (p) => service.guidedSetAttribute(p.source, p.key, p.values),
     "guided.setKind": (p) => service.guidedSetKind(p.source, p.kind),
+    "guided.setEnglish": (p) => service.guidedSetEnglish(p.source, p.english),
     "guided.translate": (p) => service.guidedTranslate(p),
     "guided.clear": () => service.guidedClear(),
     "guided.setTranslation": (p) => service.guidedSetTranslation(p.index, p.text),

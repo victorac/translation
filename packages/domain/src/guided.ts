@@ -235,12 +235,31 @@ export function notesFor(interp: Interpretation, only?: string): string[] {
   return notes;
 }
 
-/** The text with every longer name that contains `name` taken out, so what is left is where `name` stands on its own (山田 in 「山田、…」 but not in 山田太郎). */
+/** The text with every longer name that contains `name` blanked out, letter for letter, so what is left is where `name` stands on its own (山 in 「山、…」 but not in 山田太郎) and positions still match the text. */
 export function withoutLongerNames(text: string, name: string, sources: readonly string[]): string {
   return sources
     .filter((s) => s.length > name.length && s.includes(name))
     .sort((x, y) => y.length - x.length)
-    .reduce((rest, s) => rest.split(s).join("\u0000"), text);
+    .reduce((rest, s) => rest.split(s).join("\u0000".repeat(s.length)), text);
+}
+
+/** Where any of `names` stands on its own in the text, in order, without overlaps. `sources` are all the names of the glossary. */
+export function occurrencesOf(text: string, names: readonly string[], sources: readonly string[]): { start: number; end: number }[] {
+  const found: { start: number; end: number }[] = [];
+  for (const name of names) {
+    if (name === "") continue;
+    const rest = withoutLongerNames(text, name, sources);
+    for (let i = rest.indexOf(name); i >= 0; i = rest.indexOf(name, i + name.length)) found.push({ start: i, end: i + name.length });
+  }
+  found.sort((x, y) => x.start - y.start || y.end - x.end);
+  let lastEnd = 0;
+  return found.filter((r) => (r.start >= lastEnd ? ((lastEnd = r.end), true) : false));
+}
+
+/** The glossary entries whose name (or other way of writing it) stands in the text. */
+export function glossaryHits<T extends { source: string; aliases: readonly string[] }>(text: string, glossary: readonly T[]): T[] {
+  const sources = glossary.map((e) => e.source);
+  return glossary.filter((e) => occurrencesOf(text, [e.source, ...e.aliases], sources).length > 0);
 }
 
 /**

@@ -1,6 +1,7 @@
 import {
   allPrompts,
   glossaryFor,
+  glossaryHits,
   labelLines,
   type Carry,
   nameGuess,
@@ -1213,6 +1214,10 @@ export class WorkspaceService {
     const terms = this.knowledge.all().filter((e) => e.kind === "term");
     for (const b of g.blocks) {
       if (!b.interpretation) continue;
+      // Every word of the glossary that stands in the block is listed, including ones added to the glossary after the block was read.
+      for (const e of glossaryHits(b.text, terms)) {
+        if (!b.interpretation.names.some((n) => n.source === e.source)) b.interpretation.names.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed" });
+      }
       b.interpretation.names = b.interpretation.names.flatMap((n) => {
         const e = terms.find((t) => t.source === n.source);
         if (!e) return [];
@@ -1379,7 +1384,19 @@ export class WorkspaceService {
       if (values.length === 0) delete x.attrs[key];
       else x.attrs[key] = values;
       return x;
-    }, [key]);
+    }, [key], true);
+    this.knowledgeChanged();
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** The English name of a word, written by the user. Writing it also accepts the topic. */
+  guidedSetEnglish(source: string, english: string): GuidedState {
+    const e = this.termBySource(source);
+    this.knowledge.patch(e.id, (x) => {
+      x.target = english.trim();
+      return x;
+    }, [], true);
     this.knowledgeChanged();
     this.guidedChanged();
     return this.guidedView();
@@ -1398,7 +1415,7 @@ export class WorkspaceService {
       for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
       x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
       return x;
-    });
+    }, [], true);
     this.knowledgeChanged();
     this.guidedChanged();
     return this.guidedView();
