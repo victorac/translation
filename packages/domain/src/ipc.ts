@@ -76,8 +76,6 @@ export interface AnalyzeInput {
   documentTitle: string;
   /** Number of the block (starting at 1). */
   block: number;
-  /** The passage before this one, if any: its end helps tell whether a scene goes on. */
-  previousPassage?: string | undefined;
 }
 
 /** Ask a model which of the project's names, hints and notes matter for one block. */
@@ -111,6 +109,24 @@ export interface SummarizeInput {
   documentTitle: string;
   /** Replace a summary the user accepted too. */
   rewrite?: boolean | undefined;
+}
+
+/** Join the scenes of neighbouring blocks that belong together. */
+export interface MergeScenesInput {
+  backend: Backend;
+  modelId: string;
+  contextLimit: number;
+  maxOutputTokens: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  documentId: string;
+  documentTitle: string;
+}
+
+export interface MergeScenesResult {
+  /** How many scenes were joined into the one before them. */
+  joined: number;
+  canceled: boolean;
 }
 
 export interface SummarizeResult {
@@ -271,6 +287,7 @@ export interface CommandMap {
   "notes.cancel": undefined;
   "research.block": ResearchInput;
   "knowledge.summarize": SummarizeInput;
+  "knowledge.mergeScenes": MergeScenesInput;
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
@@ -291,13 +308,14 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.mergeScenes" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
   "notes.cancel": { canceled: boolean };
   "research.block": ResearchResult;
   "knowledge.summarize": SummarizeResult;
+  "knowledge.mergeScenes": MergeScenesResult;
   "knowledge.files": KnowledgeFiles;
   "knowledge.file": KnowledgeFile;
   "knowledge.setFile": KnowledgeFile;
@@ -353,6 +371,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "notes.cancel",
   "research.block",
   "knowledge.summarize",
+  "knowledge.mergeScenes",
   "knowledge.files",
   "knowledge.file",
   "knowledge.setFile",

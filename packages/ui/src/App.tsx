@@ -117,7 +117,7 @@ export function App() {
 
   // The researcher model reads the text for knowledge, and before translating it chooses the background for each block.
   const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
-  const [work, setWork] = useState<{ what: "extract" | "choose" | "summarize"; at: number; of: number } | null>(null);
+  const [work, setWork] = useState<{ what: "extract" | "choose" | "merge" | "summarize"; at: number; of: number } | null>(null);
   const [workNote, setWorkNote] = useState<string | null>(null);
   /** The longer account behind the note: what was left out, replaced or flagged. */
   const [workDetails, setWorkDetails] = useState<string[]>([]);
@@ -138,6 +138,7 @@ export function App() {
     setShowDetails(false);
     let added = 0;
     const left: string[] = [];
+    const info: string[] = [];
     // Reading again starts from what you accepted: suggestions nobody checked are dropped, and what you rejected stays rejected.
     const begin = await api.invoke("knowledge.beginExtraction", { documentId: snap?.activeDocumentId ?? "" });
     const discarded = begin.ok ? begin.value.discarded : 0;
@@ -155,7 +156,6 @@ export function App() {
           documentId: snap?.activeDocumentId ?? "",
           documentTitle: activeTitle,
           block: i + 1,
-          ...(i > 0 ? { previousPassage: blockTexts[i - 1]! } : {}),
         });
         if (stopWork.current || (r.ok && r.value.canceled)) break;
         if (!r.ok) return setWorkNote(r.error.message);
@@ -163,6 +163,19 @@ export function App() {
         left.push(...r.value.notes);
       }
       if (stopWork.current) return setWorkNote(`Stopped. ${added} ${added === 1 ? "suggestion was" : "suggestions were"} added so far.`);
+      setWork({ what: "merge", at: 0, of: 0 });
+      const merged = await api.invoke("knowledge.mergeScenes", {
+        backend: s.backend,
+        modelId: researcher.name,
+        contextLimit: researcher.contextLimit,
+        maxOutputTokens: researcher.maxOutputTokens,
+        sourceLanguage: s.sourceLanguage,
+        targetLanguage: s.targetLanguage,
+        documentId: snap?.activeDocumentId ?? "",
+        documentTitle: activeTitle,
+      });
+      if (merged.ok) info.push(...(merged.value.joined > 0 ? [`${merged.value.joined} neighbouring ${merged.value.joined === 1 ? "scene was" : "scenes were"} joined into scenes of several blocks.`] : []));
+      else left.push(`Scenes could not be joined: ${merged.error.message}`);
       setWork({ what: "summarize", at: 0, of: 0 });
       const s2 = await api.invoke("knowledge.summarize", {
         backend: s.backend,
@@ -178,7 +191,7 @@ export function App() {
       // A last look over everything for names that clash and links that lead nowhere.
       const checked = await api.invoke("knowledge.check");
       const flagged = checked.ok ? checked.value.found : 0;
-      setWorkDetails([...(discarded > 0 ? [`${discarded} unchecked ${discarded === 1 ? "suggestion was" : "suggestions were"} replaced.`] : []), ...left, ...(flagged > 0 ? [`${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:" on the topics concerned.`] : [])]);
+      setWorkDetails([...info, ...(discarded > 0 ? [`${discarded} unchecked ${discarded === 1 ? "suggestion was" : "suggestions were"} replaced.`] : []), ...left, ...(flagged > 0 ? [`${flagged} possible ${flagged === 1 ? "problem was" : "problems were"} noted as "Check:" on the topics concerned.`] : [])]);
       setWorkNote(`Added ${added} ${added === 1 ? "suggestion" : "suggestions"}${s2.value.updated ? " and a summary" : ""}, marked with a ?.${left.length + flagged > 0 ? ` ${left.length + flagged} ${left.length + flagged === 1 ? "thing needs" : "things need"} a look.` : ""}`);
     } finally {
       setWork(null);
@@ -422,7 +435,7 @@ export function App() {
           {work && (
             <div className="strip">
               <span>
-                {work.what === "summarize" ? "Writing the summary…" : `${work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block ${work.at} of ${work.of}…`}
+                {work.what === "summarize" ? "Writing the summary…" : work.what === "merge" ? "Joining the scenes…" : `${work.what === "extract" ? "Reading for knowledge" : "Choosing the background"}, block ${work.at} of ${work.of}…`}
               </span>
               <button
                 className="small"

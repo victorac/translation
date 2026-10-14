@@ -25,6 +25,7 @@ import {
   fitMaterial,
   knowledgeCap,
   knowledgeReserve,
+  mergeScenes,
   mergeSummary,
   buildSummary,
   SUMMARY_DIRECT_TOKENS,
@@ -63,6 +64,8 @@ import {
   type AnalyzeResult,
   type BlockCellView,
   type BlockMaterial,
+  type MergeScenesInput,
+  type MergeScenesResult,
   type SummarizeInput,
   type SummarizeResult,
   type BlockOutput,
@@ -1287,6 +1290,8 @@ export class WorkspaceService {
         return letter("No");
       case "same-scene":
         return letter("No");
+      case "narrator":
+        return letter("None");
       case "scene-text":
         return "Practice mode: this scene description is an example.";
       case "condense":
@@ -1343,7 +1348,6 @@ export class WorkspaceService {
         classes: parseClasses(this.classesText).classes,
         passage: input.passage,
         scope: { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block },
-        ...(input.previousPassage ? { previousPassage: input.previousPassage } : {}),
         origin,
         candidates,
         sourceLanguage: input.sourceLanguage,
@@ -1358,6 +1362,35 @@ export class WorkspaceService {
         this.knowledgeChanged();
       }
       return { added: result.added, canceled: false, notes: result.problems };
+    } finally {
+      this.analysisAbort = null;
+    }
+  }
+
+  /**
+   * The second step of the scenes: every block has a scene description of its own, and here the ones that follow each
+   * other and belong together are joined into one scene.
+   */
+  async mergeScenesStep(input: MergeScenesInput): Promise<MergeScenesResult> {
+    const abort = this.beginSideRequest();
+    try {
+      const room = input.contextLimit - 400 - Math.min(input.maxOutputTokens, 500) - DEFAULTS.messageOverheadTokens - 100;
+      const result = await mergeScenes({
+        entries: this.knowledge.all(),
+        documentId: input.documentId,
+        title: input.documentTitle,
+        targetLanguage: input.targetLanguage,
+        asker: this.questionAsker(input.backend, input.modelId, abort),
+        room,
+        deps: { newId, now: () => new Date().toISOString() },
+        shouldStop: () => abort.signal.aborted,
+      });
+      if (result.canceled || abort.signal.aborted) return { joined: 0, canceled: true };
+      if (result.joined > 0) {
+        this.knowledge.replaceLive(result.entries);
+        this.knowledgeChanged();
+      }
+      return { joined: result.joined, canceled: false };
     } finally {
       this.analysisAbort = null;
     }

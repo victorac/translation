@@ -19,8 +19,9 @@ import {
   role,
   roleByForm,
   sameAs,
-  sameScene,
   sceneText,
+  narratorQuestion,
+  firstPersonInNarration,
   splitSentences,
   supported,
   windowAround,
@@ -43,8 +44,6 @@ export interface ExtractInput {
   classes: readonly ClassDef[];
   passage: string;
   scope: { documentId: string; blockHash: string; block: number };
-  /** The end of the passage before this one, which helps to tell whether a scene goes on. */
-  previousPassage?: string;
   origin: EntryOrigin;
   /** Names found without a model (by the word analyzer and by their form). */
   candidates: readonly string[];
@@ -92,7 +91,7 @@ const lower = (s: string) => s.trim().toLocaleLowerCase();
  *  4. its English name and a short description, for a new one
  *  5. what each person does in the passage (acts, is spoken to, is only mentioned)
  *  6. their attributes and links, only the ones not known yet, each with a quote as evidence
- *  7. whether the passage continues the scene before it, and who is present
+ *  7. who is telling it, and what happens (one scene per passage; neighbouring ones are joined afterwards)
  */
 export async function extractBlock(input: ExtractInput): Promise<ExtractResult> {
   const { passage, classes, deps, origin, scope } = input;
@@ -306,65 +305,69 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     }
   }
 
-  // ---- 7. the scene ----
+  // ---- 7. who is telling it, and what happens ----
+  // Every passage gets a scene of its own. Joining neighbouring ones into one scene is a second step (see mergeScenes).
   if (!stop()) {
     const present = people.filter((p) => (roles.get(p.id) ?? 9) <= 1);
     const sceneEntries = entries.filter((e) => e.kind === "scene" && e.scope?.documentId === scope.documentId);
     const here = sceneEntries.find((e) => e.scope?.blockHashes?.includes(scope.blockHash));
-    const before = sceneEntries.find((e) => (e.scope?.blockEnd ?? e.scope?.block) === scope.block - 1);
     if (!here) {
-      let continues = false;
-      if (before && before.status === "suggested") {
-        const same = await pick(sameScene(before.text, input.previousPassage ?? "", passage));
-        continues = same === 0;
+      // A passage told as "I" is hard to follow unless it is known who "I" is, and the model gets the direction of who waits for whom wrong without it.
+      let narrator: { word: string; name: string; id: string } | null = null;
+      const word = firstPersonInNarration(passage);
+      if (word) {
+        const known = terms().find((t) => t.category === "character" && (t.attrs["role"] ?? []).some((r) => /narrator/i.test(r)));
+        if (known) narrator = { word, name: known.target, id: known.id };
+        else if (people.length > 0) {
+          const chosen = await pickAgreed(narratorQuestion(word, people.map((p) => `${p.source} (${p.target})`), windowAround(sentences, [word]) || passage.slice(0, 600)));
+          if (chosen !== null && chosen < people.length) {
+            const who = people[chosen]!;
+            narrator = { word, name: who.target, id: who.id };
+            const def = classes.find((c) => c.name === who.category);
+            if (def?.attributes.some((x) => x.key === "role") && (who.attrs["role"] ?? []).length === 0) update(who.id, { attrs: { ...who.attrs, role: ["narrator"] }, attrFlags: [...new Set([...who.attrFlags, "role"])] });
+          }
+        }
       }
-      if (continues && before) {
-        update(before.id, {
-          related: [...new Set([...before.related, ...present.map((p) => p.id)])],
-          scope: { ...before.scope!, blockHashes: [...(before.scope!.blockHashes ?? []), scope.blockHash], blockEnd: scope.block },
+      // The names of everyone in the passage, so that the description does not fall back on the original script.
+      const names = terms()
+        .filter((t) => mentioned.has(t.id) || t.id === narrator?.id)
+        .map((t) => ({ source: t.source, target: t.target }));
+      const describeScene = async (strict: boolean): Promise<string | null> => {
+        const reply = await ask(sceneText(passage, input.targetLanguage, names, narrator ? { word: narrator.word, name: narrator.name } : null, strict));
+        const text = reply === null ? null : parseShortText(reply, 400);
+        if (!text) return null;
+        // The description is made from the passage and the names given, and the program checks its language. It is not
+        // judged "supported": a small model's yes or no to that is too unsteady, and it threw good descriptions away.
+        if (latin && CJK.test(text)) {
+          unsupported++;
+          return null;
+        }
+        return text;
+      };
+      let text = await describeScene(false);
+      if (!text && !stop()) text = await describeScene(true);
+      if (!stopped) {
+        if (!text) problems.push(`Block ${scope.block}: a description of what happens could not be written, so the scene has no description yet. You can write it yourself.`);
+        const related = [...new Set([...present.map((p) => p.id), ...(narrator ? [narrator.id] : [])])];
+        entries.push({
+          id: deps.newId(),
+          kind: "scene",
+          source: "",
+          target: "",
+          hint: "",
+          category: "term",
+          aliases: [],
+          attrs: {},
+          attrFlags: [],
+          text: text ?? "",
+          about: null,
+          related,
+          scope: { documentId: scope.documentId, blockHashes: [scope.blockHash], block: scope.block },
+          origin,
+          status: "suggested",
+          updatedAt: at,
         });
         added++;
-      } else if (!stopped) {
-        // The names of everyone in the passage, so that the description does not fall back on the original script.
-        const names = terms()
-          .filter((t) => mentioned.has(t.id))
-          .map((t) => ({ source: t.source, target: t.target }));
-        const describeScene = async (strict: boolean): Promise<string | null> => {
-          const reply = await ask(sceneText(passage, present.map((p) => p.target), input.targetLanguage, names, strict));
-          const text = reply === null ? null : parseShortText(reply, 300);
-          if (!text) return null;
-          // The description is made from the passage and the names given, and the program checks its language. It is not
-          // judged "supported": a small model's yes or no to that is too unsteady, and it threw good descriptions away.
-          if (latin && CJK.test(text)) {
-            unsupported++;
-            return null;
-          }
-          return text;
-        };
-        let text = await describeScene(false);
-        if (!text && !stop()) text = await describeScene(true);
-        if (!stopped) {
-          if (!text) problems.push(`Block ${scope.block}: a description of the scene could not be written, so the scene has no description yet. You can write it yourself.`);
-          entries.push({
-            id: deps.newId(),
-            kind: "scene",
-            source: "",
-            target: "",
-            hint: "",
-            category: "term",
-            aliases: [],
-            attrs: {},
-            attrFlags: [],
-            text: text ?? "",
-            about: null,
-            related: present.map((p) => p.id),
-            scope: { documentId: scope.documentId, blockHashes: [scope.blockHash], block: scope.block },
-            origin,
-            status: "suggested",
-            updatedAt: at,
-          });
-          added++;
-        }
       }
     }
   }

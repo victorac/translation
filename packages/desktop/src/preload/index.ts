@@ -41,6 +41,7 @@ const COMMANDS = new Set([
   "notes.cancel",
   "research.block",
   "knowledge.summarize",
+  "knowledge.mergeScenes",
   "knowledge.files",
   "knowledge.file",
   "knowledge.setFile",

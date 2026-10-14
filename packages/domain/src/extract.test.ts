@@ -214,19 +214,49 @@ describe("checking what the model says", () => {
 });
 
 describe("scenes and stopping", () => {
-  const prev = entry("s", { kind: "scene", category: "term", text: "At the gate.", status: "suggested", scope: { documentId: "d1", blockHashes: ["h0"], block: 1 } });
-  const run = (continues: boolean, entries: KnowledgeEntry[] = [prev]) =>
-    extractBlock(base(scripted(sensible({ "same-scene": (q) => letter(q, continues ? "Yes" : "No"), "scene-text": () => "Later, in class." })).asker, { entries, scope: { documentId: "d1", blockHash: "h1", block: 2 }, candidates: [], listNames: false }));
+  const first = (word = "ぼく") => `${word}は太郎という。花子は笑った。`;
+  const people = { 太郎: { english: "Taro" }, 花子: { english: "Hanako" } } as const;
+  const answers = (extra: Partial<Record<string, (q: Question) => string | null>> = {}) =>
+    sensible({
+      classify: (q) => letter(q, people[aboutName(q) as keyof typeof people] ? "a person" : "not a name"),
+      "english-name": (q) => people[aboutName(q) as keyof typeof people]?.english ?? "",
+      describe: () => "UNKNOWN",
+      attribute: (q) => letter(q, "Not stated"),
+      ...extra,
+    });
 
-  it("continues the scene before it when the model says so, and starts a new one otherwise", async () => {
-    const cont = await run(true);
-    expect(cont.entries).toHaveLength(1);
-    expect(cont.entries[0]!.scope).toMatchObject({ blockHashes: ["h0", "h1"], block: 1, blockEnd: 2 });
-    const fresh = await run(false);
-    expect(fresh.entries).toHaveLength(2);
-    expect(fresh.entries[1]).toMatchObject({ text: "Later, in class.", scope: { block: 2 } });
-    const confirmed = await run(true, [{ ...prev, status: "confirmed" as const }]);
-    expect(confirmed.entries).toHaveLength(2); // a scene the user accepted is never extended
+  it("makes a scene for the passage, and says who the narrator is when it is told as \"I\"", async () => {
+    const { asker, asked } = scripted(answers({ narrator: (q) => letter(q, /^太郎/), "scene-text": () => "Taro introduces himself, and Hanako laughs." }));
+    const r = await extractBlock(base(asker, { passage: first(), candidates: ["太郎", "花子"], listNames: false }));
+    const taro = r.entries.find((e) => e.source === "太郎")!;
+    const scene = r.entries.find((e) => e.kind === "scene")!;
+    expect(taro.attrs).toEqual({ role: ["narrator"] });
+    expect(taro.attrFlags).toEqual(["role"]);
+    expect(scene).toMatchObject({ text: "Taro introduces himself, and Hanako laughs.", scope: { block: 1, blockHashes: ["h1"] } });
+    expect(scene.related).toEqual(expect.arrayContaining([taro.id]));
+    const sceneQuestion = asked.find((q) => q.id === "scene-text")!;
+    expect(sceneQuestion.user).toContain("The narrator, the one who says ぼく about himself or herself, is Taro.");
+    expect(sceneQuestion.user).toContain("太郎 = Taro; 花子 = Hanako");
+    expect(asked.filter((q) => q.id === "narrator")).toHaveLength(2); // asked in both orders
+  });
+
+  it("uses a narrator it already knows, even when the narrator is not named in this passage, and does not ask again", async () => {
+    const narrator = entry("t", { source: "太郎", target: "Taro", attrs: { role: ["narrator"] } });
+    const { asker, asked } = scripted(answers({ "scene-text": () => "Hanako waits at the gate for Taro." }));
+    const r = await extractBlock(base(asker, { entries: [narrator, entry("h", { source: "花子", target: "Hanako" })], passage: "ぼくは校門で待っていた。花子が来た。", scope: { documentId: "d1", blockHash: "h2", block: 2 }, candidates: [], listNames: false }));
+    expect(asked.some((q) => q.id === "narrator")).toBe(false);
+    expect(asked.find((q) => q.id === "scene-text")!.user).toContain("is Taro.");
+    expect(r.entries.find((e) => e.kind === "scene")!.related).toEqual(expect.arrayContaining(["t", "h"]));
+  });
+
+  it("does not ask who the narrator is for a passage that is not told as \"I\", and leaves it unsaid when the model cannot tell", async () => {
+    const third = scripted(answers());
+    await extractBlock(base(third.asker, { passage: "花子は笑った。太郎は黙った。", candidates: ["太郎", "花子"], listNames: false }));
+    expect(third.asked.some((q) => q.id === "narrator")).toBe(false);
+    const unclear = scripted(answers({ narrator: (q) => letter(q, "None") }));
+    const r = await extractBlock(base(unclear.asker, { passage: first(), candidates: ["太郎", "花子"], listNames: false }));
+    expect(r.entries.find((e) => e.source === "太郎")!.attrs).toEqual({});
+    expect(unclear.asked.find((q) => q.id === "scene-text")!.user).not.toContain("The narrator");
   });
 
   it("tries once more with the English names when the first scene description is in the wrong language", async () => {
@@ -235,25 +265,17 @@ describe("scenes and stopping", () => {
     const r = await extractBlock(base(asker));
     const scene = r.entries.find((e) => e.kind === "scene")!;
     expect(scene.text).toBe("Hanako waits at the school gate.");
-    const [first, second] = asked.filter((q) => q.id === "scene-text");
-    expect(first!.user).toContain("花子 = Hanako"); // the names of the people in the passage are given up front
-    expect(second!.user).toContain("could not be used");
+    const [one, two] = asked.filter((q) => q.id === "scene-text");
+    expect(one!.user).toContain("花子 = Hanako"); // the names of the people in the passage are given up front
+    expect(two!.user).toContain("could not be used");
     expect(r.problems).toEqual([]);
   });
 
-  it("still makes the scene, without a description, when it cannot be written, so the next block can continue it, and says so", async () => {
+  it("still makes the scene, without a description, when it cannot be written, and says so", async () => {
     const { asker } = scripted(sensible({ "scene-text": () => "花子が待っている" }));
     const r = await extractBlock(base(asker));
-    const scene = r.entries.find((e) => e.kind === "scene")!;
-    expect(scene).toMatchObject({ text: "", status: "suggested", scope: { block: 1, blockHashes: ["h1"] } });
-    expect(r.problems).toEqual(["Block 1: a description of the scene could not be written, so the scene has no description yet. You can write it yourself."]);
-    // The next block can continue that scene even though it has no description, because it is told how the passage before ended.
-    const next = scripted(sensible({ "same-scene": (q) => letter(q, "Yes") }));
-    const r2 = await extractBlock(base(next.asker, { entries: r.entries, passage: "それから二人は教室へ向かった。", previousPassage: PASSAGE, scope: { documentId: "d1", blockHash: "h2", block: 2 }, candidates: [], listNames: false }));
-    expect(r2.entries.filter((e) => e.kind === "scene")).toHaveLength(1);
-    expect(r2.entries.find((e) => e.kind === "scene")!.scope).toMatchObject({ block: 1, blockEnd: 2 });
-    expect(next.asked.find((q) => q.id === "same-scene")!.user).toContain("END OF THE PASSAGE BEFORE");
-    expect(next.asked.find((q) => q.id === "same-scene")!.user).toContain("彼女は笑った");
+    expect(r.entries.find((e) => e.kind === "scene")).toMatchObject({ text: "", status: "suggested", scope: { block: 1, blockHashes: ["h1"] } });
+    expect(r.problems).toEqual(["Block 1: a description of what happens could not be written, so the scene has no description yet. You can write it yourself."]);
   });
 
   it("says when a name was left out because the model gave no usable English name, and when answers contradicted themselves", async () => {

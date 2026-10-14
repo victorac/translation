@@ -367,7 +367,7 @@ const reader =
     }
     if (system.startsWith("You read fiction closely.")) return optionLetter(user, "speaks or acts");
     if (system.startsWith("You follow the scenes")) return optionLetter(user, extra.sameScene ? "Yes" : "No");
-    if (system.startsWith("You describe scenes")) return extra.sceneText ?? "A scene.";
+    if (system.startsWith("You describe what happens")) return extra.sceneText ?? "A scene.";
     return "";
   };
 
@@ -452,13 +452,15 @@ describe("suggested knowledge", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.map((e) => e.source)).toEqual(["花子"]);
   });
 
-  it("lets a scene run over several blocks when the model says the passage continues it", async () => {
+  it("joins the scenes of neighbouring blocks when the model says they belong together", async () => {
     const lm = await fakeLmStudio({ answer: reader({}, { sameScene: true, sceneText: "At the gate, still talking." }) });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    await service.analyze(ask({ block: 1, passage: "一つ目。" }));
-    await service.analyze(ask({ block: 2, passage: "二つ目。" }));
-    await service.analyze(ask({ block: 3, passage: "三つ目。" }));
+    const docId = service.snapshot().activeDocumentId;
+    for (const [block, passage] of [[1, "一つ目。"], [2, "二つ目。"], [3, "三つ目。"]] as const) await service.analyze(ask({ documentId: docId, documentTitle: "Document 1", block, passage }));
+    expect(service.knowledgeList({ kind: "scene" }).entries).toHaveLength(3); // one tentative scene per block
+    const merge = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", documentId: docId, documentTitle: "Document 1" };
+    expect(await service.mergeScenesStep(merge)).toMatchObject({ joined: 2, canceled: false });
     const scenes = service.knowledgeList({ kind: "scene" }).entries;
     expect(scenes).toHaveLength(1);
     expect(scenes[0]!.scope).toMatchObject({ block: 1, blockEnd: 3 });
@@ -471,14 +473,8 @@ describe("suggested knowledge", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     const r = await service.analyze(ask({ documentId: docId, documentTitle: "Document 1", block: 1 }));
-    expect(r.notes).toEqual(["Block 1: a description of the scene could not be written, so the scene has no description yet. You can write it yourself."]);
+    expect(r.notes).toEqual(["Block 1: a description of what happens could not be written, so the scene has no description yet. You can write it yourself."]);
     expect(service.knowledgeFiles().files.find((f) => f.kind === "scene")).toMatchObject({ title: "Block 1 (no description)", suggested: true });
-    // The next block continues it, because the model is told how the passage before ended.
-    const lm2 = await fakeLmStudio({ answer: reader({}, { sameScene: true, sceneText: "x" }) });
-    provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
-    await service.analyze(ask({ documentId: docId, documentTitle: "Document 1", block: 2, passage: "それから二人は教室へ向かった。", previousPassage: PASSAGE }));
-    expect(service.knowledgeList({ kind: "scene" }).entries).toHaveLength(1);
-    expect(service.knowledgeList({ kind: "scene" }).entries[0]!.scope).toMatchObject({ block: 1, blockEnd: 2 });
   });
 
   it("writes a summary of a document from its scenes, and keeps one the user confirmed", async () => {

@@ -259,12 +259,22 @@ export const attribute = (name: string, key: string, options: string[], context:
 export const relation = (name: string, key: string, other: string, context: string): Question =>
   choice("relation", "You read fiction closely and only report what the text says.", `According to this passage, does 「${name}」 have this relation to 「${other}」: "${key}"?\n\nPASSAGE:\n${context}`, ["Yes", "No, or not stated"], ", then | and a short quote from the passage that shows it");
 
-export const sameScene = (previous: string, previousEnd: string, passage: string): Question =>
+/** Is a passage told in the first person? The word the narrator uses for "I" outside of quotations, or null. */
+export function firstPersonInNarration(text: string): string | null {
+  const narration = text.replace(/「[^」]*」/g, "").replace(/『[^』]*』/g, "");
+  return ["ぼく", "僕", "私", "わたし", "俺", "おれ", "オレ", "あたし", "わたくし"].find((w) => narration.includes(w)) ?? null;
+}
+
+export const narratorQuestion = (word: string, people: string[], context: string): Question =>
+  choice("narrator", "You read fiction closely.", `This passage is told in the first person: the narrator calls himself or herself 「${word}」. Which of these people is the narrator?\n\nPASSAGE:\n${context}`, [...people, "None of them, or it cannot be told"]);
+
+/** Do two descriptions of passages that follow each other belong to one scene? */
+export const sameSceneByDescription = (first: string, second: string): Question =>
   choice(
     "same-scene",
     "You follow the scenes of a story.",
-    `Here is how the story stood before, then the start of the next passage. Does the next passage continue the same scene (the same place and time)?\n\n${previous.trim() ? `SCENE SO FAR:\n${previous}\n\n` : ""}${previousEnd.trim() ? `END OF THE PASSAGE BEFORE:\n${previousEnd.slice(-400)}\n\n` : ""}NEXT PASSAGE:\n${passage.slice(0, 500)}`,
-    ["Yes, it continues the scene", "No, a new scene starts"],
+    `These are descriptions of two passages of a story that follow each other. Do they take place in the same place and at the same time, as one continuous scene?\n\nFIRST: ${first}\nSECOND: ${second}`,
+    ["Yes, one continuous scene", "No, the second one is a different scene"],
   );
 
 /** Shortens scene descriptions, without adding anything to them. */
@@ -276,12 +286,18 @@ export const condense = (title: string, scenes: readonly string[], maxWords: num
   maxTokens: Math.min(500, Math.round(maxWords * 2.5) + 40),
 });
 
-export const sceneText = (passage: string, present: string[], targetLanguage: string, names: { source: string; target: string }[] = [], strict = false): Question => ({
+export const sceneText = (
+  passage: string,
+  targetLanguage: string,
+  names: { source: string; target: string }[] = [],
+  narrator: { word: string; name: string } | null = null,
+  strict = false,
+): Question => ({
   id: "scene-text",
   kind: "text",
-  system: `You describe scenes of a story in ${targetLanguage}. ${RULE}`,
-  user: `In one sentence of at most 25 words, written in ${targetLanguage}, say where this takes place and what happens${present.length > 0 ? `. The people present are: ${present.join(", ")}` : ""}.${names.length > 0 ? `\n\nWrite names like this, not in the original script: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
-  maxTokens: 80,
+  system: `You describe what happens in a passage of a story, in ${targetLanguage}. ${RULE}`,
+  user: `In at most 35 words, say what happens in this passage: who does what, and to whom. Be careful about who is waiting for whom, who arrives and who is speaking. Do not quote the passage and do not use any Japanese characters.${names.length > 0 ? `\n\nWrite names like this: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${narrator ? ` The narrator, the one who says ${narrator.word} about himself or herself, is ${narrator.name}.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
+  maxTokens: 120,
 });
 
 /** A name is short and plain: no sentence, no list, no explanation. */
