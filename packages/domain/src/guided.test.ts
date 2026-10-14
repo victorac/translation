@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { guessGender, glossaryFor, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
+import { guessGender, glossaryFor, withoutLongerNames, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
 
 const readings = { 鈴木花子: ["スズキ", "ハナコ"], 山田太郎: ["ヤマダ", "タロウ"], 山田家: ["ヤマダ", "カ"], 桜台学園: ["ニ", "サクラダイ", "ガクエン"] };
 
@@ -140,5 +140,34 @@ describe("a conversation that carries on into the next block", () => {
   it("leaves the lines alone when the other one of the conversation is not known", () => {
     const r = interpretPassage({ passage: "「そうですか」\n\n「うん」", candidates: [], readings: {}, glossary, carry: { before: "山田太郎", other: null } });
     expect(r.lines.map((l) => l.speaker)).toEqual([null, null]);
+  });
+});
+
+describe("a short name that is part of a longer one", () => {
+  const taro = { source: "山田太郎", english: "Taro Yamada", kind: "character" as const, aliases: ["山田"], reading: "", known: true };
+  const tono = { source: "山田", english: "Yamada", kind: "term" as const, aliases: [], reading: "", known: true, hint: "Hanako's name for Taro" };
+  const interp = (names: typeof taro[]) => ({ names, narrator: null, narratorWord: null, lines: [] }) as never;
+
+  it("is found only where it stands on its own", () => {
+    expect(withoutLongerNames("山田太郎という。", "山田", ["山田太郎", "山田"])).not.toContain("山田");
+    expect(withoutLongerNames("「山田、おはよう」山田太郎", "山田", ["山田太郎", "山田"])).toContain("山田");
+  });
+
+  it("is not listed for a block where it is only part of the full name, and is listed with a note when it stands alone", () => {
+    const only = (text: string) => interpretPassage({ passage: text, candidates: [], readings: {}, glossary: [taro, tono] }).names.map((n) => n.source);
+    expect(only("山田太郎という。")).toEqual(["山田太郎"]);
+    expect(only("「山田、お待たせ」山田太郎は笑った。").sort()).toEqual(["山田", "山田太郎"].sort());
+  });
+
+  it("is sent as its own entry, with a note about when it applies, and the full name no longer lists it as another way to write it", () => {
+    const names = [taro, tono] as never;
+    const both = glossaryFor(interp(names), "「山田、お待たせ」山田太郎は笑った。");
+    expect(both).toEqual([
+      { source: "山田太郎", target: "Taro Yamada" },
+      { source: "山田", target: "Yamada", note: "Hanako's name for Taro; when it stands on its own, not as part of 山田太郎" },
+    ]);
+    // In a piece where it is only part of the full name, it is not sent at all, and the full name keeps it as an alias.
+    expect(glossaryFor(interp(names), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Taro Yamada" }]);
+    expect(glossaryFor(interp([taro] as never), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Taro Yamada", aliases: ["山田"] }]);
   });
 });

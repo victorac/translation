@@ -607,6 +607,32 @@ describe("translating step by step", () => {
     expect(service.guidedGet()!.blocks[1]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["花子", "花子", "太郎"]);
   });
 
+  it("translates a bare 山田 as its own word: it gets its own topic, and the request says it applies only when it stands alone", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山田、お待たせしました」", blockSize: "normal" });
+    const read = await service.guidedInterpret(0);
+    const taro = read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!;
+    expect(taro.english).toBe("Taro Yamada");
+    // 山田 is already a way to write his name; the user still gives it a translation of its own.
+    const user = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === taro.id)!;
+    service.knowledgeSave({ id: user.id, kind: "term", source: user.source, target: user.target, hint: user.hint, category: user.category, aliases: ["山田"], attrs: user.attrs, text: "", about: null });
+    const added = await service.guidedAddName(0, "山田");
+    const tono = added.blocks[0]!.interpretation!.names.find((n) => n.source === "山田")!;
+    expect(tono.id).toBeTruthy();
+    expect(tono.id).not.toBe(taro.id);
+    const topic = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === tono.id)!;
+    service.knowledgeSave({ id: topic.id, kind: "term", source: "山田", target: "Yamada", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+
+    await service.guidedTranslate({ ...model, index: 0 });
+    const sent = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(sent).toContain("- 山田太郎 => Taro Yamada");
+    expect(sent).not.toContain("山田太郎 / 山田");
+    expect(sent).toContain("- 山田 => Yamada — when it stands on its own, not as part of 山田太郎");
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

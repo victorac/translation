@@ -1218,7 +1218,7 @@ export class WorkspaceService {
         if (!e) return [];
         const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
         const gender = (e.attrs["gender"] ?? [])[0];
-        return [{ ...n, id: e.id, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        return [{ ...n, id: e.id, hint: e.hint, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
       });
       if (b.interpretation.narrator && !b.interpretation.names.some((n) => n.source === b.interpretation!.narrator) && b.interpretation.narratorWord) {
         const e = terms.find((t) => t.source === b.interpretation!.narrator);
@@ -1361,7 +1361,8 @@ export class WorkspaceService {
     if (word === "") throw new UserError("no_name", "Type the word as it is written in the text.");
     if (!block.interpretation) await this.guidedInterpret(index);
     const interp = block.interpretation!;
-    const existing = this.knowledge.all().find((e) => e.kind === "term" && (e.source === word || e.aliases.includes(word)));
+    // Only a topic of that very word counts: a word that is an alias of another topic can have a translation of its own.
+    const existing = this.knowledge.all().find((e) => e.kind === "term" && e.source === word);
     const sourceName = existing?.source ?? word;
     if (!existing) {
       const readings = await readNames([word]);

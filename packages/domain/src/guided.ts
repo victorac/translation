@@ -20,6 +20,8 @@ export interface GuidedName {
   known: boolean;
   /** The glossary topic this is, when it has been made one. */
   id?: string;
+  /** What the topic says about itself, sent with the name. */
+  hint?: string;
   /** For a person: how the text refers to them, when it is clear. */
   gender?: Gender | null;
 }
@@ -173,7 +175,9 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   const taken = (s: string) => names.some((n) => namesOf(n).includes(s));
 
   for (const k of input.glossary) {
-    if (namesOf(k).some((n) => passage.includes(n))) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: true, gender: k.gender ?? null });
+    // A name that is part of a longer one counts only where it stands on its own (山田 in 「山田、…」, not in 山田太郎).
+    const sources = input.glossary.map((e) => e.source);
+    if (namesOf(k).some((n) => withoutLongerNames(passage, n, sources).includes(n))) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: true, gender: k.gender ?? null });
   }
   // The longest candidates first, so a short one inside a longer one is not taken as a name of its own.
   const rest = [...new Set(input.candidates)].filter((c) => !taken(c)).sort((a, b) => b.length - a.length);
@@ -227,9 +231,33 @@ export function notesFor(interp: Interpretation, only?: string): string[] {
   return notes;
 }
 
-/** The glossary entries sent with the block: every name that has an English form. */
-export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; aliases?: string[] }[] {
-  return interp.names.filter((n) => n.english.trim() !== "" && (only === undefined || [n.source, ...n.aliases].some((s) => only.includes(s)))).map((n) => ({ source: n.source, target: n.english.trim(), ...(n.aliases.length > 0 ? { aliases: n.aliases } : {}) }));
+/** The text with every longer name that contains `name` taken out, so what is left is where `name` stands on its own (山田 in 「山田、…」 but not in 山田太郎). */
+export function withoutLongerNames(text: string, name: string, sources: readonly string[]): string {
+  return sources
+    .filter((s) => s.length > name.length && s.includes(name))
+    .sort((x, y) => y.length - x.length)
+    .reduce((rest, s) => rest.split(s).join("\u0000"), text);
+}
+
+/**
+ * The glossary entries sent with the block: every name that has an English form and appears in it. A short name that is part of
+ * a longer one (山田 in 山田太郎) is sent only when it stands on its own somewhere, with a note saying that is when it applies, and is
+ * not also listed as another way to write the longer name.
+ */
+export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
+  const sources = interp.names.map((n) => n.source);
+  return interp.names
+    .filter((n) => n.english.trim() !== "")
+    .flatMap((n) => {
+      const longer = sources.filter((s) => s.length > n.source.length && s.includes(n.source));
+      const aliases = n.aliases.filter((a) => !sources.includes(a));
+      if (only !== undefined) {
+        const alone = withoutLongerNames(only, n.source, sources);
+        if (![n.source, ...aliases].some((s) => (s === n.source ? alone : only).includes(s))) return [];
+      }
+      const note = [n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
+      return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
+    });
 }
 
 /** Pieces of a block for translating one at a time, so that a small model does not skip or cut off the end of a long one. Paragraphs are never split. */
