@@ -44,10 +44,13 @@ export const settingsOf = (s: SetupState): ProjectSettings => ({
   prompts: s.prompts,
 });
 
-/** Takes the project's choices over the window's own. The translator choice and practice controls stay as they are. */
+/** Takes the project's choices over the window's own. The translator choice and practice controls stay as they are, and so do the remembered models and styles when the project has none. */
 export const withSettings = (s: SetupState, p: ProjectSettings): SetupState => {
   const { glossary: _glossary, notes: _notes, knowledge: _knowledge, ...rest } = p;
-  return { ...s, ...rest, models: p.models.map((m) => ({ ...newModel(m.name), ...m })) };
+  // A project that has no models of its own (a new one, or one saved before any was added) keeps the ones remembered from last time.
+  const models = p.models.length > 0 ? p.models.map((m) => ({ ...newModel(m.name), ...m })) : s.models;
+  const prompts = p.prompts.length > 0 ? p.prompts : s.prompts;
+  return { ...s, ...rest, models, prompts };
 };
 
 const KEY = "ltw.setup.v3";
