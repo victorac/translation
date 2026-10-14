@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { GearIcon } from "@radix-ui/react-icons";
+import { Badge, Button, DropdownMenu, Flex, IconButton, Text, TextField } from "@radix-ui/themes";
 import type { WorkspaceSnapshot } from "@ltw/domain";
-import { Menu } from "./Popover";
+import { Pick } from "./Pick";
 import { countCells } from "./status";
 import type { useWorkspace } from "./useWorkspace";
 
@@ -21,9 +23,9 @@ function ProjectName({ title, path, onRename }: { title: string; path: string | 
     else setValue(title);
   };
   return editing ? (
-    <input
+    <TextField.Root
       ref={box}
-      className="project-name-input"
+      size="2"
       aria-label="Project name"
       value={value}
       onChange={(e) => setValue(e.target.value)}
@@ -34,9 +36,11 @@ function ProjectName({ title, path, onRename }: { title: string; path: string | 
       }}
     />
   ) : (
-    <button className="project-name" title={`${path ?? "Not saved yet"}\nClick to rename`} onClick={() => setEditing(true)}>
-      {title}
-    </button>
+    <Button variant="ghost" color="gray" size="2" title={`${path ?? "Not saved yet"}\nClick to rename`} onClick={() => setEditing(true)}>
+      <Text weight="bold" truncate>
+        {title}
+      </Text>
+    </Button>
   );
 }
 
@@ -82,71 +86,94 @@ export function Toolbar({
   const pct = c && c.total > 0 ? Math.round(((c.done + c.failed + c.canceled + c.review) / c.total) * 100) : 0;
 
   return (
-    <header className="toolbar">
-      <div className="toolbar-left">
-        <ProjectName title={project?.title ?? "Untitled"} path={project?.path ?? null} onRename={(title) => void send("project.rename", { title })} />
-        {project?.dirty && (
-          <span className="dirty" title="Unsaved changes" role="img" aria-label="Unsaved changes">
-            ●
-          </span>
-        )}
-        {snap && snap.versions.length > 1 && (
-          <select aria-label="Version of the text" className="version-select" value={snap.viewingId ?? ""} onChange={(e) => void send("version.view", { versionId: e.target.value })}>
-            {snap.versions.map((v) => (
-              <option key={v.id} value={v.id}>
-                Version {v.number}
-                {v.id === snap.latestId ? " (latest)" : ""}
-              </option>
-            ))}
-          </select>
-        )}
-        {splitCount !== null && (
-          <button className="link-button" onClick={onSplit} title="How the text will be split into blocks">
-            {splitCount} {splitCount === 1 ? "block" : "blocks"}
-          </button>
-        )}
-      </div>
+    <Flex asChild align="center" justify="between" gap="3" px="3" py="2" className="toolbar">
+      <header>
+        <Flex align="center" gap="2" minWidth="0">
+          <ProjectName title={project?.title ?? "Untitled"} path={project?.path ?? null} onRename={(title) => void send("project.rename", { title })} />
+          {project?.dirty && (
+            <Text color="amber" size="2" title="Unsaved changes" aria-label="Unsaved changes" role="img">
+              ●
+            </Text>
+          )}
+          {snap && snap.versions.length > 1 && (
+            <Pick
+              label="Version of the text"
+              size="1"
+              value={snap.viewingId ?? ""}
+              onChange={(versionId) => void send("version.view", { versionId })}
+              options={snap.versions.map((v) => ({ value: v.id, label: `Version ${v.number}${v.id === snap.latestId ? " (latest)" : ""}` }))}
+            />
+          )}
+          {splitCount !== null && (
+            <Button variant="ghost" size="1" onClick={onSplit} title="How the text will be split into blocks">
+              {splitCount} {splitCount === 1 ? "block" : "blocks"}
+            </Button>
+          )}
+        </Flex>
 
-      <div className="toolbar-right">
-        {busy && c && (
-          <span className="progress" role="img" aria-label={`${pct}% finished`} title={`${c.done} of ${c.total} done`}>
-            <span className="progress-fill" style={{ width: `${pct}%` }} />
-          </span>
-        )}
-        {!busy && runHint && <span className="hint">{runHint}</span>}
-        <button className={guided.open ? "primary pressed" : "primary"} aria-pressed={guided.open} onClick={guided.onToggle} title="Translate one block at a time, checking the words, who is speaking and the result">
-          Deep translate
-        </button>
-        {busy ? (
-          <button className="danger" onClick={() => void send("job.cancel", { kind: "job" })} title="Stop everything">
-            ■ Stop
-          </button>
-        ) : (
-          <button onClick={onRun} disabled={!canRun} title="Translate the whole text with every model (Ctrl/Cmd + Enter)">
-            Translate
-          </button>
-        )}
-        <span className="sep" />
-        <button className={knowledge.open ? "toggle on" : "toggle"} aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
-          Knowledge base
-          {knowledge.count > 0 && <span className="count">{knowledge.count}</span>}
-          {knowledge.suggested > 0 && <span className="tag warn-tag">{knowledge.suggested} to check</span>}
-        </button>
-        <Menu
-          label="File"
-          trigger="File ▾"
-          items={[
-            { label: "Open…", onSelect: () => confirmDiscard("Opening another project") && void send("project.open", { useBackup: false }), disabled: busy || !!project?.recovery },
-            { label: "Save", onSelect: () => void send("project.save", { saveAs: false }), disabled: !has },
-            { label: "Save as…", onSelect: () => void send("project.save", { saveAs: true }), disabled: !has },
-            { label: "Export…", onSelect: onExport, disabled: !has },
-            { label: "New project", onSelect: () => confirmDiscard("Starting a new project") && void send("project.new"), disabled: busy, separated: true },
-          ]}
-        />
-        <button className="icon-button" onClick={onSettings} aria-label="Settings" title="Settings">
-          ⚙
-        </button>
-      </div>
-    </header>
+        <Flex align="center" gap="2" wrap="wrap" justify="end">
+          {busy && c && (
+            <span className="progress" role="img" aria-label={`${pct}% finished`} title={`${c.done} of ${c.total} done`}>
+              <span className="progress-fill" style={{ width: `${pct}%` }} />
+            </span>
+          )}
+          {!busy && runHint && (
+            <Text size="1" color="gray">
+              {runHint}
+            </Text>
+          )}
+          <Button variant={guided.open ? "soft" : "solid"} aria-pressed={guided.open} onClick={guided.onToggle} title="Translate one block at a time, checking the words, who is speaking and the result">
+            Deep translate
+          </Button>
+          {busy ? (
+            <Button color="red" variant="soft" onClick={() => void send("job.cancel", { kind: "job" })} title="Stop everything">
+              ■ Stop
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={onRun} disabled={!canRun} title="Translate the whole text with every model (Ctrl/Cmd + Enter)">
+              Translate
+            </Button>
+          )}
+          <Button variant={knowledge.open ? "soft" : "outline"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
+            Knowledge base
+            {knowledge.count > 0 && <Badge variant="soft">{knowledge.count}</Badge>}
+            {knowledge.suggested > 0 && (
+              <Badge color="amber" variant="soft">
+                {knowledge.suggested} to check
+              </Badge>
+            )}
+          </Button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger>
+              <Button variant="ghost" color="gray">
+                File
+                <DropdownMenu.TriggerIcon />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="end">
+              <DropdownMenu.Item disabled={busy || !!project?.recovery} onSelect={() => confirmDiscard("Opening another project") && void send("project.open", { useBackup: false })}>
+                Open…
+              </DropdownMenu.Item>
+              <DropdownMenu.Item disabled={!has} onSelect={() => void send("project.save", { saveAs: false })}>
+                Save
+              </DropdownMenu.Item>
+              <DropdownMenu.Item disabled={!has} onSelect={() => void send("project.save", { saveAs: true })}>
+                Save as…
+              </DropdownMenu.Item>
+              <DropdownMenu.Item disabled={!has} onSelect={onExport}>
+                Export…
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item disabled={busy} onSelect={() => confirmDiscard("Starting a new project") && void send("project.new")}>
+                New project
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+          <IconButton variant="ghost" color="gray" onClick={onSettings} aria-label="Settings" title="Settings">
+            <GearIcon />
+          </IconButton>
+        </Flex>
+      </header>
+    </Flex>
   );
 }

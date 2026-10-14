@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon, Cross2Icon } from "@radix-ui/react-icons";
+import { Badge, Button, Flex, IconButton, Switch, Text, TextField } from "@radix-ui/themes";
 import type { AttributeDef, GuidedName } from "@ltw/domain";
+import { Pick } from "./Pick";
 
 export interface ClassInfo {
   name: string;
@@ -16,14 +19,15 @@ export interface TopicRef {
 const KIND_LABEL: Record<string, string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
 
 /** A text field that keeps what is being typed and saves it when the field is left (Enter saves, Escape goes back). */
-function TextField({ value, label, placeholder, onSave }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void }) {
+function TextBox({ value, label, placeholder, onSave }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   return (
-    <input
+    <TextField.Root
+      size="1"
       aria-label={label}
       value={text}
-      placeholder={placeholder}
+      {...(placeholder !== undefined ? { placeholder } : {})}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => text.trim() !== value.trim() && onSave(text)}
       onKeyDown={(e) => {
@@ -73,108 +77,104 @@ export function NameRow({
   const shown = (t: TopicRef) => (t.english.trim() !== "" ? `${t.english.trim()} (${t.source})` : t.source);
   const poolFor = (a: AttributeDef) => topics.filter((t) => t.source !== name.source && (!a.target || t.category === a.target));
 
+  const kindOptions = classes.length === 0 ? [{ value: name.kind, label: KIND_LABEL[name.kind] ?? name.kind }] : classes.map((c) => ({ value: c.name, label: KIND_LABEL[c.name] ?? c.name }));
+
   return (
     <li className={used ? "name-item" : "name-item ignored"}>
-      <div className="glossary-head">
-        <button className={focused ? "glossary-source focused" : "glossary-source"} onClick={onToggle} aria-expanded={expanded} title="Show where it appears in the block, and its details">
-          <span className="chev" aria-hidden="true">
-            {expanded ? "▾" : "▸"}
-          </span>
-          {name.source}
-        </button>
-        <span className={name.english.trim() === "" ? "name-english missing" : "name-english"}>{name.english.trim() === "" ? "no English name" : name.english}</span>
-        <label className="use-toggle" title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
-          <input type="checkbox" role="switch" aria-label={`Use ${name.source}`} checked={used} onChange={(e) => onUse(e.target.checked)} />
-          <span>{used ? "use" : "ignore"}</span>
-        </label>
-      </div>
+      <Flex align="center" gap="2" className="glossary-head">
+        <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={onToggle} aria-expanded={expanded} title="Show where it appears in the block, and its details" className="glossary-source">
+          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          <Text weight="bold" size="2">
+            {name.source}
+          </Text>
+        </Button>
+        <Text size="2" color={name.english.trim() === "" ? "amber" : undefined} className="name-english">
+          {name.english.trim() === "" ? "no English name" : name.english}
+        </Text>
+        <Text as="label" size="1" color="gray" title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
+          <Flex align="center" gap="1">
+            <Switch size="1" checked={used} onCheckedChange={onUse} aria-label={`Use ${name.source}`} />
+            {used ? "use" : "ignore"}
+          </Flex>
+        </Text>
+      </Flex>
       {expanded && (
         <ul className="tree" aria-label={`Details of ${name.source}`}>
           <li>
-            <span className="tree-key">english</span>
-            <TextField value={name.english} label={`English name of ${name.source}`} placeholder="English name" onSave={onEnglish} />
+            <Text size="1" color="gray">english</Text>
+            <TextBox value={name.english} label={`English name of ${name.source}`} placeholder="English name" onSave={onEnglish} />
           </li>
           <li>
-            <span className="tree-key">type</span>
-            <select aria-label={`Type of ${name.source}`} value={name.kind} onChange={(e) => onKind(e.target.value)}>
-              {classes.length === 0 && <option value={name.kind}>{KIND_LABEL[name.kind] ?? name.kind}</option>}
-              {classes.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {KIND_LABEL[c.name] ?? c.name}
-                </option>
-              ))}
-            </select>
+            <Text size="1" color="gray">type</Text>
+            <Pick size="1" label={`Type of ${name.source}`} value={name.kind} options={kindOptions} onChange={onKind} />
           </li>
           {(def?.attributes ?? []).map((a) => {
             const chosen = attrs[a.key] ?? [];
+            const key = <Text size="1" color="gray">{a.key}</Text>;
             if (a.kind === "text")
               return (
                 <li key={a.key}>
-                  <span className="tree-key">{a.key}</span>
-                  <TextField value={chosen.join(", ")} label={`${a.key} of ${name.source}`} onSave={(v) => onAttribute(a.key, v.trim() === "" ? [] : [v.trim()])} />
+                  {key}
+                  <TextBox value={chosen.join(", ")} label={`${a.key} of ${name.source}`} onSave={(v) => onAttribute(a.key, v.trim() === "" ? [] : [v.trim()])} />
                 </li>
               );
             if (a.kind === "choice")
               return (
                 <li key={a.key}>
-                  <span className="tree-key">{a.key}</span>
-                  <select aria-label={`${a.key} of ${name.source}`} value={chosen[0] ?? ""} onChange={(e) => onAttribute(a.key, e.target.value === "" ? [] : [e.target.value])}>
-                    <option value="">not set</option>
-                    {(a.choices ?? []).map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                  {key}
+                  <Pick size="1" label={`${a.key} of ${name.source}`} value={chosen[0] ?? ""} options={[{ value: "", label: "not set" }, ...(a.choices ?? []).map((c) => ({ value: c, label: c }))]} onChange={(v) => onAttribute(a.key, v === "" ? [] : [v])} />
                 </li>
               );
             const pool = poolFor(a);
             if (a.kind === "link")
               return (
                 <li key={a.key}>
-                  <span className="tree-key">{a.key}</span>
-                  <select aria-label={`${a.key} of ${name.source}`} value={chosen[0] ?? ""} onChange={(e) => onAttribute(a.key, e.target.value === "" ? [] : [e.target.value])} disabled={pool.length === 0 && chosen.length === 0}>
-                    <option value="">{pool.length === 0 && chosen.length === 0 ? `no ${a.target ?? "topic"} yet` : "not set"}</option>
-                    {chosen[0] && !pool.some((t) => t.source === chosen[0]) && <option value={chosen[0]}>{chosen[0]}</option>}
-                    {pool.map((t) => (
-                      <option key={t.source} value={t.source}>
-                        {shown(t)}
-                      </option>
-                    ))}
-                  </select>
+                  {key}
+                  <Pick
+                    size="1"
+                    label={`${a.key} of ${name.source}`}
+                    value={chosen[0] ?? ""}
+                    disabled={pool.length === 0 && chosen.length === 0}
+                    options={[
+                      { value: "", label: pool.length === 0 && chosen.length === 0 ? `no ${a.target ?? "topic"} yet` : "not set" },
+                      ...(chosen[0] && !pool.some((t) => t.source === chosen[0]) ? [{ value: chosen[0], label: chosen[0] }] : []),
+                      ...pool.map((t) => ({ value: t.source, label: shown(t) })),
+                    ]}
+                    onChange={(v) => onAttribute(a.key, v === "" ? [] : [v])}
+                  />
                 </li>
               );
             // links: several, as chips with a selector to add one
             const more = pool.filter((t) => !chosen.includes(t.source));
             return (
               <li key={a.key}>
-                <span className="tree-key">{a.key}</span>
-                <span className="chips">
+                {key}
+                <Flex wrap="wrap" gap="1" align="center">
                   {chosen.map((v) => (
-                    <span key={v} className="chip">
+                    <Badge key={v} variant="soft" color="gray" size="2">
                       {v}
-                      <button aria-label={`Remove ${v}`} onClick={() => onAttribute(a.key, chosen.filter((c) => c !== v))}>
-                        ×
-                      </button>
-                    </span>
+                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Remove ${v}`} onClick={() => onAttribute(a.key, chosen.filter((c) => c !== v))}>
+                        <Cross2Icon />
+                      </IconButton>
+                    </Badge>
                   ))}
-                  <select aria-label={`Add to ${a.key} of ${name.source}`} value="" onChange={(e) => e.target.value !== "" && onAttribute(a.key, [...chosen, e.target.value])} disabled={more.length === 0}>
-                    <option value="">{more.length === 0 && chosen.length === 0 ? `no ${a.target ?? "topic"} yet` : "add…"}</option>
-                    {more.map((t) => (
-                      <option key={t.source} value={t.source}>
-                        {shown(t)}
-                      </option>
-                    ))}
-                  </select>
-                </span>
+                  <Pick
+                    size="1"
+                    label={`Add to ${a.key} of ${name.source}`}
+                    value=""
+                    disabled={more.length === 0}
+                    options={[{ value: "", label: more.length === 0 && chosen.length === 0 ? `no ${a.target ?? "topic"} yet` : "add…" }, ...more.map((t) => ({ value: t.source, label: shown(t) }))]}
+                    onChange={(v) => v !== "" && onAttribute(a.key, [...chosen, v])}
+                  />
+                </Flex>
               </li>
             );
           })}
           {!name.draft && (
             <li className="tree-action">
-              <button className="link-button" onClick={onOpen}>
+              <Button variant="ghost" size="1" onClick={onOpen}>
                 Open topic
-              </button>
+              </Button>
             </li>
           )}
         </ul>

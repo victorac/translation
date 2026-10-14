@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { occurrencesOf } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
 import { KnowledgeFiles } from "./KnowledgeFiles";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
+import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
 const WIDTHS_KEY = "ltw.guided.widths.v3";
@@ -269,44 +272,55 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
 
   return (
     <div className="guided">
-      <div className="guided-bar">
-        <span className="row">
-          <button className="small" onClick={() => void go(state.current - 1)} disabled={state.current === 0 || working !== null}>
-            ←
-          </button>
-          <strong>
+      <Flex align="center" justify="between" gap="3" wrap="wrap" px="3" py="2" className="guided-bar">
+        <Flex align="center" gap="2">
+          <IconButton variant="soft" color="gray" size="1" aria-label="Previous block" onClick={() => void go(state.current - 1)} disabled={state.current === 0 || working !== null}>
+            <ArrowLeftIcon />
+          </IconButton>
+          <Text weight="bold" size="2">
             Block {state.current + 1} of {state.blocks.length}
-          </strong>
-          <button className="small" onClick={() => void go(state.current + 1)} disabled={state.current >= state.blocks.length - 1 || working !== null}>
-            →
-          </button>
-          <span className="hint">{done} translated</span>
-        </span>
-        <span className="guided-dots" aria-label="Blocks">
+          </Text>
+          <IconButton variant="soft" color="gray" size="1" aria-label="Next block" onClick={() => void go(state.current + 1)} disabled={state.current >= state.blocks.length - 1 || working !== null}>
+            <ArrowRightIcon />
+          </IconButton>
+          <Text size="1" color="gray">
+            {done} translated
+          </Text>
+        </Flex>
+        <Flex gap="1" wrap="wrap" justify="center" flexGrow="1" aria-label="Blocks" role="group">
           {state.blocks.map((b) => (
-            <button key={b.index} className={`dot ${b.status}${b.index === state.current ? " here" : ""}`} onClick={() => void go(b.index)} title={`Block ${b.index + 1}: ${b.status === "translated" ? "translated" : b.status === "interpreted" ? "read" : "not read yet"}`} disabled={working !== null}>
+            <Button
+              key={b.index}
+              size="1"
+              radius="full"
+              variant={b.index === state.current ? "solid" : b.status === "translated" ? "soft" : "outline"}
+              color={b.status === "translated" || b.index === state.current ? "indigo" : "gray"}
+              onClick={() => void go(b.index)}
+              title={`Block ${b.index + 1}: ${b.status === "translated" ? "translated" : b.status === "interpreted" ? "read" : "not read yet"}`}
+              disabled={working !== null}
+            >
               {b.index + 1}
-            </button>
+            </Button>
           ))}
-        </span>
-        <span className="row">
-          <label className="inline-select">
+        </Flex>
+        <Flex align="center" gap="2">
+          <Text size="1" color="gray">
             Model
-            <select value={model?.name ?? ""} onChange={(e) => setModelName(e.target.value)}>
-              {setup.models.map((m) => (
-                <option key={m.name}>{m.name}</option>
-              ))}
-            </select>
-          </label>
-        </span>
-      </div>
+          </Text>
+          <Pick size="1" label="Model" value={model?.name ?? ""} options={setup.models.map((m) => ({ value: m.name, label: m.name }))} onChange={setModelName} />
+        </Flex>
+      </Flex>
       {error && (
-        <div className="strip">
-          <span>{error}</span>
-          <button className="small" onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
+        <Callout.Root color="red" size="1" m="2">
+          <Callout.Text>
+            <Flex align="center" justify="between" gap="3">
+              {error}
+              <Button variant="ghost" size="1" onClick={() => setError(null)}>
+                Dismiss
+              </Button>
+            </Flex>
+          </Callout.Text>
+        </Callout.Root>
       )}
 
       {block && (
@@ -314,21 +328,25 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
           <section className="guided-pane">
             <h3>Source</h3>
             {looking !== null && (
-              <div className="source-find">
-                <span className="source-find-word">{looking}</span>
-                <span className="hint">{hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}</span>
-                <span className="row">
-                  <button className="small" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
-                    ↑
-                  </button>
-                  <button className="small" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
-                    ↓
-                  </button>
-                  <button className="small" onClick={stopLooking} aria-label="Stop looking">
-                    ×
-                  </button>
-                </span>
-              </div>
+              <Flex align="center" justify="between" gap="2" px="3" py="1" className="source-find">
+                <Text size="2" weight="bold">
+                  {looking}
+                </Text>
+                <Text size="1" color="gray">
+                  {hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
+                </Text>
+                <Flex gap="1">
+                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
+                    <ArrowUpIcon />
+                  </IconButton>
+                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
+                    <ArrowDownIcon />
+                  </IconButton>
+                  <IconButton variant="ghost" size="1" color="gray" onClick={stopLooking} aria-label="Stop looking">
+                    <Cross2Icon />
+                  </IconButton>
+                </Flex>
+              </Flex>
             )}
             <div className="guided-body source-text" ref={sourceBox}>
               {hits.length === 0
@@ -357,38 +375,56 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
             <h3>What was read</h3>
             {!base ? (
               <div className="guided-body">
-                <p className="hint">This block has not been read yet.</p>
-                <button className="primary" onClick={() => void read(block.index)} disabled={working !== null}>
+                <Text as="p" size="2" color="gray" mb="2">
+                  This block has not been read yet.
+                </Text>
+                <Button onClick={() => void read(block.index)} disabled={working !== null}>
                   {working === "read" ? "Reading…" : "Read this block"}
-                </button>
+                </Button>
               </div>
             ) : (
               <>
                 <div className="guided-scroll">
-                  <label className="guided-narrator">
-                    {base.narratorWord ? `Told as “${base.narratorWord}”. Narrator` : "Narrator"}
-                    <select aria-label="Narrator" value={base.narrator ?? ""} onChange={(e) => void choose(e.target.value === "" ? null : e.target.value, speakers, true)}>
-                      <option value="">not set</option>
-                      {people.map((p) => (
-                        <option key={p.source} value={p.source}>
-                          {label(p)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
+                  <Flex align="center" gap="2" wrap="wrap">
+                    <Text size="2" color="gray">
+                      {base.narratorWord ? `Told as “${base.narratorWord}”. Narrator` : "Narrator"}
+                    </Text>
+                    <Pick label="Narrator" value={base.narrator ?? ""} options={[{ value: "", label: "not set" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]} onChange={(v) => void choose(v === "" ? null : v, speakers, true)} />
+                  </Flex>
+                  {base.narratorWord && base.narrator === null && (
+                    <Text as="p" size="1" color="gray" mt="1">
+                      Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.
+                    </Text>
+                  )}
 
-                  <h4>
-                    Glossary in this block <span className="hint">{base.names.length}</span>
-                  </h4>
-                  {base.names.length === 0 && <p className="hint guided-hint">Nothing from the glossary found in this block. Add a word from the text below.</p>}
-                  {base.names.length > 0 && <input className="glossary-search" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)} />}
-                  {base.names.length > 0 && groups.length === 0 && <p className="hint guided-hint">Nothing matches.</p>}
+                  <Heading as="h4" size="2" mt="4" mb="2">
+                    Glossary in this block{" "}
+                    <Text size="1" color="gray" weight="regular">
+                      {base.names.length}
+                    </Text>
+                  </Heading>
+                  {base.names.length === 0 && (
+                    <Text as="p" size="1" color="gray">
+                      Nothing from the glossary found in this block. Add a word from the text below.
+                    </Text>
+                  )}
+                  {base.names.length > 0 && (
+                    <TextField.Root size="2" mb="2" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)}>
+                      <TextField.Slot>
+                        <MagnifyingGlassIcon />
+                      </TextField.Slot>
+                    </TextField.Root>
+                  )}
+                  {base.names.length > 0 && groups.length === 0 && (
+                    <Text as="p" size="1" color="gray">
+                      Nothing matches.
+                    </Text>
+                  )}
                   {groups.map((g) => (
                     <section key={g.kind} className="glossary-group">
-                      <h5>
-                        {kindLabel(g.kind)} <span className="hint">{g.names.length}</span>
-                      </h5>
+                      <Text as="div" size="1" weight="bold" color="gray" mt="3" mb="1" className="group-title">
+                        {kindLabel(g.kind)} · {g.names.length}
+                      </Text>
                       <ul className="guided-glossary">
                         {g.names.map((n) => (
                           <NameRow
@@ -410,49 +446,55 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                     </section>
                   ))}
                   <form
-                    className="row"
                     onSubmit={(e) => {
                       e.preventDefault();
                       void addTerm();
                     }}
                   >
-                    <input aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
-                    <button className="small" type="submit" disabled={newTerm.trim() === ""}>
-                      Add
-                    </button>
+                    <Flex gap="2" mt="2">
+                      <TextField.Root size="2" style={{ flex: 1 }} aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
+                      <Button size="2" variant="soft" type="submit" disabled={newTerm.trim() === ""}>
+                        Add
+                      </Button>
+                    </Flex>
                   </form>
 
-                  <h4>Who says each line</h4>
-                  {base.lines.length === 0 && <p className="hint guided-hint">There are no lines of speech in this block.</p>}
+                  <Heading as="h4" size="2" mt="5" mb="2">
+                    Who says each line
+                  </Heading>
+                  {base.lines.length === 0 && (
+                    <Text as="p" size="1" color="gray">
+                      There are no lines of speech in this block.
+                    </Text>
+                  )}
                   <ul className="guided-lines">
                     {base.lines.map((l, i) => (
                       <li key={i}>
-                        <button className={lineFocus === i ? "line-text focused" : "line-text"} onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title="Show where it is in the text">
+                        <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title="Show where it is in the text" className="line-text">
                           {Array.from(l.text).length > 22 ? `${Array.from(l.text).slice(0, 22).join("")}…` : l.text}
-                        </button>
-                        <select aria-label={`Speaker of line ${i + 1}`} value={l.speaker ?? ""} onChange={(e) => void choose(base.narrator, speakers.map((s, n) => (n === i ? (e.target.value === "" ? null : e.target.value) : s)), false)}>
-                          <option value="">not known</option>
-                          {people.map((p) => (
-                            <option key={p.source} value={p.source}>
-                              {label(p)}
-                            </option>
-                          ))}
-                        </select>
+                        </Button>
+                        <Pick
+                          size="1"
+                          label={`Speaker of line ${i + 1}`}
+                          value={l.speaker ?? ""}
+                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
+                          onChange={(v) => void choose(base.narrator, speakers.map((s, n) => (n === i ? (v === "" ? null : v) : s)), false)}
+                        />
                       </li>
                     ))}
                   </ul>
                 </div>
-                <div className="guided-foot">
-                  <button className="primary" onClick={() => void translate()} disabled={working !== null || !model}>
+                <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
+                  <Button onClick={() => void translate()} disabled={working !== null || !model}>
                     {working === "translate" ? "Translating…" : block.status === "translated" ? "Translate again" : "Translate"}
-                  </button>
-                  <button onClick={() => void choose(base.narrator, speakers, true)} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
+                  </Button>
+                  <Button variant="soft" color="gray" onClick={() => void choose(base.narrator, speakers, true)} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
                     Guess the speakers
-                  </button>
-                  <button onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again">
+                  </Button>
+                  <Button variant="ghost" color="gray" onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again">
                     Read again
-                  </button>
-                </div>
+                  </Button>
+                </Flex>
               </>
             )}
           </section>
@@ -463,17 +505,24 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
             <h3>Translation</h3>
             {block.status === "translated" ? (
               <>
-                {block.warning && <p className="guided-warning">{block.warning}</p>}
-                <textarea className="guided-translation" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck />
-                <div className="guided-foot">
-                  <button className="primary" onClick={() => void go(block.index + 1)} disabled={block.index >= state.blocks.length - 1 || working !== null}>
-                    {block.index >= state.blocks.length - 1 ? "Last block" : "Next block →"}
-                  </button>
-                </div>
+                {block.warning && (
+                  <Callout.Root color="amber" size="1" m="2">
+                    <Callout.Text>{block.warning}</Callout.Text>
+                  </Callout.Root>
+                )}
+                <TextArea className="guided-translation" variant="soft" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck />
+                <Flex gap="2" p="3" className="guided-foot">
+                  <Button onClick={() => void go(block.index + 1)} disabled={block.index >= state.blocks.length - 1 || working !== null}>
+                    {block.index >= state.blocks.length - 1 ? "Last block" : "Next block"}
+                    {block.index < state.blocks.length - 1 && <ArrowRightIcon />}
+                  </Button>
+                </Flex>
               </>
             ) : (
               <div className="guided-body">
-                <p className="hint">{working === "translate" ? "Translating…" : block.error ? block.error : "The translation appears here once you translate the block."}</p>
+                <Text as="p" size="2" color={block.error ? "red" : "gray"}>
+                  {working === "translate" ? "Translating…" : block.error ? block.error : "The translation appears here once you translate the block."}
+                </Text>
               </div>
             )}
           </section>
@@ -484,9 +533,9 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
               <section className="guided-pane">
                 <h3 className="guided-pane-title">
                   Knowledge base
-                  <button className="small" onClick={() => setTopic(null)} aria-label="Close the knowledge base pane">
-                    ×
-                  </button>
+                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setTopic(null)} aria-label="Close the knowledge base pane">
+                    <Cross2Icon />
+                  </IconButton>
                 </h3>
                 <div className="guided-kb">
                   <KnowledgeFiles rev={knowledgeRev} counts={knowledgeCounts} openRequest={topic} compact />
