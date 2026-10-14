@@ -22,6 +22,8 @@ import {
   sceneText,
   narratorQuestion,
   firstPersonInNarration,
+  nameFromReadings,
+  PERSON_WORDS,
   findQuotes,
   addressedIn,
   speakerByForm,
@@ -33,6 +35,8 @@ import {
   windowAround,
   type Question,
 } from "./steps.js";
+
+const KANJI_OR_KATAKANA_RE = /[\u4E00-\u9FFF\u30A0-\u30FF]/;
 
 /** Which of `count` options a reply chose, or null. */
 export const classifyReply = parseChoice;
@@ -57,6 +61,8 @@ export interface ExtractInput {
   targetLanguage: string;
   asker: Asker;
   deps: EntryDeps;
+  /** The readings of words of names, in katakana, from the word analyzer: a name is turned into English from these, never guessed by a model. */
+  readings?: (names: readonly string[]) => Promise<Readonly<Record<string, readonly string[]>>>;
   /** Ask the model to list names too, in addition to the candidates found without one. */
   listNames?: boolean;
   /** The most new names to look into in one passage. */
@@ -195,8 +201,17 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
   const classOptions = [...classNames.map((c) => PHRASE[c] ?? `a ${c}`), "not a name"];
   const mentioned = new Set<string>(known.filter((e) => nameSet(e).some((n) => passage.includes(n))).map((e) => e.id));
 
+  const readings = (await input.readings?.(candidates)) ?? {};
   for (const c of candidates) {
     if (stop()) break;
+    // A short form of a known person's name (the given name of 鈴木花子) is that person: it is added to their names.
+    const whole = terms().find((e) => e.category === "character" && c.length >= 2 && e.source.length > c.length && (e.source.endsWith(c) || e.source.startsWith(c)) && !nameSet(e).includes(c));
+    if (whole) {
+      update(whole.id, { aliases: [...whole.aliases, c] });
+      mentioned.add(whole.id);
+      added++;
+      continue;
+    }
     const context = windowAround(sentences, [c]);
     const kindIndex = await pickAgreed(classify(c, context, classOptions));
     if (kindIndex === null || kindIndex >= classNames.length) continue;
@@ -223,7 +238,9 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
       const name = reply === null ? null : parseShortText(reply, 60, true);
       return reply !== null && name !== null && plausibleName(reply, name) && !(latin && CJK.test(name)) ? name : null;
     };
-    let target = await askName(false);
+    const read = category === "character" || category === "family" ? readings[c] : undefined;
+    let target = read ? nameFromReadings(read, category === "family") : null;
+    target ??= await askName(false);
     if (!target && !stop()) target = await askName(true);
     if (!target) {
       problems.push(`「${c}」 was left out: the model did not give a usable ${input.targetLanguage} name for it.`);
@@ -238,6 +255,8 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
         unsupported++;
         return null;
       }
+      // A place, an organization or a family is not a person: when the description is about one, it is about the wrong thing.
+      if (category !== "character" && latin && PERSON_WORDS.test(text)) return null;
       return text;
     };
     let summary = (await askSummary(false)) ?? (stop() ? null : await askSummary(true)) ?? "";
@@ -263,6 +282,15 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
     entries.push(created);
     mentioned.add(created.id);
     added++;
+  }
+
+  // The given name of a person is written alone elsewhere (花子 for 鈴木花子): it is that person, so it is added to their names.
+  for (const p of terms().filter((e) => e.category === "character" && e.source.length >= 4)) {
+    const tail = p.source.slice(-2);
+    const alone = passage.split(p.source).join("|");
+    const at = [...alone.matchAll(new RegExp(tail, "g"))].some((m) => !KANJI_OR_KATAKANA_RE.test(alone[m.index! - 1] ?? ""));
+    if (at && !terms().some((o) => o.id !== p.id && nameSet(o).includes(tail)) && !nameSet(p).includes(tail)) update(p.id, { aliases: [...p.aliases, tail] });
+    if (at || passage.includes(p.source)) mentioned.add(p.id);
   }
 
   // ---- 5. what each person does in the passage ----

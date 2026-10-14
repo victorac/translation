@@ -39,3 +39,17 @@ export async function findCandidateNames(text: string): Promise<string[]> {
   const analyzed = tokenizer ? properNounRuns(tokenizer.tokenize(text) as WordToken[]) : [];
   return mergeCandidates(text, analyzed, patternCandidates(text));
 }
+
+/** The readings (in katakana) of the words of each name, when the analyzer knows every one of them. */
+export async function readNames(names: readonly string[]): Promise<Record<string, string[]>> {
+  const tokenizer = await load();
+  const out: Record<string, string[]> = {};
+  if (!tokenizer) return out;
+  for (const name of names) {
+    const tokens = tokenizer.tokenize(name);
+    // The words of a name the dictionary does not know have no reading in it.
+    const readings = tokens.map((t) => (t.details.length >= 9 && t.details[0] === "名詞" ? t.details[8]! : ""));
+    if (tokens.length > 0 && readings.every((r) => /^[\u30A0-\u30FF]+$/.test(r))) out[name] = readings;
+  }
+  return out;
+}

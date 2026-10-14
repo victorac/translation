@@ -106,7 +106,7 @@ import {
   type TranslationProvider,
 } from "@ltw/providers";
 import { Coordinator, type CoordinatorEvent } from "./coordinator.js";
-import { findCandidateNames } from "./analyzer.js";
+import { findCandidateNames, readNames } from "./analyzer.js";
 import { UserError } from "./errors.js";
 import { KnowledgeStore } from "./knowledge-store.js";
 import type { ProviderService } from "./provider-service.js";
@@ -1350,6 +1350,7 @@ export class WorkspaceService {
         scope: { documentId: input.documentId, blockHash: sha256Hex(input.passage), block: input.block },
         origin,
         candidates,
+        readings: readNames,
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
         asker,

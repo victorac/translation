@@ -383,11 +383,60 @@ export const sceneText = (
   maxTokens: 120,
 });
 
+const KANA: Record<string, string> = {
+  ア: "a", イ: "i", ウ: "u", エ: "e", オ: "o", カ: "ka", キ: "ki", ク: "ku", ケ: "ke", コ: "ko", サ: "sa", シ: "shi", ス: "su", セ: "se", ソ: "so",
+  タ: "ta", チ: "chi", ツ: "tsu", テ: "te", ト: "to", ナ: "na", ニ: "ni", ヌ: "nu", ネ: "ne", ノ: "no", ハ: "ha", ヒ: "hi", フ: "fu", ヘ: "he", ホ: "ho",
+  マ: "ma", ミ: "mi", ム: "mu", メ: "me", モ: "mo", ヤ: "ya", ユ: "yu", ヨ: "yo", ラ: "ra", リ: "ri", ル: "ru", レ: "re", ロ: "ro", ワ: "wa", ヲ: "o", ン: "n",
+  ガ: "ga", ギ: "gi", グ: "gu", ゲ: "ge", ゴ: "go", ザ: "za", ジ: "ji", ズ: "zu", ゼ: "ze", ゾ: "zo", ダ: "da", ヂ: "ji", ヅ: "zu", デ: "de", ド: "do",
+  バ: "ba", ビ: "bi", ブ: "bu", ベ: "be", ボ: "bo", パ: "pa", ピ: "pi", プ: "pu", ペ: "pe", ポ: "po", ヴ: "vu",
+};
+
+/** Katakana to plain Hepburn romaji, without macrons: ハナコ and ハナコ are both "hanako". Null when something is not katakana. */
+export function romanize(kana: string): string | null {
+  const chars = [...kana];
+  let out = "";
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i]!;
+    const next = chars[i + 1] ?? "";
+    if (c === "ー") continue;
+    if (c === "ッ") {
+      const n = KANA[next];
+      if (!n) return null;
+      out += n.startsWith("ch") ? "t" : n[0]!;
+      continue;
+    }
+    const base = KANA[c];
+    if (!base) return null;
+    if (c === "ウ" && /[ou]$/.test(out)) continue; // トウ, ユウ: a long vowel
+    if (c === "オ" && /o$/.test(out)) continue;
+    const glide = { ャ: "a", ュ: "u", ョ: "o" }[next as "ャ"];
+    if (glide && base.length > 1 && base.endsWith("i")) {
+      out += (base === "shi" ? "sh" : base === "chi" ? "ch" : base === "ji" ? "j" : `${base.slice(0, -1)}y`) + glide;
+      i++;
+      continue;
+    }
+    out += base;
+  }
+  return out;
+}
+
+/** The English name of a person or family from the readings of its words (["ミヅキ", "ハナコ"] gives "Hanako Suzuki"), or null. */
+export function nameFromReadings(readings: readonly string[], family: boolean): string | null {
+  const pieces = family && readings.at(-1) === "カ" ? readings.slice(0, -1) : readings;
+  const words = pieces.map(romanize);
+  if (words.length === 0 || words.some((w) => !w)) return null;
+  const name = words.map((w) => w![0]!.toUpperCase() + w!.slice(1)).join(" ");
+  return family ? `${name} family` : name;
+}
+
+/** Words that tell a description is about a person, which a place, an organization or a family is not. */
+export const PERSON_WORDS = /\b(student|boy|girl|man|woman|male|female|he|she|his|her|him|heir|son|daughter|protagonist|narrator|person)\b/i;
+
 /** A name is short and plain: no sentence, no list, no explanation. */
 export function plausibleName(reply: string, name: string): boolean {
   const lines = reply.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (lines.length !== 1 || name.length > 60) return false;
-  return !/[,;:!?、。]/.test(name) && name.split(/\s+/).length <= 5 && !/\b(is|are|was|were|who|that|which)\b/i.test(name);
+  return !/[,;:!?、。]/.test(name) && name.split(/\s+/).length <= 5 && !/\b(is|are|was|were|am|i|my|me|who|that|which)\b/i.test(name);
 }
 
 /**

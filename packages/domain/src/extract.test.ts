@@ -273,6 +273,22 @@ describe("scenes and stopping", () => {
     expect(asked.some((q) => q.id === "speaker")).toBe(false); // all settled by code
   });
 
+  it("names a person or family from the readings, a short form of a known name is that person, and a place is not described as a person", async () => {
+    const taro = entry("w", { source: "鈴木花子", target: "Hanako Suzuki" });
+    const { asker, asked } = scripted(
+      answers({
+        classify: (q) => letter(q, /^(山田家|花子)$/.test(aboutName(q)) ? (aboutName(q) === "花子" ? "a person" : "a family") : /学園/.test(aboutName(q)) ? "an organization" : "not a name"),
+        "english-name": () => "Sakuradai Academy",
+        describe: (q) => (aboutName(q) === "桜台学園" ? "A male student and heir" : "UNKNOWN"),
+      }),
+    );
+    const r = await extractBlock(base(asker, { entries: [taro], passage: "花子は山田家の桜台学園に通う。", candidates: ["花子", "山田家", "桜台学園"], listNames: false, readings: async () => ({ 山田家: ["ヤマダ", "カ"] }) }));
+    expect(r.entries.find((e) => e.id === "w")!.aliases).toEqual(["花子"]);
+    expect(r.entries.find((e) => e.source === "山田家")).toMatchObject({ target: "Yamada family", category: "family" });
+    expect(asked.some((q) => q.id === "english-name" && aboutName(q) === "山田家")).toBe(false); // not asked of a model
+    expect(r.entries.find((e) => e.source === "桜台学園")!.hint).toBe("");
+  });
+
   it("tries once more with the English names when the first scene description is in the wrong language", async () => {
     let scenes = 0;
     const { asker, asked } = scripted(sensible({ "scene-text": () => (++scenes === 1 ? "花子が学園の門で待っている。" : "Hanako waits at the school gate.") }));

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  nameFromReadings,
+  romanize,
   addressedIn,
   findQuotes,
   speakerByForm,
@@ -201,5 +203,28 @@ describe("taking turns", () => {
     const p = "「一」\n「二」";
     expect(takeTurns(p, findQuotes(p), ["w", null], [hanako, taro, { id: "x", label: "X", names: [] }])).toEqual(["w", null]);
     expect(run("「一」\n「ああ、山田」", ["k", null])).toEqual(["k", null]); // the line speaks to 山田, so it is not given to Taro
+  });
+});
+
+describe("names from readings", () => {
+  it("turns katakana into plain romaji, long vowels and small kana included", () => {
+    expect(romanize("ハナコ")).toBe("hanako");
+    expect(romanize("ハナコ")).toBe("hanako");
+    expect(romanize("ミヅキ")).toBe("mizuki");
+    expect(romanize("ヤマダ")).toBe("yamada");
+    expect(romanize("ショウタ")).toBe("shota");
+    expect(romanize("ニッポン")).toBe("nippon");
+    expect(romanize("チャ")).toBe("cha");
+    expect(romanize("abc")).toBe(null);
+  });
+
+  it("makes a person's name from the readings of its words, and a family's with the 家 left off", () => {
+    expect(nameFromReadings(["ヤマダ", "タロウ"], false)).toBe("Taro Yamada");
+    expect(nameFromReadings(["ヤマダ", "カ"], true)).toBe("Yamada family");
+    expect(nameFromReadings(["ヤマダ", "x"], false)).toBe(null);
+  });
+
+  it("does not accept a sentence about oneself as a name", () => {
+    expect(plausibleName("I am Ken Tensan", "I am Ken Tensan")).toBe(false);
   });
 });
