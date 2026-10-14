@@ -282,13 +282,28 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
                   {base.names.length === 0 && <p className="hint guided-hint">No names found. Add a word from the text below.</p>}
                   <ul className="guided-glossary">
                     {base.names.map((n) => (
-                      <li key={n.source}>
+                      <li key={n.source} className="glossary-item">
                         <button className="glossary-row" onClick={() => n.id && setTopic({ id: n.id, n: Date.now() })} title="Open this topic in the knowledge base">
                           <span className="name-source">{n.source}</span>
                           <span className={n.english.trim() === "" ? "name-english missing" : "name-english"}>{n.english.trim() === "" ? "needs an English name" : n.english}</span>
                           <span className="tag">{KIND_LABEL[n.kind]}</span>
                           {!n.known && <span className="tag warn-tag">to check</span>}
                         </button>
+                        {n.kind !== "character" && people.length > 0 && (
+                          <select
+                            aria-label={`Who ${n.source} stands for`}
+                            title="Tie this word to a person, so it is understood as a name for them"
+                            value={n.refersTo ?? ""}
+                            onChange={(e) => void call(() => api.invoke("guided.link", { source: n.source, target: e.target.value === "" ? null : e.target.value })).then((s) => s && setState(s))}
+                          >
+                            <option value="">stands for…</option>
+                            {people.map((p) => (
+                              <option key={p.source} value={p.source}>
+                                {label(p)}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </li>
                     ))}
                   </ul>

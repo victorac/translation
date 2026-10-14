@@ -171,3 +171,26 @@ describe("a short name that is part of a longer one", () => {
     expect(glossaryFor(interp([taro] as never), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Taro Yamada", aliases: ["山田"] }]);
   });
 });
+
+describe("a name that stands for a person", () => {
+  const names = [
+    { source: "山田太郎", english: "Taro Yamada", kind: "character" as const, aliases: ["山田"], reading: "", known: true },
+    { source: "山田", english: "Yamada", kind: "term" as const, aliases: [], reading: "", known: true, refersTo: "山田太郎" },
+  ];
+
+  it("tells the model whom it stands for", () => {
+    const sent = glossaryFor({ names, narrator: null, narratorWord: null, lines: [] } as never, "「山田、お待たせ」山田太郎");
+    expect(sent.find((g) => g.source === "山田")).toEqual({ source: "山田", target: "Yamada", note: "a name for Taro Yamada; when it stands on its own, not as part of 山田太郎" });
+  });
+
+  it("is seen as the person for who speaks and who is spoken to", () => {
+    const glossary: KnownName[] = [
+      { source: "山田太郎", english: "Taro", kind: "character", aliases: ["山田"] },
+      { source: "花子", english: "Hanako", kind: "character", aliases: [] },
+      { source: "山田", english: "Yamada", kind: "term", aliases: [] },
+    ];
+    const r = interpretPassage({ passage: "花子は笑った。\n「山田、お待たせ」\n「遅いぞ」", candidates: [], readings: {}, glossary });
+    // 山田 is spoken to, so the line is not his: it is Hanako's, and the reply is his.
+    expect(r.lines.map((l) => l.speaker)).toEqual(["花子", "山田太郎"]);
+  });
+});

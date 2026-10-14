@@ -633,6 +633,44 @@ describe("translating step by step", () => {
     expect(sent).toContain("- 山田 => Yamada — when it stands on its own, not as part of 山田太郎");
   });
 
+  it("ties a topic to the person it stands for, by itself when the word is one of their aliases, and the request says so", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山田、お待たせしました」", blockSize: "normal" });
+    const read = await service.guidedInterpret(0);
+    const taro = read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!;
+    const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === taro.id)!;
+    service.knowledgeSave({ id: entry.id, kind: "term", source: entry.source, target: entry.target, hint: "", category: entry.category, aliases: ["山田"], attrs: entry.attrs, text: "", about: null });
+
+    // Adding a word that is one of his aliases makes a topic that stands for him.
+    const added = await service.guidedAddName(0, "山田");
+    expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "山田")).toMatchObject({ kind: "term", refersTo: "山田太郎" });
+    expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田")!.attrs["refers to"]).toEqual(["山田太郎"]);
+    const topic = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田")!;
+    service.knowledgeSave({ id: topic.id, kind: "term", source: "山田", target: "Yamada", hint: "", category: "term", aliases: [], attrs: topic.attrs, text: "", about: null });
+    await service.guidedTranslate({ ...model, index: 0 });
+    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山田 => Yamada — a name for Taro Yamada; when it stands on its own, not as part of 山田太郎");
+
+    // It can be tied to someone else, or untied.
+    expect(service.guidedLink("山田", null).blocks[0]!.interpretation!.names.find((n) => n.source === "山田")!.refersTo).toBe(null);
+    expect(service.guidedLink("山田", "山田太郎").blocks[0]!.interpretation!.names.find((n) => n.source === "山田")!.refersTo).toBe("山田太郎");
+  });
+
+  it("makes a word the user adds a term, unless it looks like a name", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "山田は花子に会った。魔法使いだ。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    const kind = async (w: string) => (await service.guidedAddName(0, w)).blocks[0]!.interpretation!.names.find((n) => n.source === w)?.kind;
+    expect(await kind("山田")).toBe("term"); // one kanji: not a name
+    expect(await kind("魔法使い")).toBe("term");
+    expect(await kind("桜台学園")).toBe("organization"); // ends like one
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

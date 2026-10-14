@@ -451,3 +451,7 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-pane-title { display: flex; align-items: center; justify-content: space-between; }
 .guided-kb { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .guided-kb .kbf { flex: 1; min-height: 0; }
+
+.glossary-item { display: flex; align-items: center; gap: 0.35rem; }
+.glossary-item .glossary-row { flex: 1; min-width: 0; width: auto; }
+.glossary-item select { max-width: 9rem; }

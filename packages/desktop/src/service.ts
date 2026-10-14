@@ -25,7 +25,7 @@ import {
   classLabel,
   DEFAULT_CLASSES_TEXT,
   dropLooseNotes,
-  LEGACY_CLASSES_TEXT,
+  isOldDefaultClasses,
   fileText,
   listFiles,
   newTopic,
@@ -770,7 +770,7 @@ export class WorkspaceService {
     this.settings = project.settings ? structuredClone(project.settings) : null;
     this.guided = project.guided ? structuredClone(project.guided) : null;
     this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
-    this.classesText = project.knowledge?.classes === undefined || project.knowledge.classes === LEGACY_CLASSES_TEXT ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
+    this.classesText = project.knowledge?.classes === undefined || isOldDefaultClasses(project.knowledge.classes) ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
       // A project from before the knowledge store: bring its glossary and notes over once.
@@ -1218,7 +1218,8 @@ export class WorkspaceService {
         if (!e) return [];
         const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
         const gender = (e.attrs["gender"] ?? [])[0];
-        return [{ ...n, id: e.id, hint: e.hint, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
+        return [{ ...n, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
       });
       if (b.interpretation.narrator && !b.interpretation.names.some((n) => n.source === b.interpretation!.narrator) && b.interpretation.narratorWord) {
         const e = terms.find((t) => t.source === b.interpretation!.narrator);
@@ -1269,14 +1270,15 @@ export class WorkspaceService {
   /** The names in the glossary, in the form the reading of a block starts from. */
   private knownNames(): KnownName[] {
     const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
-    return this.knowledge
-      .all()
-      .filter((e) => e.kind === "term")
-      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
+    const terms = this.knowledge.all().filter((e) => e.kind === "term");
+    // A topic that refers to a person (山田 for 山田太郎) is one of that person's names, so the rules that look for who speaks or is spoken to see it.
+    const nicknames = (e: KnowledgeEntry) => terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).some((r) => r === e.source)).map((t) => t.source);
+    return terms
+      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
   }
 
   /** Makes a glossary topic, as a suggestion for the user to check, for a name that is not in the glossary yet. */
-  private suggestTopic(n: { source: string; english: string; kind: NameKind; aliases: string[]; gender?: "female" | "male" | null | undefined }, origin: { block?: number; by: "user" | "model" }): void {
+  private suggestTopic(n: { source: string; english: string; kind: NameKind; aliases: string[]; gender?: "female" | "male" | null | undefined; refersTo?: string | null | undefined }, origin: { block?: number; by: "user" | "model" }): void {
     const at = new Date().toISOString();
     this.knowledge.addMany([
       {
@@ -1287,7 +1289,7 @@ export class WorkspaceService {
         hint: "",
         category: n.kind,
         aliases: n.aliases,
-        attrs: n.gender ? { gender: [n.gender] } : {},
+        attrs: { ...(n.gender ? { gender: [n.gender] } : {}), ...(n.refersTo ? { "refers to": [n.refersTo] } : {}) },
         attrFlags: n.gender ? ["gender"] : [],
         text: "",
         about: null,
@@ -1354,6 +1356,20 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
+  /** Ties a topic to the person it stands for (山田 to 山田太郎), or unties it. */
+  guidedLink(source: string, target: string | null): GuidedState {
+    const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === source);
+    if (!e) throw new UserError("no_entry", "That name is not in the glossary any more.");
+    if (target !== null && !this.knowledge.all().some((t) => t.kind === "term" && t.source === target)) throw new UserError("no_entry", "That person is not in the glossary.");
+    const attrs = { ...e.attrs };
+    if (target === null) delete attrs["refers to"];
+    else attrs["refers to"] = [target];
+    this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target || "", hint: e.hint, category: e.category, aliases: e.aliases, attrs, text: "", about: null });
+    this.knowledgeChanged();
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
   /** Adds a word from the text to this block's names, making a glossary topic for it when there is none. */
   async guidedAddName(index: number, source: string): Promise<GuidedState> {
     const block = this.guidedBlock(index);
@@ -1367,7 +1383,12 @@ export class WorkspaceService {
     if (!existing) {
       const readings = await readNames([word]);
       const guess = nameGuess(word, readings[word]);
-      this.suggestTopic({ source: word, english: guess.english, kind: guess.kind, aliases: [] }, { by: "user" });
+      // A word that is already another way to write a person's name stands for that person.
+      const owner = this.knowledge.all().find((e) => e.kind === "term" && e.category === "character" && e.aliases.includes(word));
+      // A word the user adds is a term, unless it looks like a name (two to four kanji the dictionary can read) or ends like a family, place or organization.
+      const looksLikeName = guess.kind === "character" && /^[\u4E00-\u9FFF]{2,4}$/.test(word) && guess.english !== "";
+      const asTerm = owner !== undefined || (guess.kind === "character" && !looksLikeName);
+      this.suggestTopic({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], ...(owner ? { refersTo: owner.source } : {}) }, { by: "user" });
     }
     if (!interp.names.some((n) => n.source === sourceName)) interp.names.push({ source: sourceName, english: "", kind: "term", aliases: [], reading: "", known: false });
     this.knowledgeChanged();

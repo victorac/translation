@@ -89,6 +89,7 @@ const schemas: Record<CommandName, z.ZodType> = {
     fill: z.boolean().optional(),
   }),
   "guided.addName": z.object({ index: z.number().int().min(0).max(100_000), source: z.string().min(1).max(100) }),
+  "guided.link": z.object({ source: z.string().min(1).max(200), target: z.string().max(200).nullable() }),
   "guided.translate": z.object({
     index: z.number().int().min(0).max(100_000),
     backend: z.enum(["provider", "practice"]),
@@ -204,6 +205,7 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "guided.interpret": (p) => service.guidedInterpret(p.index),
     "guided.save": (p) => service.guidedSave(p.index, p.narrator, p.speakers, p.fill === true),
     "guided.addName": (p) => service.guidedAddName(p.index, p.source),
+    "guided.link": (p) => service.guidedLink(p.source, p.target),
     "guided.translate": (p) => service.guidedTranslate(p),
     "guided.clear": () => service.guidedClear(),
     "guided.setTranslation": (p) => service.guidedSetTranslation(p.index, p.text),

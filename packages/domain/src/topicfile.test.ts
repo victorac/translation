@@ -48,7 +48,11 @@ describe("classes", () => {
     expect(DEFAULT_CLASSES_TEXT).toContain("choice(a, b)");
     expect(parseClasses(DEFAULT_CLASSES_TEXT).problems).toEqual([]);
     expect(LEGACY_CLASSES_TEXT.startsWith("# character")).toBe(true);
-    expect(parseClasses(LEGACY_CLASSES_TEXT).classes).toEqual(parseClasses(DEFAULT_CLASSES_TEXT).classes);
+    const old = parseClasses(LEGACY_CLASSES_TEXT).classes;
+    const now = parseClasses(DEFAULT_CLASSES_TEXT).classes;
+    // The same classes, and terms can now say which person they stand for.
+    expect(now.filter((c) => c.name !== "term")).toEqual(old.filter((c) => c.name !== "term"));
+    expect(now.find((c) => c.name === "term")!.attributes).toEqual([{ key: "refers to", kind: "link", target: "character" }]);
   });
 
   it("reads the default classes without problems", () => {

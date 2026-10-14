@@ -22,6 +22,8 @@ export interface GuidedName {
   id?: string;
   /** What the topic says about itself, sent with the name. */
   hint?: string;
+  /** The person this name stands for (the source of their topic), such as 山田 for 山田太郎. */
+  refersTo?: string | null;
   /** For a person: how the text refers to them, when it is clear. */
   gender?: Gender | null;
 }
@@ -255,7 +257,9 @@ export function glossaryFor(interp: Interpretation, only?: string): { source: st
         const alone = withoutLongerNames(only, n.source, sources);
         if (![n.source, ...aliases].some((s) => (s === n.source ? alone : only).includes(s))) return [];
       }
-      const note = [n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
+      const target = n.refersTo ? interp.names.find((o) => o.source === n.refersTo) : undefined;
+      const stands = target ? `a name for ${target.english.trim() !== "" ? target.english.trim() : target.source}` : "";
+      const note = [stands, n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
 }
