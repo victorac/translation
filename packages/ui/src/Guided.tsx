@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { labelLines } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
 import { KnowledgeFiles } from "./KnowledgeFiles";
@@ -92,12 +91,10 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   const label = (p: GuidedName): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
   const speakers = (base?.lines ?? []).map((l) => l.speaker);
 
-  /** Saves the narrator and speakers as chosen. Lines whose speaker is not known yet are worked out from the names and the narrator. */
+  /** Saves the narrator and speakers as chosen. With `fill`, lines whose speaker is not known yet are worked out by the app. */
   const choose = async (narrator: string | null, who: (string | null)[], fill: boolean) => {
     if (!block || !base) return;
-    const fresh = fill ? labelLines(block.text, base.names, narrator, base.narratorWord) : [];
-    const next = who.map((s, i) => (s === null && fill && fresh[i]?.text === base.lines[i]?.text ? (fresh[i]?.speaker ?? null) : s));
-    const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: next }));
+    const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: who, fill }));
     if (s) setState(s);
   };
 

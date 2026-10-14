@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseUserMessage, type ModelSetting, type StartJobInput } from "@ltw/domain";
+import { parseUserMessage, type GuidedState, type ModelSetting, type StartJobInput } from "@ltw/domain";
 import { createHandler } from "./handlers.js";
 import { ProviderService } from "./provider-service.js";
 import { WorkspaceService } from "./service.js";
@@ -577,6 +577,34 @@ describe("translating step by step", () => {
     expect(service.guidedGet()!.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
     const again = await service.guidedInterpret(0);
     expect(again.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
+  });
+
+  it("carries a conversation on from the end of one block into the start of the next", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "あ", blockSize: "normal" });
+    // Two blocks, made by hand: the first ends on a line of speech, the second begins with the reply.
+    const state = (service as unknown as { guided: GuidedState }).guided;
+    const block = state.blocks[0]!;
+    state.blocks = [
+      { ...block, index: 0, text: "花子は待っていた。\n「遅かったね、太郎」と花子は言った。\n「ごめん」と太郎は言った。\n「いいよ」" },
+      { ...block, index: 1, text: "「ありがとう」\n\n「どういたしまして」\n\n「じゃあ行こう」" },
+    ];
+    const one = await service.guidedInterpret(0);
+    expect(one.blocks[0]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["花子", "太郎", "花子"]);
+    const two = await service.guidedInterpret(1);
+    expect(two.blocks[1]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["太郎", "花子", "太郎"]);
+    expect(two.blocks[1]!.interpretation!.names.map((n) => n.source).sort()).toEqual(["太郎", "花子"].sort());
+
+    // Set by hand on the first block, the last speaker decides the next block when it is read again.
+    service.guidedSave(0, null, ["花子", "太郎", "太郎"]);
+    const again = await service.guidedInterpret(1);
+    expect(again.blocks[1]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["花子", "太郎", "花子"]);
+    // "Guess the speakers" fills the lines still not known, with the same carry.
+    service.guidedSave(1, null, [null, "花子", null], true);
+    expect(service.guidedGet()!.blocks[1]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["花子", "花子", "太郎"]);
   });
 
   it("is kept in the project and can be started over", async () => {

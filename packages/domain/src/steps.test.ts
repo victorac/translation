@@ -245,3 +245,29 @@ describe("surname and given name", () => {
     expect(properNounRuns([tok("鈴木", ["名詞", "固有名詞", "地域"], 0), tok("花子", ["名詞", "一般"], 9), tok("は", ["助詞"], 15)])).toEqual(["鈴木"]);
   });
 });
+
+describe("turns carried from the block before", () => {
+  const hanako = { id: "k", label: "Hanako", names: ["花子"] };
+  const taro = { id: "w", label: "Taro", names: ["山田太郎"] };
+  const run = (passage: string, who: (string | null)[], carry: { before: string; pair: readonly [string, string] } | null) => takeTurns(passage, findQuotes(passage), who, [hanako, taro], carry);
+
+  it("gives the first line to the other one, and goes on in turns from there", () => {
+    const p = "「一」\n\n「二」\n\n「三」";
+    expect(run(p, [null, null, null], { before: "k", pair: ["k", "w"] })).toEqual(["w", "k", "w"]);
+  });
+
+  it("works when the block names only one of the two, or neither", () => {
+    const p = "「一」\n「二」";
+    expect(takeTurns(p, findQuotes(p), [null, null], [hanako], { before: "k", pair: ["k", "w"] })).toEqual(["w", "k"]);
+    expect(takeTurns(p, findQuotes(p), [null, null], [], { before: "k", pair: ["k", "w"] })).toEqual(["w", "k"]);
+  });
+
+  it("does not take the first line when it is not a paragraph of its own, or when it speaks to the one who would say it", () => {
+    expect(run("彼は「一」と言い、「二」と続けた。", [null, null], { before: "k", pair: ["k", "w"] })).toEqual([null, null]);
+    expect(run("「ああ、山田太郎」", [null], { before: "k", pair: ["k", "w"] })).toEqual([null]);
+  });
+
+  it("is not used when nothing is carried and there are not exactly two people", () => {
+    expect(takeTurns("「一」\n「二」", findQuotes("「一」\n「二」"), [null, null], [hanako], null)).toEqual([null, null]);
+  });
+});

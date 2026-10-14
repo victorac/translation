@@ -337,24 +337,28 @@ export function speakerByForm(passage: string, quote: Quote, speakers: readonly 
  * is known, the neighbours that are not known are filled in, unless the person it would give is the one named as spoken to in that line.
  * Narration between two lines does not change whose turn it is. Returns the speakers with the new ones filled in.
  */
-export function takeTurns(passage: string, quotes: readonly Quote[], who: readonly (string | null)[], speakers: readonly Speaker[]): (string | null)[] {
+export function takeTurns(passage: string, quotes: readonly Quote[], who: readonly (string | null)[], speakers: readonly Speaker[], carry?: { before: string; pair: readonly [string, string] } | null): (string | null)[] {
   const out = [...who];
-  if (speakers.length !== 2) return out;
+  // The two who are talking: the two people of this block, or when the block carries on a conversation, the two of that conversation.
+  const pair: readonly string[] | null = carry ? carry.pair : speakers.length === 2 ? speakers.map((s) => s.id) : null;
+  if (!pair) return out;
   // A line of its own: it starts a paragraph, and after it comes at most a few words of narration ("…」と花子は言った。").
   const alone = (q: Quote) => {
     if (q.start !== 0 && passage[q.start - 1] !== "\n") return false;
     const rest = passage.slice(q.end).split("\n")[0]!;
     return !rest.includes("「") && rest.length <= 25;
   };
-  const other = (id: string) => speakers.find((s) => s.id !== id)!.id;
+  const other = (id: string) => pair.find((p) => p !== id)!;
   const spokenTo = quotes.map((q) => addressedIn(q.text, speakers));
+  // The line before this passage, said by `carry.before`, comes just before the first line here.
+  const said = (j: number): string | null => (j === -1 ? (carry?.before ?? null) : (out[j] ?? null));
   for (let changed = true; changed; ) {
     changed = false;
     for (let i = 0; i < quotes.length; i++) {
       if (out[i] !== null || !alone(quotes[i]!)) continue;
-      const via = [i - 1, i + 1].find((j) => out[j] != null && j >= 0 && j < quotes.length && alone(quotes[j]!));
+      const via = [i - 1, i + 1].find((j) => said(j) !== null && j < quotes.length && (j === -1 || alone(quotes[j]!)) && pair.includes(said(j)!));
       if (via === undefined) continue;
-      const id = other(out[via]!);
+      const id = other(said(via)!);
       if (spokenTo[i]!.has(id)) continue;
       out[i] = id;
       changed = true;

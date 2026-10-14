@@ -124,3 +124,21 @@ describe("the narrator carries on, and can change", () => {
     expect(notesFor(r)[0]).toBe("The narrator, who says ぼく about himself or herself, is Hanako.");
   });
 });
+
+describe("a conversation that carries on into the next block", () => {
+  const glossary: KnownName[] = [
+    { source: "山田太郎", english: "Taro", kind: "character", aliases: [] },
+    { source: "花子", english: "Hanako", kind: "character", aliases: [] },
+  ];
+
+  it("labels the first line of a block with the other speaker, and the rest in turns, though neither is named in the block", () => {
+    const r = interpretPassage({ passage: "「そうですか」\n\n「うん」\n\n「では」", candidates: [], readings: {}, glossary, carry: { before: "山田太郎", other: "花子" } });
+    expect(r.lines.map((l) => l.speaker)).toEqual(["花子", "山田太郎", "花子"]);
+    expect(r.names.map((n) => n.source).sort()).toEqual(["花子", "山田太郎"].sort());
+  });
+
+  it("leaves the lines alone when the other one of the conversation is not known", () => {
+    const r = interpretPassage({ passage: "「そうですか」\n\n「うん」", candidates: [], readings: {}, glossary, carry: { before: "山田太郎", other: null } });
+    expect(r.lines.map((l) => l.speaker)).toEqual([null, null]);
+  });
+});

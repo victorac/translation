@@ -244,7 +244,7 @@ export interface CommandMap {
   "guided.start": GuidedStartInput;
   "guided.go": { index: number };
   "guided.interpret": { index: number };
-  "guided.save": { index: number; narrator: string | null; speakers: (string | null)[] };
+  "guided.save": { index: number; narrator: string | null; speakers: (string | null)[]; fill?: boolean };
   "guided.addName": { index: number; source: string };
   "guided.translate": GuidedModelInput & { index: number };
   "guided.clear": undefined;

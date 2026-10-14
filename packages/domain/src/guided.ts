@@ -120,18 +120,26 @@ export function nameGuess(source: string, reading: readonly string[] | undefined
 
 const namesOf = (n: { source: string; aliases: readonly string[] }): string[] => [n.source, ...n.aliases];
 
+/** The line that ended the block before was said by `before`, and `other` is the one they were talking with. */
+export interface Carry {
+  before: string;
+  other: string | null;
+}
+
 export interface InterpretInput {
   passage: string;
   /** Names found in the passage without a model. */
   candidates: readonly string[];
   readings: Readonly<Record<string, readonly string[]>>;
   glossary: readonly KnownName[];
+  /** The conversation going on at the end of the block before this one, if there is one. */
+  carry?: Carry | null;
   /** Who told the block before this one (the source of the name), so the narrator carries on until the user says it changed. */
   narrator?: string | null;
 }
 
 /** Who says each line of the passage, for the people in `names` and the narrator. */
-export function labelLines(passage: string, names: readonly GuidedName[], narrator: string | null, narratorWord: string | null): GuidedLine[] {
+export function labelLines(passage: string, names: readonly GuidedName[], narrator: string | null, narratorWord: string | null, carry: Carry | null = null, preset: readonly (string | null)[] = []): GuidedLine[] {
   const quotes = findQuotes(passage);
   const speakers: Speaker[] = names
     .filter((n) => n.kind === "character")
@@ -143,15 +151,18 @@ export function labelLines(passage: string, names: readonly GuidedName[], narrat
     } else speakers.push({ id: narrator, label: narrator, names: narratorWord ? [narrator, narratorWord] : [narrator] });
   }
   const unlabeled = quotes.map((q) => ({ text: q.text, speaker: null as string | null }));
-  if (speakers.length < 2) return unlabeled;
-  let who: (string | null)[] = quotes.map((q) => speakerByForm(passage, q, speakers, quotes));
+  // A conversation carried on from the block before: its last line was said by `before`, and the other one speaks next.
+  const turn = carry && carry.other && speakers.some((s) => s.id === carry.before) && speakers.some((s) => s.id === carry.other) ? { before: carry.before, pair: [carry.before, carry.other] as const } : null;
+  if (speakers.length < 2 && !turn) return unlabeled;
+  // What the user already set stays, and the rules work from it.
+  let who: (string | null)[] = quotes.map((q, i) => preset[i] ?? speakerByForm(passage, q, speakers, quotes));
   // A line that names one of two people as spoken to is said by the other.
   quotes.forEach((q, i) => {
     if (who[i] !== null || speakers.length !== 2) return;
     const left = speakers.filter((s) => !addressedIn(q.text, speakers).has(s.id));
     if (left.length === 1) who[i] = left[0]!.id;
   });
-  who = takeTurns(passage, quotes, who, speakers);
+  who = takeTurns(passage, quotes, who, speakers, turn);
   return quotes.map((q, i) => ({ text: q.text, speaker: who[i] ?? null }));
 }
 
@@ -192,11 +203,16 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   if (narratorWord && narratorEntry && !names.some((n) => n.source === narratorEntry.source)) {
     names.push({ source: narratorEntry.source, english: narratorEntry.english, kind: narratorEntry.kind, aliases: [...narratorEntry.aliases], reading: readingLetters(input.readings[narratorEntry.source]), known: true, gender: narratorEntry.gender ?? null });
   }
+  // The two of a conversation that carries on speak here even when the block does not write their names.
+  for (const who of [input.carry?.before, input.carry?.other]) {
+    const k = who ? input.glossary.find((e) => e.source === who) : undefined;
+    if (k && !names.some((n) => n.source === k.source)) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: true, gender: k.gender ?? null });
+  }
   // Where the text says it, a person who is not known to be one way or the other is that.
   for (const p of names.filter((n) => n.kind === "character" && !n.gender)) {
     p.gender = guessGender(passage, namesOf(p), names.filter((o) => o !== p && o.kind === "character").flatMap(namesOf));
   }
-  return { names, narrator, narratorWord, lines: labelLines(passage, names, narrator, narratorWord) };
+  return { names, narrator, narratorWord, lines: labelLines(passage, names, narrator, narratorWord, input.carry ?? null) };
 }
 
 const shorten = (text: string, n: number): string => (Array.from(text).length > n ? `${Array.from(text).slice(0, n).join("")}…` : text);

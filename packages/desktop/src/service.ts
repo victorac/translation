@@ -1,6 +1,8 @@
 import {
   allPrompts,
   glossaryFor,
+  labelLines,
+  type Carry,
   nameGuess,
   paragraphCount,
   splitPieces,
@@ -1298,6 +1300,18 @@ export class WorkspaceService {
     ]);
   }
 
+  /** The conversation going on where the block before ended: who said its last line, and who they were talking with. */
+  private carryFor(index: number): Carry | null {
+    const prev = this.guided!.blocks[index - 1];
+    const lines = prev?.interpretation?.lines ?? [];
+    const lastParagraph = (prev?.text ?? "").split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
+    const last = lines.at(-1);
+    // Only when that block ended on a line of speech whose speaker is known.
+    if (!prev || !lastParagraph.trim().startsWith("「") || !last?.speaker) return null;
+    const other = [...lines].reverse().find((l) => l.speaker && l.speaker !== last.speaker)?.speaker ?? null;
+    return { before: last.speaker, other };
+  }
+
   /** Reads one block: who is named, who is telling it, who says each line. New names become glossary topics to check. */
   async guidedInterpret(index: number): Promise<GuidedState> {
     const block = this.guidedBlock(index);
@@ -1308,7 +1322,7 @@ export class WorkspaceService {
     const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
     // The narrator carries on from the nearest block read before this one.
     const earlier = this.guided!.blocks.slice(0, index).reverse().find((b) => b.interpretation);
-    const found = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null });
+    const found = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null, carry: this.carryFor(index) });
     for (const n of found.names) if (!n.known) this.suggestTopic(n, { by: "model", block: index + 1 });
     // Given names found alone became aliases of a known person: keep that in the glossary too.
     for (const n of found.names.filter((x) => x.known && x.aliases.length > 0)) {
@@ -1323,13 +1337,18 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
-  /** The narrator and who says each line, as the user set them. The names are the glossary's. */
-  guidedSave(index: number, narrator: string | null, speakers: (string | null)[]): GuidedState {
+  /**
+   * The narrator and who says each line, as the user set them. The names are the glossary's. With `fill`, lines whose speaker is
+   * not known yet are worked out from the names, the narrator and the conversation carried on from the block before.
+   */
+  guidedSave(index: number, narrator: string | null, speakers: (string | null)[], fill = false): GuidedState {
     const block = this.guidedBlock(index);
+    this.guidedView();
     const interp = block.interpretation;
     if (interp) {
       interp.narrator = narrator;
-      interp.lines = interp.lines.map((l, i) => ({ ...l, speaker: speakers[i] ?? null }));
+      const fresh = fill ? labelLines(block.text, interp.names, narrator, interp.narratorWord, this.carryFor(index), speakers) : [];
+      interp.lines = interp.lines.map((l, i) => ({ ...l, speaker: speakers[i] ?? (fill && fresh[i]?.text === l.text ? (fresh[i]?.speaker ?? null) : null) }));
     }
     this.guidedChanged();
     return this.guidedView();
