@@ -232,7 +232,7 @@ const guidedSchema = z.object({
         warning: z.string().max(5000).nullable().optional(),
         interpretation: z
           .object({
-            names: z.array(z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), gender: z.enum(["female", "male"]).nullable().optional() })).max(500),
+            names: z.array(z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), guessed: z.boolean().optional(), use: z.boolean().optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() })).max(500),
             narrator: z.string().max(200).nullable(),
             narratorWord: z.string().max(20).nullable(),
             lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000),

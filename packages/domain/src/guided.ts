@@ -16,8 +16,14 @@ export interface GuidedName {
   aliases: string[];
   /** How the dictionary reads it, in letters, to help the user write the English name. */
   reading: string;
-  /** True when the name is already in the project's glossary. */
+  /** True when the name is already in the project's glossary and accepted. */
   known: boolean;
+  /** True for a word found in the text that is not in the knowledge base yet: it is added when it is used. */
+  draft?: boolean;
+  /** True while the English name is the app's own guess (made from a reading), until the user writes one. */
+  guessed?: boolean;
+  /** False when the user chose to ignore this word in this block: it is not sent and not added. */
+  use?: boolean;
   /** The glossary topic this is, when it has been made one. */
   id?: string;
   /** What the topic says about itself, sent with the name. */
@@ -47,8 +53,11 @@ export interface Interpretation {
   lines: GuidedLine[];
 }
 
-/** A name that is already in the glossary. */
+/** A name that is already in the glossary, or a draft word carried over from an earlier block. */
 export interface KnownName {
+  /** True for a draft word of an earlier block: it is still not in the knowledge base. */
+  draft?: boolean;
+  attrs?: Record<string, string[]>;
   source: string;
   english: string;
   kind: NameKind;
@@ -204,7 +213,7 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   for (const k of input.glossary) {
     // A name that is part of a longer one counts only where it stands on its own (山田 in 「山田、…」, not in 山田太郎).
     const sources = input.glossary.map((e) => e.source);
-    if (namesOf(k).some((n) => withoutLongerNames(passage, n, sources).includes(n))) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: true, gender: k.gender ?? null });
+    if (namesOf(k).some((n) => withoutLongerNames(passage, n, sources).includes(n))) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: !k.draft, draft: k.draft === true, ...(k.attrs ? { attrs: k.attrs } : {}), gender: k.gender ?? null });
   }
   // The longest candidates first, so a short one inside a longer one is not taken as a name of its own.
   const rest = [...new Set(input.candidates)].filter((c) => !taken(c)).sort((a, b) => b.length - a.length);
@@ -213,7 +222,7 @@ export function interpretPassage(input: InterpretInput): Interpretation {
     if (names.some((n) => n.source.length > c.length && n.source.includes(c) && passage.split(n.source).join("").indexOf(c) < 0)) continue;
     const kind = guessKindIn(passage, c);
     const reading = input.readings[c];
-    names.push({ source: c, english: englishFor(kind, reading, c), kind, aliases: [], reading: readingLetters(reading), known: false, gender: null });
+    names.push({ source: c, english: englishFor(kind, reading, c), kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, guessed: englishFor(kind, reading, c) !== "", gender: null, attrs: {} });
   }
   // A name with a middle dot is written by one of its parts alone as well (ジョン for ジョン・スミス): that is the same person.
   for (const p of names.filter((n) => n.kind === "character" && n.source.includes("・"))) {
@@ -240,16 +249,17 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   const narratorEntry = input.narrator ? input.glossary.find((k) => k.source === input.narrator) : undefined;
   const narrator = input.narrator ?? null;
   if (narratorWord && narratorEntry && !names.some((n) => n.source === narratorEntry.source)) {
-    names.push({ source: narratorEntry.source, english: narratorEntry.english, kind: narratorEntry.kind, aliases: [...narratorEntry.aliases], reading: readingLetters(input.readings[narratorEntry.source]), known: true, gender: narratorEntry.gender ?? null });
+    names.push({ source: narratorEntry.source, english: narratorEntry.english, kind: narratorEntry.kind, aliases: [...narratorEntry.aliases], reading: readingLetters(input.readings[narratorEntry.source]), known: !narratorEntry.draft, draft: narratorEntry.draft === true, ...(narratorEntry.attrs ? { attrs: narratorEntry.attrs } : {}), gender: narratorEntry.gender ?? null });
   }
   // The two of a conversation that carries on speak here even when the block does not write their names.
   for (const who of [input.carry?.before, input.carry?.other]) {
     const k = who ? input.glossary.find((e) => e.source === who) : undefined;
-    if (k && !names.some((n) => n.source === k.source)) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: true, gender: k.gender ?? null });
+    if (k && !names.some((n) => n.source === k.source)) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: !k.draft, draft: k.draft === true, ...(k.attrs ? { attrs: k.attrs } : {}), gender: k.gender ?? null });
   }
   // Where the text says it, a person who is not known to be one way or the other is that.
   for (const p of names.filter((n) => n.kind === "character" && !n.gender)) {
     p.gender = guessGender(passage, namesOf(p), names.filter((o) => o !== p && o.kind === "character").flatMap(namesOf));
+    if (p.gender && p.draft) p.attrs = { ...(p.attrs ?? {}), gender: [p.gender] };
   }
   return { names, narrator, narratorWord, lines: labelLines(passage, names, narrator, narratorWord, input.carry ?? null) };
 }
@@ -261,7 +271,7 @@ export function notesFor(interp: Interpretation, only?: string): string[] {
   const english = (source: string): string => interp.names.find((n) => n.source === source)?.english || source;
   const notes: string[] = [];
   if (interp.narrator && interp.narratorWord) notes.push(`The narrator, who says ${interp.narratorWord} about himself or herself, is ${english(interp.narrator)}.`);
-  for (const n of interp.names) if (n.kind === "character" && n.gender && n.english) notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
+  for (const n of interp.names) if (n.use !== false && n.kind === "character" && n.gender && n.english) notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
   for (const l of interp.lines) if (l.speaker && (only === undefined || only.includes(l.text))) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
   return notes;
 }
@@ -301,7 +311,7 @@ export function glossaryHits<T extends { source: string; aliases: readonly strin
 export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
   const sources = interp.names.map((n) => n.source);
   return interp.names
-    .filter((n) => n.english.trim() !== "")
+    .filter((n) => n.english.trim() !== "" && n.use !== false)
     .flatMap((n) => {
       const longer = sources.filter((s) => s.length > n.source.length && s.includes(n.source));
       const aliases = n.aliases.filter((a) => !sources.includes(a));

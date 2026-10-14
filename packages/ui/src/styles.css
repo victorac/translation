@@ -456,27 +456,16 @@ button.toggle .tag { margin-left: 0.35rem; }
 .name-item { display: flex; flex-direction: column; }
 .glossary-head { display: flex; align-items: center; gap: 0.25rem; }
 .glossary-head .glossary-row { flex: 1; min-width: 0; width: auto; }
-.chev { width: 1.5rem; padding: 0.2rem 0; background: transparent; border-color: transparent; color: var(--muted); }
-.name-attrs { margin: 0.2rem 0 0.4rem 1.75rem; padding: 0.4rem 0.6rem; border-left: 2px solid var(--border); display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.35rem 0.75rem; align-items: center; font-size: 0.92em; }
-.name-attrs label, .name-attr-links { display: contents; color: var(--muted); }
-.name-attrs select { min-width: 0; width: 100%; }
-.name-attrs .link-button { grid-column: 1 / -1; justify-self: start; }
-.name-attr-links .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0 0.35rem; border: 1px solid var(--border); border-radius: 1rem; color: var(--text); }
 .chip button { padding: 0 0.15rem; background: transparent; border: none; color: var(--muted); }
 
-.glossary-head .kind-select { flex: none; width: auto; max-width: 7.5rem; padding: 0.15rem 0.3rem; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 
-.check-mark { color: var(--warn); font-weight: 700; }
-.glossary-head .kind-select { max-width: 6.5rem; text-transform: none; letter-spacing: 0; font-size: 0.82em; }
 
 .glossary-search { width: 100%; margin: 0.25rem 0 0.5rem; }
 .glossary-group { margin-bottom: 0.4rem; }
 .glossary-group h5 { margin: 0.5rem 0 0.2rem; font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
 .glossary-source { flex: none; max-width: 45%; text-align: left; padding: 0.25rem 0.5rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .glossary-source.focused { background: var(--accent-soft); border-color: var(--accent); }
-.english-input { flex: 1; min-width: 0; padding: 0.25rem 0.4rem; }
-.english-input.missing { border-color: var(--warn); }
 .source-find { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.3rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }
 .source-find-word { font-weight: 600; }
 .source-text mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 3px; }
@@ -486,8 +475,22 @@ button.toggle .tag { margin-left: 0.35rem; }
 .project-name:hover { background: var(--sunken); border-color: var(--border); }
 .project-name-input { font-weight: 600; width: 14rem; }
 button.primary.pressed { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-text) 55%, transparent); }
-.accept-btn { flex: none; padding: 0.15rem 0.4rem; color: var(--ok); border-color: var(--ok); background: transparent; font-weight: 700; }
-.accept-btn:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
-.glossary-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .guided-lines .line-text { text-align: left; background: transparent; border-color: transparent; padding: 0.2rem 0.35rem; }
 .guided-lines .line-text:hover, .guided-lines .line-text.focused { background: var(--accent-soft); border-color: var(--accent); }
+
+.glossary-head { display: flex; align-items: center; gap: 0.5rem; }
+.glossary-source { display: inline-flex; align-items: center; gap: 0.35rem; flex: none; max-width: 50%; text-align: left; padding: 0.25rem 0.5rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glossary-source .chev { color: var(--muted); font-size: 0.8em; }
+.name-english { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.name-english.missing { color: var(--warn); font-style: italic; }
+.use-toggle { display: inline-flex; align-items: center; gap: 0.35rem; flex: none; font-size: 0.85em; color: var(--muted); cursor: pointer; }
+.name-item.ignored .glossary-source, .name-item.ignored .name-english { opacity: 0.5; text-decoration: line-through; }
+.tree { list-style: none; margin: 0.15rem 0 0.4rem 1rem; padding: 0.2rem 0 0.2rem 0.75rem; border-left: 1px solid var(--border-strong); display: flex; flex-direction: column; gap: 0.3rem; }
+.tree > li { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); align-items: center; gap: 0.5rem; position: relative; }
+.tree > li::before { content: ""; position: absolute; left: -0.75rem; top: 50%; width: 0.6rem; border-top: 1px solid var(--border-strong); }
+.tree-key { color: var(--muted); font-size: 0.88em; }
+.tree select, .tree input { min-width: 0; width: 100%; }
+.tree .tree-action { display: block; }
+.tree .tree-action::before { display: none; }
+
+.guided-scroll label.use-toggle { flex-direction: row; align-items: center; white-space: nowrap; gap: 0.35rem; }

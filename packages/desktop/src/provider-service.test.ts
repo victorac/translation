@@ -420,7 +420,7 @@ describe("translating step by step", () => {
   const model = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, temperature: 0.2, sourceLanguage: "Japanese", targetLanguage: "English" };
   const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
 
-  it("reads a block for the user, translates it with what was confirmed, remembers the names, and gives the next block the end of this one", async () => {
+  it("reads a block for the user, adds the words that are used when it is translated, and leaves out the ones that are ignored", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
@@ -431,23 +431,27 @@ describe("translating step by step", () => {
 
     const read = await service.guidedInterpret(0);
     expect(read.blocks[0]!.status).toBe("interpreted");
-    // The names are glossary topics, suggested for the user to check. The user fixes the English names there.
-    const topics = service.knowledgeList({ kind: "term" }).entries;
-    expect(topics.map((e) => `${e.source}:${e.status}`)).toEqual(expect.arrayContaining(["花子:suggested", "太郎:suggested"]));
-    for (const e of topics) {
-      if (e.source === "花子" || e.source === "太郎") service.knowledgeSave({ id: e.id, kind: "term", source: e.source, target: e.source === "花子" ? "Hanako" : "Taro", hint: e.hint, category: e.category, aliases: e.aliases, attrs: e.attrs, text: "", about: null });
-    }
-    expect(service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === "花子")).toMatchObject({ english: "Hanako", known: true });
+    // The words found are drafts: nothing is in the knowledge base yet.
+    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
+    expect(names().filter((n) => n.source === "花子" || n.source === "太郎")).toMatchObject([{ draft: true }, { draft: true }]);
+    expect(service.knowledgeList({ kind: "term" }).entries).toEqual([]);
+    // The user writes the English names, and ignores one word.
+    service.guidedSetEnglish("花子", "Hanako");
+    service.guidedSetEnglish("太郎", "Taro");
+    service.guidedSetUse("太郎", false);
+    expect(names().find((n) => n.source === "太郎")).toMatchObject({ english: "Taro", use: false });
     const done = await service.guidedTranslate({ ...model, index: 0 });
     expect(done.blocks[0]).toMatchObject({ status: "translated", error: null });
     expect(done.blocks[0]!.translation).toContain("EN(qwen2.5-7b-instruct)");
 
     const first = bodies(lm).at(-1)!.messages[1]!.content;
     expect(first).toContain("=> Hanako");
-    expect(first).toContain("=> Taro");
+    expect(first).not.toContain("=> Taro"); // ignored
     expect(first).not.toContain("CONTEXT"); // nothing before the first block
-    // What was confirmed is now in the glossary.
-    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(expect.arrayContaining(["花子:Hanako:confirmed", "太郎:Taro:confirmed"]));
+    // The word that was used is in the knowledge base now, accepted; the ignored one is not.
+    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(["花子:Hanako:confirmed"]);
+    expect(names().find((n) => n.source === "花子")).toMatchObject({ draft: false, known: true });
+    expect(names().find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
   });
 
   it("gives a later block the end of the block before it, source and translation", async () => {
@@ -508,28 +512,28 @@ describe("translating step by step", () => {
     if (started.blocks.length > 2) expect((await service.guidedInterpret(2)).blocks[2]!.interpretation!.narrator).toBe(null);
   });
 
-  it("lists the names of a block from the glossary: a word the user adds becomes a topic, and a deleted topic is gone from the list and not offered again", async () => {
+  it("lists the words of a block: a word the user adds is a draft too, a word of the knowledge base is listed by itself, and a deleted topic is gone from the list", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "花子は魔法使いだった。太郎が来た。", blockSize: "normal" });
     const read = await service.guidedInterpret(0);
-    const hanako = read.blocks[0]!.interpretation!.names.find((n) => n.source === "花子")!;
-    expect(hanako).toMatchObject({ kind: "character", known: false });
-    expect(hanako.id).toBeTruthy();
+    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
+    expect(read.blocks[0]!.interpretation!.names.find((n) => n.source === "花子")).toMatchObject({ kind: "character", draft: true });
 
     const added = await service.guidedAddName(0, "魔法使い");
-    const term = added.blocks[0]!.interpretation!.names.find((n) => n.source === "魔法使い")!;
-    expect(term.id).toBeTruthy();
-    expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "魔法使い")).toBe(true);
+    expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "魔法使い")).toMatchObject({ kind: "term", draft: true });
+    expect(service.knowledgeList({ kind: "term" }).entries).toEqual([]);
     // Adding it again changes nothing.
     expect((await service.guidedAddName(0, "魔法使い")).blocks[0]!.interpretation!.names.filter((n) => n.source === "魔法使い")).toHaveLength(1);
 
-    service.knowledgeDelete(hanako.id!);
-    expect(service.guidedGet()!.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
-    const again = await service.guidedInterpret(0);
-    expect(again.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
+    // Once the block is translated the words are in the knowledge base, and a deleted one leaves the list.
+    await service.guidedTranslate({ ...model, index: 0 });
+    const hanako = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "花子")!;
+    expect(names().find((n) => n.source === "花子")).toMatchObject({ draft: false, id: hanako.id });
+    service.knowledgeDelete(hanako.id);
+    expect(names().some((n) => n.source === "花子")).toBe(false);
   });
 
   it("carries a conversation on from the end of one block into the start of the next", async () => {
@@ -560,55 +564,55 @@ describe("translating step by step", () => {
     expect(service.guidedGet()!.blocks[1]!.interpretation!.lines.map((l) => l.speaker)).toEqual(["花子", "花子", "太郎"]);
   });
 
-  it("translates a bare 山 as its own word: it gets its own topic, and the request says it applies only when it stands alone", async () => {
+  it("translates a bare 山 as its own word: it has its own entry, and the request says it applies only when it stands alone", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山、お待たせしました」", blockSize: "normal" });
     const read = await service.guidedInterpret(0);
-    const taro = read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!;
-    expect(taro.english).toBe("Yamada Taro");
-    // 山田 is already a way to write his name; the user still gives it a translation of its own.
-    const user = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === taro.id)!;
-    service.knowledgeSave({ id: user.id, kind: "term", source: user.source, target: user.target, hint: user.hint, category: user.category, aliases: ["山"], attrs: user.attrs, text: "", about: null });
+    expect(read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!.english).toBe("Yamada Taro");
+    // Using the block puts 山田太郎 in the knowledge base. 山 is already a way to write his name; it still gets a translation of its own.
+    await service.guidedTranslate({ ...model, index: 0 });
+    const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
+    service.knowledgeSave({ id: taro.id, kind: "term", source: taro.source, target: taro.target, hint: taro.hint, category: taro.category, aliases: ["山"], attrs: taro.attrs, text: "", about: null });
     const added = await service.guidedAddName(0, "山");
-    const tono = added.blocks[0]!.interpretation!.names.find((n) => n.source === "山")!;
-    expect(tono.id).toBeTruthy();
-    expect(tono.id).not.toBe(taro.id);
-    const topic = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === tono.id)!;
-    service.knowledgeSave({ id: topic.id, kind: "term", source: "山", target: "Yamada", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+    expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "山")).toMatchObject({ draft: true, kind: "term" });
+    service.guidedSetEnglish("山", "Yamada");
 
     await service.guidedTranslate({ ...model, index: 0 });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
     expect(sent).toContain("- 山田太郎 => Yamada Taro");
     expect(sent).not.toContain("山田太郎 / 山");
-    expect(sent).toContain("- 山 => Yamada — when it stands on its own, not as part of 山田太郎");
+    expect(sent).toContain("- 山 => Yamada — a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
   });
 
-  it("ties a topic to the person it stands for, by itself when the word is one of their aliases, and the request says so", async () => {
+  it("ties a word to the person it stands for, by itself when the word is one of their aliases, and it can be changed on the draft", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山、お待たせしました」", blockSize: "normal" });
-    const read = await service.guidedInterpret(0);
-    const taro = read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!;
-    const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === taro.id)!;
+    await service.guidedInterpret(0);
+    await service.guidedTranslate({ ...model, index: 0 });
+    const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
     service.knowledgeSave({ id: entry.id, kind: "term", source: entry.source, target: entry.target, hint: "", category: entry.category, aliases: ["山"], attrs: entry.attrs, text: "", about: null });
 
-    // Adding a word that is one of his aliases makes a topic that stands for him.
+    // Adding a word that is one of his aliases makes a draft that stands for him.
     const added = await service.guidedAddName(0, "山");
-    expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "山")).toMatchObject({ kind: "term", refersTo: "山田太郎" });
-    expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山")!.attrs["refers to"]).toEqual(["山田太郎"]);
-    const topic = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山")!;
-    service.knowledgeSave({ id: topic.id, kind: "term", source: "山", target: "Yamada", hint: "", category: "term", aliases: [], attrs: topic.attrs, text: "", about: null });
+    const draft = () => service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === "山")!;
+    expect(draft()).toMatchObject({ draft: true, kind: "term", refersTo: "山田太郎", attrs: { "refers to": ["山田太郎"] } });
+    expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "山")).toBe(false);
+    service.guidedSetEnglish("山", "Yamada");
     await service.guidedTranslate({ ...model, index: 0 });
     expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山 => Yamada — a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
+    // Now it is in the knowledge base, with the link.
+    expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山")!.attrs["refers to"]).toEqual(["山田太郎"]);
 
-    // It can be tied to someone else, or untied.
+    // It can be untied and tied again.
     expect(service.guidedSetAttribute("山", "refers to", []).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe(null);
     expect(service.guidedSetAttribute("山", "refers to", ["山田太郎"]).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe("山田太郎");
+    void added;
   });
 
   it("makes a word the user adds a term, unless it looks like a name", async () => {
@@ -626,33 +630,39 @@ describe("translating step by step", () => {
     expect(await kind("桜台学園")).toBe("organization"); // ends like one
   });
 
-  it("sets the attributes that have options from a choice, as the classes say, and changes the kind of a topic", async () => {
+  it("sets the attributes of a word from the choices the classes give, on a draft and on a word of the knowledge base, and changes its kind", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "花子は鈴木家の人だ。花子は笑った。", blockSize: "normal" });
-    const read = await service.guidedInterpret(0);
+    await service.guidedInterpret(0);
     const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
     expect(names().map((n) => n.source)).toEqual(expect.arrayContaining(["花子", "鈴木家"]));
 
-    // The class lists what can be chosen: a gender from its list, a family from the topics that are families.
+    // The class lists what can be chosen: a gender from its list, a family from the families.
     const files = service.knowledgeFiles();
     expect(files.classes.find((c) => c.name === "character")!.attributes).toEqual(expect.arrayContaining([{ key: "gender", kind: "choice", choices: ["male", "female", "other", "unknown"] }, { key: "family", kind: "link", target: "family" }]));
+    // On the drafts: a family can be a draft of the same block.
     service.guidedSetAttribute("花子", "gender", ["female"]);
     service.guidedSetAttribute("花子", "family", ["鈴木家"]);
-    expect(names().find((n) => n.source === "花子")).toMatchObject({ gender: "female", attrs: { gender: ["female"], family: ["鈴木家"] } });
-    // What is chosen is no longer flagged to check, and the file says so.
-    const hanako = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "花子")!;
-    expect(hanako.attrFlags).not.toContain("gender");
-    expect(service.knowledgeFile(hanako.id).text).toContain("gender: female\n");
-    expect(service.knowledgeFile(hanako.id).text).toContain("family: [[鈴木家]]");
+    service.guidedSetAttribute("花子", "age", ["15"]); // text
+    expect(names().find((n) => n.source === "花子")).toMatchObject({ draft: true, gender: "female", attrs: { gender: ["female"], family: ["鈴木家"], age: ["15"] } });
+    expect(service.knowledgeList({ kind: "term" }).entries).toEqual([]);
 
     // Only what the class allows.
     expect(() => service.guidedSetAttribute("花子", "gender", ["purple"])).toThrow(/is one of/);
     expect(() => service.guidedSetAttribute("花子", "family", ["花子"])).toThrow(/must be a topic/);
-    expect(() => service.guidedSetAttribute("花子", "age", ["9"])).toThrow(/not an attribute with options/);
+    expect(() => service.guidedSetAttribute("花子", "nonsense", ["x"])).toThrow(/not an attribute/);
     expect(() => service.guidedSetAttribute("花子", "gender", ["male", "female"])).toThrow(/takes one value/);
+
+    // Used, the word goes to the knowledge base with its attributes; after that the same choices edit the topic itself.
+    await service.guidedTranslate({ ...model, index: 0 });
+    const hanako = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "花子")!;
+    expect(hanako).toMatchObject({ status: "confirmed", attrs: { gender: ["female"], family: ["鈴木家"], age: ["15"] } });
+    service.guidedSetAttribute("花子", "gender", ["male"]);
+    expect(service.knowledgeFile(hanako.id).text).toContain("gender: male\n");
+    expect(service.knowledgeFile(hanako.id).text).toContain("family: [[鈴木家]]");
 
     // Cleared, and the kind changed: attributes the new kind does not have are dropped.
     service.guidedSetAttribute("花子", "family", []);
@@ -660,7 +670,6 @@ describe("translating step by step", () => {
     service.guidedSetKind("花子", "term");
     expect(names().find((n) => n.source === "花子")).toMatchObject({ kind: "term", attrs: {} });
     expect(() => service.guidedSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
-    void read;
   });
 
   it("clears the English name a person or family got from its reading when it is changed to another kind, but not one the user wrote", async () => {
@@ -669,20 +678,18 @@ describe("translating step by step", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "鈴木花子は山田太郎に会った。", blockSize: "normal" });
-    const read = await service.guidedInterpret(0);
+    await service.guidedInterpret(0);
     const english = (source: string) => service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === source)!.english;
     expect(english("鈴木花子")).toBe("Suzuki Hanako");
     service.guidedSetKind("鈴木花子", "term");
     expect(english("鈴木花子")).toBe(""); // made from a reading, which means nothing for a term
     // Written by the user, it stays.
-    const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
-    service.knowledgeSave({ id: taro.id, kind: "term", source: taro.source, target: "Taro", hint: "", category: "character", aliases: [], attrs: {}, text: "", about: null });
+    service.guidedSetEnglish("山田太郎", "Taro");
     service.guidedSetKind("山田太郎", "term");
     expect(english("山田太郎")).toBe("Taro");
-    void read;
   });
 
-  it("lists every glossary word that stands in a block, also ones added to the glossary later, and lets the user write the English name", async () => {
+  it("lists every glossary word that stands in a block, also ones added to the glossary later, and lets the user write the English name of a draft", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
@@ -694,16 +701,17 @@ describe("translating step by step", () => {
 
     // A word added to the glossary afterwards, from anywhere, shows up in the block by itself.
     service.knowledgeSave({ kind: "term", source: "魔法", target: "magic", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
-    expect(names().find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true });
+    expect(names().find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true, draft: false });
     // A word that is not in this block is not listed.
     service.knowledgeSave({ kind: "term", source: "竜", target: "dragon", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
     expect(names().some((n) => n.source === "竜")).toBe(false);
 
-    // The user writes the English name on the row: the glossary has it, and the topic is accepted.
-    const before = names().find((n) => n.source === "鈴木花子")!;
-    expect(before.known).toBe(false);
+    // The user writes the English name of a draft; it is not in the knowledge base until it is used.
+    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ draft: true, known: false });
     service.guidedSetEnglish("鈴木花子", "  Hanako Suzuki ");
-    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ english: "Hanako Suzuki", known: true });
+    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ english: "Hanako Suzuki", draft: true });
+    expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "鈴木花子")).toBe(false);
+    await service.guidedTranslate({ ...model, index: 0 });
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
   });
 

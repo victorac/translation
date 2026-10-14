@@ -12,6 +12,7 @@ import {
   notesFor,
   renderUserMessage,
   STANDARD_PROMPT,
+  type GuidedName,
   type GuidedState,
   type GuidedModelInput,
   type GuidedStartInput,
@@ -1205,15 +1206,21 @@ export class WorkspaceService {
       if (!b.interpretation) continue;
       // Every word of the glossary that stands in the block is listed, including ones added to the glossary after the block was read.
       for (const e of glossaryHits(b.text, terms)) {
-        if (!b.interpretation.names.some((n) => n.source === e.source)) b.interpretation.names.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed" });
+        if (!b.interpretation.names.some((n) => n.source === e.source)) b.interpretation.names.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed", draft: false });
       }
+      const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
       b.interpretation.names = b.interpretation.names.flatMap((n) => {
         const e = terms.find((t) => t.source === n.source);
-        if (!e) return [];
-        const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
-        const gender = (e.attrs["gender"] ?? [])[0];
-        const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
-        return [{ ...n, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        if (e) {
+          const gender = (e.attrs["gender"] ?? [])[0];
+          const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
+          return [{ ...n, draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        }
+        // A word that is not in the knowledge base yet is a draft: it stays as the user left it. One that was in it and was deleted is gone.
+        if (!n.draft) return [];
+        const { id: _id, ...draft } = n;
+        const gender = (draft.attrs?.["gender"] ?? [])[0];
+        return [{ ...draft, refersTo: (draft.attrs?.["refers to"] ?? [])[0] ?? null, gender: gender === "female" || gender === "male" ? gender : null }];
       });
       const narratorEntry = b.interpretation.narrator ? terms.find((t) => t.source === b.interpretation!.narrator) : undefined;
       if (narratorEntry && narratorEntry.category !== "character") b.interpretation.narrator = null;
@@ -1309,31 +1316,6 @@ export class WorkspaceService {
       .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
   }
 
-  /** Makes a glossary topic, as a suggestion for the user to check, for a name that is not in the glossary yet. */
-  private suggestTopic(n: { source: string; english: string; kind: NameKind; aliases: string[]; gender?: "female" | "male" | null | undefined; refersTo?: string | null | undefined }, origin: { block?: number; by: "user" | "model" }): void {
-    const at = new Date().toISOString();
-    this.knowledge.addMany([
-      {
-        id: newId(),
-        kind: "term",
-        source: n.source,
-        target: n.english,
-        hint: "",
-        category: n.kind,
-        aliases: n.aliases,
-        attrs: { ...(n.gender ? { gender: [n.gender] } : {}), ...(n.refersTo ? { "refers to": [n.refersTo] } : {}) },
-        attrFlags: n.gender ? ["gender"] : [],
-        text: "",
-        about: null,
-        related: [],
-        scope: null,
-        origin: { by: origin.by, ...(origin.block !== undefined ? { block: origin.block } : {}) },
-        status: "suggested",
-        updatedAt: at,
-      },
-    ]);
-  }
-
   /** The conversation going on where the block before ended: who said its last line, and who they were talking with. */
   private carryFor(index: number): Carry | null {
     const prev = this.guided!.blocks[index - 1];
@@ -1346,10 +1328,17 @@ export class WorkspaceService {
     return { before: last.speaker, other };
   }
 
-  /** Reads one block: who is named, who is telling it, who says each line. New names become glossary topics to check. */
+  /** Reads one block: who is named, who is telling it, who says each line. Words that are not in the knowledge base are drafts, added when they are used. */
   async guidedInterpret(index: number): Promise<GuidedState> {
     const block = this.guidedBlock(index);
+    // The glossary, and the draft words of the blocks before this one (still not in the knowledge base), so that the narrator and a
+    // conversation can carry on across blocks and what the user fixed on a draft is not lost.
     const glossary = this.knownNames();
+    for (const b of this.guided!.blocks.slice(0, index)) {
+      for (const n of b.interpretation?.names ?? []) {
+        if (n.draft && n.use !== false && !glossary.some((g) => g.source === n.source)) glossary.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}) });
+      }
+    }
     // A name the user deleted from the glossary is not offered again.
     const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
     const candidates = (await findCandidateNames(block.text)).filter((c) => !rejected.has(c));
@@ -1357,7 +1346,6 @@ export class WorkspaceService {
     // The narrator carries on from the nearest block read before this one.
     const earlier = this.guided!.blocks.slice(0, index).reverse().find((b) => b.interpretation);
     const found = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null, carry: this.carryFor(index) });
-    for (const n of found.names) if (!n.known) this.suggestTopic(n, { by: "model", block: index + 1 });
     // Given names found alone became aliases of a known person: keep that in the glossary too.
     for (const n of found.names.filter((x) => x.known && x.aliases.length > 0)) {
       const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
@@ -1388,65 +1376,108 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
-  private termBySource(source: string): KnowledgeEntry {
-    const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === source);
-    if (!e) throw new UserError("no_entry", "That name is not in the glossary any more.");
-    return e;
+  /** A word of the block being worked on: its topic when it has one, and the name as listed in the block. */
+  private wordOf(source: string): { name: GuidedName; entry: KnowledgeEntry | undefined } {
+    this.guidedView();
+    const block = this.guided?.blocks[this.guided.current];
+    const name = block?.interpretation?.names.find((n) => n.source === source);
+    if (!name) throw new UserError("no_entry", "That word is not in this block any more.");
+    return { name, entry: this.knowledge.all().find((t) => t.kind === "term" && t.source === source) };
+  }
+
+  /** What a value for an attribute must be, as the classes say. Throws a plain message when it is not. */
+  private checkAttribute(kind: string, key: string, values: string[]): void {
+    const draftsHere = this.guided?.blocks[this.guided.current]?.interpretation?.names.filter((n) => n.draft) ?? [];
+    const def = parseClasses(this.classesText).classes.find((c) => c.name === kind)?.attributes.find((a) => a.key === key);
+    if (!def) throw new UserError("bad_attribute", `${key} is not an attribute of this kind of topic.`);
+    if (def.kind === "choice" && values.some((v) => !(def.choices ?? []).includes(v))) throw new UserError("bad_attribute", `${key} is one of: ${(def.choices ?? []).join(", ")}.`);
+    const target = (def.kind === "link" || def.kind === "links") ? def.target : undefined;
+    const isTopic = (v: string) => this.knowledge.all().some((t) => t.kind === "term" && t.source === v && (!target || t.category === target)) || draftsHere.some((n) => n.source === v && (!target || n.kind === target));
+    if ((def.kind === "link" || def.kind === "links") && values.some((v) => !isTopic(v))) throw new UserError("bad_attribute", `${key} must be a topic of the kind ${def.target ?? "any"}.`);
+    if (values.length > 1 && def.kind !== "links") throw new UserError("bad_attribute", `${key} takes one value.`);
   }
 
   /**
-   * Sets one attribute of a name's topic from a choice the user made: a value from the list for a choice, a topic of the right class
-   * for a link. An empty list clears it. What the user sets here is no longer flagged to check.
+   * Sets one attribute of a word of the block: a value from the list for a choice, a topic of the right class for a link, or text.
+   * An empty list clears it. It goes to the knowledge base when the word is in it, and stays with the block's draft when it is not.
    */
   guidedSetAttribute(source: string, key: string, values: string[]): GuidedState {
-    const e = this.termBySource(source);
-    const def = parseClasses(this.classesText).classes.find((c) => c.name === e.category)?.attributes.find((a) => a.key === key);
-    if (!def || def.kind === "text") throw new UserError("bad_attribute", `${key} is not an attribute with options for this kind of topic.`);
-    if (def.kind === "choice" && values.some((v) => !(def.choices ?? []).includes(v))) throw new UserError("bad_attribute", `${key} is one of: ${(def.choices ?? []).join(", ")}.`);
-    if ((def.kind === "link" || def.kind === "links") && values.some((v) => !this.knowledge.all().some((t) => t.kind === "term" && t.source === v && (!def.target || t.category === def.target)))) throw new UserError("bad_attribute", `${key} must be a topic of the kind ${def.target ?? "any"}.`);
-    if (values.length > 1 && def.kind !== "links") throw new UserError("bad_attribute", `${key} takes one value.`);
-    this.knowledge.patch(e.id, (x) => {
-      if (values.length === 0) delete x.attrs[key];
-      else x.attrs[key] = values;
-      return x;
-    }, [key], true);
-    this.knowledgeChanged();
+    const { name, entry } = this.wordOf(source);
+    this.checkAttribute(entry?.category ?? name.kind, key, values);
+    if (entry) {
+      this.knowledge.patch(entry.id, (x) => {
+        if (values.length === 0) delete x.attrs[key];
+        else x.attrs[key] = values;
+        return x;
+      }, [key]);
+      this.knowledgeChanged();
+    } else {
+      const attrs = { ...(name.attrs ?? {}) };
+      if (values.length === 0) delete attrs[key];
+      else attrs[key] = values;
+      name.attrs = attrs;
+    }
     this.guidedChanged();
     return this.guidedView();
   }
 
-  /** The English name of a word, written by the user. Writing it also accepts the topic. */
+  /** The English name of a word, as the user writes it. */
   guidedSetEnglish(source: string, english: string): GuidedState {
-    const e = this.termBySource(source);
-    this.knowledge.patch(e.id, (x) => {
-      x.target = english.trim();
-      return x;
-    }, [], true);
-    this.knowledgeChanged();
+    const { name, entry } = this.wordOf(source);
+    if (entry) {
+      this.knowledge.patch(entry.id, (x) => {
+        x.target = english.trim();
+        return x;
+      });
+      this.knowledgeChanged();
+    } else {
+      name.english = english.trim();
+      delete name.guessed;
+    }
     this.guidedChanged();
     return this.guidedView();
   }
 
-  /** Changes what kind of topic a name is. Attributes the new kind does not have are dropped. */
+  /** Changes what kind of topic a word is. Attributes the new kind does not have are dropped. */
   guidedSetKind(source: string, kind: string): GuidedState {
-    const e = this.termBySource(source);
-    const classes = parseClasses(this.classesText).classes;
-    const target = classes.find((c) => c.name === kind);
+    const { name, entry } = this.wordOf(source);
+    const target = parseClasses(this.classesText).classes.find((c) => c.name === kind);
     if (!target) throw new UserError("bad_kind", `There is no kind of topic called ${kind}.`);
-    this.knowledge.patch(e.id, (x) => {
-      // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
-      if (x.status === "suggested" && x.origin.by === "model" && (x.category === "character" || x.category === "family") && kind !== "character" && kind !== "family") x.target = "";
-      x.category = kind;
-      for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
-      x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
-      return x;
-    }, [], true);
-    this.knowledgeChanged();
+    const wasName = (name.kind === "character" || name.kind === "family") && kind !== "character" && kind !== "family";
+    if (entry) {
+      this.knowledge.patch(entry.id, (x) => {
+        // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
+        if (x.status === "suggested" && x.origin.by === "model" && wasName) x.target = "";
+        x.category = kind;
+        for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
+        x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
+        return x;
+      });
+      this.knowledgeChanged();
+    } else {
+      if (wasName && name.guessed) {
+        name.english = "";
+        delete name.guessed;
+      }
+      name.kind = kind as NameKind;
+      const attrs = { ...(name.attrs ?? {}) };
+      for (const k of Object.keys(attrs)) if (!target.attributes.some((a) => a.key === k)) delete attrs[k];
+      name.attrs = attrs;
+    }
     this.guidedChanged();
     return this.guidedView();
   }
 
-  /** Adds a word from the text to this block's names, making a glossary topic for it when there is none. */
+  /** Use or ignore a word in this block. An ignored word is not sent with the block and is not added to the knowledge base. */
+  guidedSetUse(source: string, use: boolean): GuidedState {
+    const { name } = this.wordOf(source);
+    if (use) delete name.use;
+    else name.use = false;
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** Adds a word from the text to this block, as a draft unless the knowledge base has it. */
   async guidedAddName(index: number, source: string): Promise<GuidedState> {
     const block = this.guidedBlock(index);
     const word = source.trim();
@@ -1455,22 +1486,39 @@ export class WorkspaceService {
     const interp = block.interpretation!;
     // Only a topic of that very word counts: a word that is an alias of another topic can have a translation of its own.
     const existing = this.knowledge.all().find((e) => e.kind === "term" && e.source === word);
-    const sourceName = existing?.source ?? word;
-    if (!existing) {
-      const readings = await readNames([word]);
-      const guess = nameGuess(word, readings[word]);
-      // A word that is already another way to write a person's name stands for that person.
-      const owner = this.knowledge.all().find((e) => e.kind === "term" && e.category === "character" && e.aliases.includes(word));
-      // A word the user adds is a term, unless it ends like a family, a place or an organization. People are found by the dictionary;
-      // one it missed is changed to a person from the row.
-      // A word that stands for a person is a term as well.
-      const asTerm = owner !== undefined || guess.kind === "character";
-      this.suggestTopic({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], ...(owner ? { refersTo: owner.source } : {}) }, { by: "user" });
+    if (!interp.names.some((n) => n.source === word)) {
+      if (existing) interp.names.push({ source: word, english: existing.target, kind: "term", aliases: [], reading: "", known: existing.status === "confirmed", draft: false });
+      else {
+        const readings = await readNames([word]);
+        const guess = nameGuess(word, readings[word]);
+        // A word that is already another way to write a person's name stands for that person.
+        const owner = this.knowledge.all().find((e) => e.kind === "term" && e.category === "character" && e.aliases.includes(word));
+        // A word the user adds is a term, unless it ends like a family, a place or an organization. People are found by the dictionary;
+        // one it missed is changed to a person from the row. A word that stands for a person is a term as well.
+        const asTerm = owner !== undefined || guess.kind === "character";
+        interp.names.push({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], reading: guess.reading, known: false, draft: true, attrs: owner ? { "refers to": [owner.source] } : {} });
+      }
     }
-    if (!interp.names.some((n) => n.source === sourceName)) interp.names.push({ source: sourceName, english: "", kind: "term", aliases: [], reading: "", known: false });
-    this.knowledgeChanged();
     this.guidedChanged();
     return this.guidedView();
+  }
+
+  /** The words the user is using in a block enter the knowledge base: drafts are added, and suggestions are accepted. Ignored words do nothing. */
+  private commitWords(interp: Interpretation): void {
+    const at = new Date().toISOString();
+    for (const n of interp.names) {
+      if (n.use === false) continue;
+      const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
+      if (entry) {
+        if (entry.status !== "confirmed") this.knowledge.confirm([entry.id]);
+        continue;
+      }
+      this.knowledge.addMany([
+        { id: newId(), kind: "term", source: n.source, target: n.english.trim(), hint: "", category: n.kind, aliases: n.aliases, attrs: n.attrs ?? {}, attrFlags: [], text: "", about: null, related: [], scope: null, origin: { by: "user" }, status: "confirmed", updatedAt: at },
+      ]);
+      n.draft = false;
+    }
+    this.knowledgeChanged();
   }
 
   /** The user's own correction of a translation. */
@@ -1494,6 +1542,8 @@ export class WorkspaceService {
     const interp = block.interpretation!;
     const abort = this.beginSideRequest();
     try {
+      this.commitWords(interp);
+      this.guidedView();
       const system = renderPrompt(STANDARD_PROMPT, input.sourceLanguage, input.targetLanguage);
       const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
       // What fits: the pieces are made so that a piece, its translation and the request around it fit the model's context.

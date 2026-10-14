@@ -38,6 +38,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [focus, setFocus] = useState<string | null>(null);
   const [lineFocus, setLineFocus] = useState<number | null>(null);
+  // The words whose details are open. It belongs here, not to each row, so a word that moves to another group keeps its place.
+  const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
   const [filter, setFilter] = useState("");
   const sourceBox = useRef<HTMLDivElement>(null);
@@ -110,7 +112,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
     setTranslation(block?.translation ?? "");
   }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const people = (base?.names ?? []).filter((n) => n.kind === "character");
+  const people = (base?.names ?? []).filter((n) => n.kind === "character" && n.use !== false);
 
   // The word being looked at: where it stands in the block, for the source pane.
   const focused = base?.names.find((n) => n.source === focus) ?? null;
@@ -139,6 +141,11 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const look = (source: string) => {
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
+    setOpened((o) => {
+      const next = new Set(o);
+      if (!next.delete(source)) next.add(source);
+      return next;
+    });
     setHit(0);
   };
   const lookAtLine = (i: number) => {
@@ -154,6 +161,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   // The words of this block's glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
   const q = filter.trim().toLocaleLowerCase();
   const kindLabel = (kind: string): string => classes.find((c) => c.name === kind)?.label ?? kind;
+  // What a link can point to: the topics of the knowledge base, and the words of this block that are not in it yet.
+  const linkTargets: TopicRef[] = [...topics, ...(base?.names ?? []).filter((n) => n.draft && !topics.some((t) => t.source === n.source)).map((n) => ({ source: n.source, english: n.english, category: n.kind }))];
   const shownNames = (base?.names ?? []).filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
   const firstAt = (n: GuidedName): number => occurrencesOf(block?.text ?? "", [n.source, ...n.aliases], topics.map((t) => t.source))[0]?.start ?? Number.MAX_SAFE_INTEGER;
   const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
@@ -165,16 +174,6 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const choose = async (narrator: string | null, who: (string | null)[], fill: boolean) => {
     if (!block || !base) return;
     const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: who, fill }));
-    if (s) setState(s);
-  };
-
-  /** Accepts glossary words as they are: the topic, with the choices the app made for it. */
-  const accept = async (names: GuidedName[]) => {
-    const ids = names.filter((n) => !n.known && n.id).map((n) => n.id!);
-    if (ids.length === 0) return;
-    const r = await call(() => api.invoke("knowledge.confirm", { ids }));
-    if (r === null) return;
-    const s = await call(() => api.invoke("guided.get"));
     if (s) setState(s);
   };
 
@@ -379,15 +378,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                   </label>
                   {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
 
-                  <h4 className="glossary-heading">
-                    <span>
-                      Glossary in this block <span className="hint">{base.names.length}</span>
-                    </span>
-                    {base.names.some((n) => !n.known) && (
-                      <button className="small" onClick={() => void accept(base.names)} title="Accept every word of this block as it is">
-                        Accept all ({base.names.filter((n) => !n.known).length})
-                      </button>
-                    )}
+                  <h4>
+                    Glossary in this block <span className="hint">{base.names.length}</span>
                   </h4>
                   {base.names.length === 0 && <p className="hint guided-hint">Nothing from the glossary found in this block. Add a word from the text below.</p>}
                   {base.names.length > 0 && <input className="glossary-search" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)} />}
@@ -403,10 +395,11 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                             key={n.source}
                             name={n}
                             classes={classes}
-                            topics={topics}
+                            topics={linkTargets}
+                            expanded={opened.has(n.source)}
                             focused={focus === n.source}
-                            onFocus={() => look(n.source)}
-                            onAccept={() => void accept([n])}
+                            onToggle={() => look(n.source)}
+                            onUse={(use) => void call(() => api.invoke("guided.setUse", { source: n.source, use })).then((s) => s && setState(s))}
                             onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
                             onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
                             onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
