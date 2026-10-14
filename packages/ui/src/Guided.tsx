@@ -470,8 +470,10 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                   <ul className="guided-lines">
                     {base.lines.map((l, i) => (
                       <li key={i}>
-                        <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title="Show where it is in the text" className="line-text">
-                          {Array.from(l.text).length > 22 ? `${Array.from(l.text).slice(0, 22).join("")}…` : l.text}
+                        <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title={`Show where it is in the text: ${l.text}`} className="line-text">
+                          <Text truncate size="2">
+                            {l.text}
+                          </Text>
                         </Button>
                         <Pick
                           size="1"

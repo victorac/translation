@@ -130,11 +130,11 @@ export function Toolbar({
               ■ Stop
             </Button>
           ) : (
-            <Button variant="outline" onClick={onRun} disabled={!canRun} title="Translate the whole text with every model (Ctrl/Cmd + Enter)">
+            <Button variant="soft" onClick={onRun} disabled={!canRun} title="Translate the whole text with every model (Ctrl/Cmd + Enter)">
               Translate
             </Button>
           )}
-          <Button variant={knowledge.open ? "soft" : "outline"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
+          <Button variant={knowledge.open ? "solid" : "soft"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
             Knowledge base
             {knowledge.count > 0 && <Badge variant="soft">{knowledge.count}</Badge>}
             {knowledge.suggested > 0 && (

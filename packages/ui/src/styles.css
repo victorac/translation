@@ -40,13 +40,13 @@ code { background: var(--sunken); border-radius: 4px; padding: 0 0.25rem; }
 
 /* ---- controls ---- */
 button, input, select, textarea { font: inherit; color: inherit; }
-button {
+button:where(:not([class*="rt-"])) {
   background: var(--color-surface); border: 1px solid var(--gray-7); border-radius: var(--radius);
   padding: 0.3rem 0.7rem; cursor: pointer; line-height: 1.3; transition: background 0.12s, border-color 0.12s;
 }
-button:hover:not(:disabled) { background: var(--gray-3); border-color: var(--gray-8); }
-button:active:not(:disabled) { background: var(--gray-4); }
-button:disabled { opacity: 0.5; cursor: default; }
+button:where(:not([class*="rt-"])):hover:not(:disabled) { background: var(--gray-3); border-color: var(--gray-8); }
+button:where(:not([class*="rt-"])):active:not(:disabled) { background: var(--gray-4); }
+button:where(:not([class*="rt-"])):disabled { opacity: 0.5; cursor: default; }
 button.primary { background: var(--accent-9); color: var(--accent-contrast); border-color: var(--accent-9); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: var(--accent-10); border-color: var(--accent-10); }
 button.danger { color: var(--red-11); border-color: var(--red-7); }
@@ -57,12 +57,12 @@ button.small { font-size: 0.82em; padding: 0.15rem 0.5rem; }
 .icon-button:hover:not(:disabled) { color: var(--gray-12); background: var(--gray-4); border-color: transparent; }
 .link-button { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
 .danger-text { color: var(--danger); }
-:focus-visible { outline: 2px solid var(--focus-8); outline-offset: 1px; }
-input, select, textarea { background: var(--color-surface); border: 1px solid var(--gray-7); border-radius: var(--radius); padding: 0.3rem 0.5rem; }
-input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--gray-8); }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus-8); outline-offset: -1px; border-color: var(--accent-8); }
-input[type="checkbox"], input[type="radio"] { padding: 0; }
-textarea { width: 100%; }
+:focus-visible:where(:not([class*="rt-"])) { outline: 2px solid var(--focus-8); outline-offset: 1px; }
+input:where(:not([class*="rt-"])), select:where(:not([class*="rt-"])), textarea:where(:not([class*="rt-"])) { background: var(--color-surface); border: 1px solid var(--gray-7); border-radius: var(--radius); padding: 0.3rem 0.5rem; }
+input:where(:not([class*="rt-"])):hover:not(:disabled), select:where(:not([class*="rt-"])):hover:not(:disabled), textarea:where(:not([class*="rt-"])):hover:not(:disabled) { border-color: var(--gray-8); }
+input:where(:not([class*="rt-"])):focus, select:where(:not([class*="rt-"])):focus, textarea:where(:not([class*="rt-"])):focus { outline: 2px solid var(--focus-8); outline-offset: -1px; border-color: var(--accent-8); }
+input[type="checkbox"]:where(:not([class*="rt-"])), input[type="radio"]:where(:not([class*="rt-"])) { padding: 0; }
+textarea:where(:not([class*="rt-"])) { width: 100%; }
 label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85em; color: var(--muted); }
 label input, label select, label textarea { color: var(--text); font-size: 1rem; }
 label.check { flex-direction: row; align-items: flex-start; gap: 0.4rem; color: var(--text); font-size: 1rem; }
@@ -406,8 +406,6 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-names, .guided-lines { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .guided-names li { display: grid; grid-template-columns: minmax(4rem, auto) auto auto minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; }
 .guided-names input { min-width: 0; }
-.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; }
-.guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .guided-names .tag { margin-left: 0.35rem; }
 .guided-actions { margin-top: 1rem; }
 
@@ -422,15 +420,12 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-translation { flex: 1; min-height: 0; resize: none; border: none; outline: none; padding: 0.75rem; background: transparent; color: inherit; font: inherit; line-height: 1.7; }
 .guided-warning { margin: 0; padding: 0.4rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }
 
-.guided-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; }
 .guided-scroll h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
 .guided-narrator { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .guided-hint { margin: 0.35rem 0 0; }
 .guided-scroll .guided-editor { flex: none; min-height: 4rem; overflow: visible; border: 1px solid var(--border); border-radius: 4px; }
 .guided-scroll .reading-editor, .guided-scroll .reading-editor .cm-editor { height: auto; }
 .guided-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 0.4rem; align-items: center; }
-.guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .guided-glossary { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .glossary-row { width: 100%; display: flex; align-items: center; gap: 0.5rem; text-align: left; padding: 0.3rem 0.5rem; }
@@ -459,8 +454,6 @@ button.toggle .tag { margin-left: 0.35rem; }
 .project-name:hover { background: var(--sunken); border-color: var(--border); }
 .project-name-input { font-weight: 600; width: 14rem; }
 button.primary.pressed { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-text) 55%, transparent); }
-.guided-lines .line-text { text-align: left; background: transparent; border-color: transparent; padding: 0.2rem 0.35rem; }
-.guided-lines .line-text:hover, .guided-lines .line-text.focused { background: var(--accent-soft); border-color: var(--accent); }
 
 .name-item.ignored .tree { list-style: none; margin: 0.15rem 0 0.4rem 1rem; padding: 0.2rem 0 0.2rem 0.75rem; border-left: 1px solid var(--border-strong); display: flex; flex-direction: column; gap: 0.3rem; }
 .tree > li { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); align-items: center; gap: 0.5rem; position: relative; }
@@ -474,3 +467,15 @@ button.primary.pressed { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ac
 .glossary-head .glossary-source { flex: none; max-width: 55%; justify-content: flex-start; }
 .glossary-head .name-english { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .name-item.ignored .glossary-source, .name-item.ignored .name-english { opacity: 0.5; text-decoration: line-through; }
+
+/* Spacing and overflow of the reading pane: nothing touches the edge, and long text is cut with an ellipsis inside its own box. */
+.guided-scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 0.75rem 1rem 0.75rem 0.9rem; display: flex; flex-direction: column; }
+.guided-scroll > * { min-width: 0; }
+.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 0.5rem; align-items: center; }
+.guided-lines .line-text { justify-content: flex-start; min-width: 0; max-width: 100%; overflow: hidden; }
+.tree { margin-right: 0.25rem; }
+.tree > li { grid-template-columns: 5rem minmax(0, 1fr); }
+.glossary-head { min-width: 0; }
+.glossary-head .glossary-source { max-width: 50%; overflow: hidden; }
+
+.glossary-head .glossary-source { min-width: 0; flex: 0 1 auto; max-width: 60%; }

@@ -84,16 +84,16 @@ export function NameRow({
       <Flex align="center" gap="2" className="glossary-head">
         <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={onToggle} aria-expanded={expanded} title="Show where it appears in the block, and its details" className="glossary-source">
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-          <Text weight="bold" size="2">
+          <Text weight="bold" size="2" truncate>
             {name.source}
           </Text>
         </Button>
         <Text size="2" color={name.english.trim() === "" ? "amber" : undefined} className="name-english">
           {name.english.trim() === "" ? "no English name" : name.english}
         </Text>
-        <Text as="label" size="1" color="gray" title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
+        <Text as="label" size="1" color={used ? "green" : "gray"} weight={used ? "medium" : "regular"} title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
           <Flex align="center" gap="1">
-            <Switch size="1" checked={used} onCheckedChange={onUse} aria-label={`Use ${name.source}`} />
+            <Switch size="1" color="green" checked={used} onCheckedChange={onUse} aria-label={`Use ${name.source}`} />
             {used ? "use" : "ignore"}
           </Flex>
         </Text>
