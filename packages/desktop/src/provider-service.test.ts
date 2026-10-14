@@ -472,11 +472,11 @@ describe("translating step by step", () => {
     expect(sent).toContain("[[REDO]]Hanako laughed. Taro WRONG laughed.[[/REDO]]");
     expect(sent).toContain("SOURCE_PART:\n花子は笑った。太郎も笑った。"); // only the text it was made from
     expect(done.blocks[0]!.translation).toBe("Beast King's Fang\n\nShe said good morning.");
-    // Same number of paragraphs: each comes from the paragraph in the same place, without asking the model.
-    const asked = bodies(lm).length;
+    // Where each paragraph comes from is asked of the model, and the answer is placed on the source text.
+    const lm2 = await fakeLmStudio({ answer: () => "P1: S1\nP2: S2" });
+    provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
     const placed = await service.guidedLocate({ ...model, index: 0, text: "A.\n\nB." });
-    expect(placed.map((p) => sourceText.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。太郎も笑った。", "「おはよう」と花子は言った。"]);
-    expect(bodies(lm).length).toBe(asked);
+    expect(placed.map((p) => sourceText.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。", "太郎も笑った。"]);
   });
 
   it("gives a later block the end of the block before it, source and translation", async () => {

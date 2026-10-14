@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { locateByParagraphs, locateMessage, parseLocation, placeLocation, paragraphsOf, reviseMessage, revisedPart } from "./revise.js";
+import { locateMessage, parseLocation, placeLocation, paragraphsOf, reviseMessage, revisedPart } from "./revise.js";
 
 describe("reviseMessage", () => {
   it("marks the part and cuts the text around it", () => {
@@ -41,12 +41,6 @@ describe("locating", () => {
     expect(source.slice(placed[0]!.source!.start, placed[0]!.source!.end)).toBe("一つ目。二つ目。");
     expect(source.slice(placed[1]!.source!.start, placed[1]!.source!.end)).toBe("三つ目。");
   });
-  it("needs no model when the paragraph counts match", () => {
-    const placed = locateByParagraphs(source, "A.\nB.")!;
-    expect(source.slice(placed[1]!.source!.start, placed[1]!.source!.end)).toBe("三つ目。");
-    expect(locateByParagraphs(source, "Only one.")).toBeNull();
-    expect(locateByParagraphs("一つ目。二つ目。", "One. Two.")).toBeNull();
-  });
   it("finds paragraphs with their place in the text", () => {
     expect(paragraphsOf("a\n\n  b ")).toEqual([{ start: 0, end: 1, text: "a" }, { start: 5, end: 6, text: "b" }]);
   });
@@ -68,10 +62,6 @@ describe("paragraphs that are split or joined", () => {
     const r = parseLocation("P1: S1-S6\nP2: S3-S4", 2, 8);
     expect(r[0]).toEqual({ first: 1, last: 3 });
     expect(r[1]).toEqual({ first: 3, last: 4 });
-  });
-  it("does not trust equal counts when the lengths drift apart", () => {
-    const source = "短い。\n長い長い長い長い長い長い長い長い長い長い長い長い長い長い。";
-    expect(locateByParagraphs(source, "A long text that was joined here and is long.\nB.")).toBeNull();
   });
   it("grows the range over paragraphs that share source text", async () => {
     const { rewriteRange } = await import("./revise.js");

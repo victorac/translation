@@ -65,7 +65,6 @@ import {
   reviseSystem,
   reviseMessage,
   revisedPart,
-  locateByParagraphs,
   locateSystem,
   locateMessage,
   parseLocation,
@@ -1717,14 +1716,12 @@ export class WorkspaceService {
   }
 
   /**
-   * Where each paragraph of a translation comes from in the block's source. When both have the same number of paragraphs it is
-   * paragraph for paragraph and needs no model; otherwise the model says which numbered sentences each paragraph was made from,
-   * and the answer is checked (numbers that exist, in the order of the text).
+   * Where each paragraph of a translation comes from in the block's source. The model says which numbered sentences each paragraph
+   * was made from, and the answer is checked (numbers that exist, in the order of the text, no reaching into the next paragraph).
+   * There is no shortcut by paragraph count: paragraphs can be joined in one place and split in another.
    */
   async guidedLocate(input: GuidedModelInput & { index: number; text: string }): Promise<Located[]> {
     const block = this.guidedBlock(input.index);
-    const byParagraph = locateByParagraphs(block.text, input.text);
-    if (byParagraph) return byParagraph;
     const paragraphs = paragraphsOf(input.text).length;
     const sentences = sentenceUnits(block.text).length;
     if (paragraphs === 0) return [];

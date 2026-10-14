@@ -197,22 +197,6 @@ export function placeLocation(source: string, translation: string, ranges: ({ fi
   });
 }
 
-/** When the translation has as many paragraphs as the source, each one comes from the paragraph in the same place: no model needed. */
-export function locateByParagraphs(source: string, translation: string): Located[] | null {
-  const s = paragraphsOf(source);
-  const t = paragraphsOf(translation);
-  if (s.length !== t.length || s.length === 0) return null;
-  // A paragraph that is joined or split somewhere makes the lengths drift apart even when the counts match: then the model is asked.
-  const ratio = t.reduce((n, p) => n + p.text.length, 0) / Math.max(1, s.reduce((n, p) => n + p.text.length, 0));
-  for (let i = 0; i < s.length; i++) {
-    if (s[i]!.text.length < 12 && t[i]!.text.length < 12) continue;
-    const r = t[i]!.text.length / Math.max(1, s[i]!.text.length) / ratio;
-    if (r < 0.33 || r > 3) return null;
-  }
-  if (s.length === 1 && sentenceUnits(source).length > 1) return null; // one paragraph: the sentences say more
-  return t.map((p, i) => ({ from: p.start, to: p.end, source: { start: s[i]!.start, end: s[i]!.end } }));
-}
-
 /**
  * The translation paragraphs to write again, and the source text they stand for, when the paragraph under the cursor is wanted.
  * A paragraph may share source sentences with its neighbours (one source paragraph written as two, or two written as one), so the
