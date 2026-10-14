@@ -133,3 +133,15 @@ export function interpretationFromText(text: string, original: Interpretation): 
   }
   return { interpretation: { names, narrator, narratorWord: original.narratorWord, lines }, problems };
 }
+
+/** Only the names, as lines of text: `花子 = Hanako | person | she | aliases: …`. */
+export function namesToText(names: readonly GuidedName[]): string {
+  const text = interpretationToText({ names: [...names], narrator: null, narratorWord: null, lines: [] });
+  return text.replace(/^## Names\n/, "").replace(/\n\n## Lines\n$/, "\n");
+}
+
+/** Reads the lines back. Line numbers in the problems are the lines of this text. */
+export function namesFromText(text: string, original: readonly GuidedName[]): { names: GuidedName[]; problems: TextProblem[] } {
+  const r = interpretationFromText(`## Names\n${text}`, { names: [...original], narrator: null, narratorWord: null, lines: [] });
+  return { names: r.interpretation.names, problems: r.problems.map((p) => ({ line: Math.max(1, p.line - 1), message: p.message })) };
+}

@@ -45,7 +45,6 @@ export interface KnownName {
   english: string;
   kind: NameKind;
   aliases: string[];
-  narrator: boolean;
   gender?: Gender | null;
 }
 
@@ -119,6 +118,8 @@ export interface InterpretInput {
   candidates: readonly string[];
   readings: Readonly<Record<string, readonly string[]>>;
   glossary: readonly KnownName[];
+  /** Who told the block before this one (the source of the name), so the narrator carries on until the user says it changed. */
+  narrator?: string | null;
 }
 
 /** Who says each line of the passage, for the people in `names` and the narrator. */
@@ -176,10 +177,11 @@ export function interpretPassage(input: InterpretInput): Interpretation {
   }
 
   const narratorWord = firstPersonInNarration(passage);
-  const narratorEntry = narratorWord ? input.glossary.find((k) => k.narrator) : undefined;
-  const narrator = narratorEntry?.source ?? null;
-  // The narrator speaks and acts in a block even when the block never writes the name.
-  if (narratorEntry && !names.some((n) => n.source === narratorEntry.source)) {
+  // The narrator carries on from the block before, and can be changed on any block. They speak and act in a block told as "I"
+  // even when the block never writes the name.
+  const narratorEntry = input.narrator ? input.glossary.find((k) => k.source === input.narrator) : undefined;
+  const narrator = input.narrator ?? null;
+  if (narratorWord && narratorEntry && !names.some((n) => n.source === narratorEntry.source)) {
     names.push({ source: narratorEntry.source, english: narratorEntry.english, kind: narratorEntry.kind, aliases: [...narratorEntry.aliases], reading: readingLetters(input.readings[narratorEntry.source]), known: true, gender: narratorEntry.gender ?? null });
   }
   // Where the text says it, a person who is not known to be one way or the other is that.

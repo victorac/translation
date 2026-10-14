@@ -20,15 +20,15 @@ describe("reading a block for the user to check", () => {
   });
 
   it("uses what the glossary already says, and does not offer it as new", () => {
-    const glossary: KnownName[] = [{ source: "山田太郎", english: "Taro Yamada", kind: "character", aliases: ["山田"], narrator: true }];
-    const r = interpretPassage({ passage: "ぼくは山田太郎という。", candidates: ["山田太郎"], readings, glossary });
+    const glossary: KnownName[] = [{ source: "山田太郎", english: "Taro Yamada", kind: "character", aliases: ["山田"] }];
+    const r = interpretPassage({ passage: "ぼくは山田太郎という。", candidates: ["山田太郎"], readings, glossary, narrator: "山田太郎" });
     expect(r.names).toHaveLength(1);
     expect(r.names[0]).toMatchObject({ english: "Taro Yamada", known: true });
     expect(r.narrator).toBe("山田太郎");
     expect(r.narratorWord).toBe("ぼく");
   });
 
-  it("does not guess the narrator when the glossary has none, and adds a given name written alone to the full name", () => {
+  it("has no narrator unless one carries on from the block before, and adds a given name written alone to the full name", () => {
     const r = interpretPassage({ passage: "ぼくは鈴木花子を見た。花子は笑った。", candidates: ["鈴木花子", "花子"], readings, glossary: [] });
     expect(r.narrator).toBe(null);
     expect(r.narratorWord).toBe("ぼく");
@@ -38,11 +38,11 @@ describe("reading a block for the user to check", () => {
 
   it("says who speaks each line, from the narration and from taking turns, with the narrator among the speakers", () => {
     const glossary: KnownName[] = [
-      { source: "山田太郎", english: "Taro", kind: "character", aliases: ["山田"], narrator: true },
-      { source: "花子", english: "Hanako", kind: "character", aliases: [], narrator: false },
+      { source: "山田太郎", english: "Taro", kind: "character", aliases: ["山田"] },
+      { source: "花子", english: "Hanako", kind: "character", aliases: [] },
     ];
     const passage = "「遅いですよ」と花子は言った。\n\n「ごめん」\n\n「いいえ」";
-    const r = interpretPassage({ passage: `ぼくは待っていた。\n${passage}`, candidates: [], readings: {}, glossary });
+    const r = interpretPassage({ passage: `ぼくは待っていた。\n${passage}`, candidates: [], readings: {}, glossary, narrator: "山田太郎" });
     expect(r.lines.map((l) => l.speaker)).toEqual(["花子", "山田太郎", "花子"]);
   });
 
@@ -58,9 +58,10 @@ describe("what is sent with a block", () => {
     candidates: [],
     readings: {},
     glossary: [
-      { source: "山田太郎", english: "Taro", kind: "character", aliases: [], narrator: true },
-      { source: "花子", english: "Hanako", kind: "character", aliases: [], narrator: false },
+      { source: "山田太郎", english: "Taro", kind: "character", aliases: [] },
+      { source: "花子", english: "Hanako", kind: "character", aliases: [] },
     ],
+    narrator: "山田太郎",
   });
 
   it("states the narrator and each known speaker, in the translation's names", () => {
@@ -99,7 +100,27 @@ describe("gender", () => {
     const r = interpretPassage({ passage: "鈴木花子。彼女は笑った。", candidates: ["鈴木花子"], readings: { 鈴木花子: ["スズキ", "ハナコ"] }, glossary: [] });
     expect(r.names[0]!.gender).toBe("female");
     expect(notesFor(r)).toContain("Hanako Suzuki is a woman or girl (she/her).");
-    const known = interpretPassage({ passage: "花子は笑った。", candidates: [], readings: {}, glossary: [{ source: "花子", english: "Hanako", kind: "character", aliases: [], narrator: false, gender: "female" }] });
+    const known = interpretPassage({ passage: "花子は笑った。", candidates: [], readings: {}, glossary: [{ source: "花子", english: "Hanako", kind: "character", aliases: [], gender: "female" }] });
     expect(known.names[0]!.gender).toBe("female");
+  });
+});
+
+describe("the narrator carries on, and can change", () => {
+  const glossary: KnownName[] = [
+    { source: "山田太郎", english: "Taro", kind: "character", aliases: [] },
+    { source: "花子", english: "Hanako", kind: "character", aliases: [] },
+  ];
+  const text = "ぼくは花子を待った。\n「遅いですよ」と花子は言った。\n「ごめん」";
+
+  it("is whoever told the block before, and is among the people of a block that does not write their name", () => {
+    const r = interpretPassage({ passage: text, candidates: [], readings: {}, glossary, narrator: "山田太郎" });
+    expect(r.narrator).toBe("山田太郎");
+    expect(r.names.map((n) => n.source)).toContain("山田太郎");
+  });
+
+  it("is another person when the block before was told by someone else", () => {
+    const r = interpretPassage({ passage: text, candidates: [], readings: {}, glossary, narrator: "花子" });
+    expect(r.narrator).toBe("花子");
+    expect(notesFor(r)[0]).toBe("The narrator, who says ぼく about himself or herself, is Hanako.");
   });
 });

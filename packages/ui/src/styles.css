@@ -432,3 +432,13 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); }
 .guided-translation { flex: 1; min-height: 0; resize: none; border: none; outline: none; padding: 0.75rem; background: transparent; color: inherit; font: inherit; line-height: 1.7; }
 .guided-warning { margin: 0; padding: 0.4rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }
+
+.guided-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0.5rem 0.75rem; display: flex; flex-direction: column; }
+.guided-scroll h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
+.guided-narrator { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.guided-hint { margin: 0.35rem 0 0; }
+.guided-scroll .guided-editor { flex: none; min-height: 4rem; overflow: visible; border: 1px solid var(--border); border-radius: 4px; }
+.guided-scroll .reading-editor, .guided-scroll .reading-editor .cm-editor { height: auto; }
+.guided-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 0.4rem; align-items: center; }
+.guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

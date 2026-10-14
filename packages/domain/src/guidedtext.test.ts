@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Interpretation } from "./guided.js";
-import { interpretationFromText, interpretationToText } from "./guidedtext.js";
+import { interpretationFromText, interpretationToText, namesFromText, namesToText } from "./guidedtext.js";
 
 const interp: Interpretation = {
   names: [
@@ -78,5 +78,18 @@ describe("what was read, as text", () => {
     expect(interpretation.names.map((n) => n.source)).toEqual(["花子"]);
     expect(interpretation.narrator).toBe(null);
     expect(interpretation.lines).toHaveLength(3);
+  });
+});
+
+describe("the names alone", () => {
+  it("are written and read back as lines of text, with the problems on their own lines", () => {
+    const text = namesToText(interp.names);
+    expect(text.startsWith("山田太郎 = Taro Yamada | person | he | aliases: 山田")).toBe(true);
+    expect(text).not.toContain("## ");
+    const back = namesFromText(text, interp.names);
+    expect(back.problems).toEqual([]);
+    expect(back.names).toEqual(interp.names);
+    const bad = namesFromText("花子 = Hanako | robot\nno equals sign", interp.names);
+    expect(bad.problems.map((p) => p.line)).toEqual([1, 2]);
   });
 });

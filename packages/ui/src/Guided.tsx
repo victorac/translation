@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { interpretationFromText, interpretationToText, labelLines } from "@ltw/domain/pure";
-import type { GuidedState } from "@ltw/domain";
+import { labelLines, namesFromText, namesToText } from "@ltw/domain/pure";
+import type { GuidedName, GuidedState, Interpretation } from "@ltw/domain";
 import { api } from "./api";
 import { ReadingEditor } from "./ReadingEditor";
 import type { SetupState } from "./setup";
@@ -28,7 +28,9 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
-  const [text, setText] = useState("");
+  const [namesText, setNamesText] = useState("");
+  const [narrator, setNarrator] = useState<string | null>(null);
+  const [speakers, setSpeakers] = useState<(string | null)[]>([]);
   const [translation, setTranslation] = useState("");
   const [widths, setWidths] = useState<[number, number]>(loadWidths);
   const started = useRef(false);
@@ -69,16 +71,47 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The text being edited follows the block being shown.
+  // What is being edited follows the block being shown.
   useEffect(() => {
-    setText(base ? interpretationToText(base) : "");
+    setNamesText(base ? namesToText(base.names) : "");
+    setNarrator(base?.narrator ?? null);
+    setSpeakers(base ? base.lines.map((l) => l.speaker) : []);
   }, [state?.current, base]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setTranslation(block?.translation ?? "");
   }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const parsed = useMemo(() => (base ? interpretationFromText(text, base) : null), [text, base]);
+  // The names as typed. Everything that refers to a name (the narrator, who says each line) is checked against them as they are now.
+  const parsed = useMemo(() => (base ? namesFromText(namesText, base.names) : null), [namesText, base]);
   const problems = parsed?.problems ?? [];
+  const people: GuidedName[] = useMemo(() => (parsed?.names ?? []).filter((n) => n.kind === "character"), [parsed]);
+  const has = (source: string | null): source is string => source !== null && people.some((p) => p.source === source);
+  const effectiveNarrator = has(narrator) ? narrator : null;
+  const effectiveSpeakers = speakers.map((s) => (has(s) ? s : null));
+  const label = (p: GuidedName): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
+
+  /** What is shown and what is sent: the names as typed, the narrator and the speakers chosen. */
+  const draft: Interpretation | null =
+    base && parsed
+      ? { names: parsed.names, narrator: effectiveNarrator, narratorWord: base.narratorWord, lines: base.lines.map((l, i) => ({ text: l.text, speaker: effectiveSpeakers[i] ?? null })) }
+      : null;
+
+  /** After the names or the narrator change, lines whose speaker is not known yet are worked out again; the ones already set stay. */
+  const fill = (names: GuidedName[], who: string | null, current: (string | null)[]) => {
+    if (!block || !base) return current;
+    const fresh = labelLines(block.text, names, who, base.narratorWord);
+    return current.map((s, i) => (s === null && fresh[i]?.text === base.lines[i]?.text ? (fresh[i]?.speaker ?? null) : s));
+  };
+  const onNames = (text: string) => {
+    setNamesText(text);
+    if (!base) return;
+    const next = namesFromText(text, base.names);
+    setSpeakers((cur) => fill(next.names, has(narrator) ? narrator : null, cur));
+  };
+  const onNarrator = (value: string | null) => {
+    setNarrator(value);
+    setSpeakers((cur) => fill(parsed?.names ?? [], value, cur));
+  };
 
   const go = async (index: number) => {
     if (!state || index < 0 || index >= state.blocks.length) return;
@@ -89,9 +122,9 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   };
 
   const translate = async () => {
-    if (!state || !block || !model || !parsed || problems.length > 0) return;
+    if (!state || !block || !model || !draft || problems.length > 0) return;
     setWorking("translate");
-    const saved = await call(() => api.invoke("guided.save", { index: block.index, interpretation: parsed.interpretation }));
+    const saved = await call(() => api.invoke("guided.save", { index: block.index, interpretation: draft }));
     if (saved) {
       setState(saved);
       const s = await call(() =>
@@ -113,12 +146,7 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   };
 
   /** Lines whose speaker is not known are worked out again from the names and the narrator as they are now. */
-  const guessSpeakers = () => {
-    if (!block || !parsed) return;
-    const i = parsed.interpretation;
-    const fresh = labelLines(block.text, i.names, i.narrator, i.narratorWord);
-    setText(interpretationToText({ ...i, lines: i.lines.map((l, n) => (l.speaker === null && fresh[n]?.text === l.text ? { ...l, speaker: fresh[n]!.speaker } : l)) }));
-  };
+  const guessSpeakers = () => setSpeakers(fill(parsed?.names ?? [], effectiveNarrator, effectiveSpeakers));
 
   const saveTranslation = async () => {
     if (!block || translation === block.translation) return;
@@ -247,14 +275,52 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
               </div>
             ) : (
               <>
-                <div className="guided-editor">
-                  <ReadingEditor docKey={`${state.current}`} text={text} problems={problems} onText={setText} />
+                <div className="guided-scroll">
+                  <label className="guided-narrator">
+                    {base.narratorWord ? `Told as “${base.narratorWord}”. Narrator` : "Narrator"}
+                    <select aria-label="Narrator" value={effectiveNarrator ?? ""} onChange={(e) => onNarrator(e.target.value === "" ? null : e.target.value)}>
+                      <option value="">not set</option>
+                      {people.map((p) => (
+                        <option key={p.source} value={p.source}>
+                          {label(p)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {base.narratorWord && effectiveNarrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
+                  <h4>Names</h4>
+                  <div className="guided-editor">
+                    <ReadingEditor docKey={`${state.current}`} text={namesText} problems={problems} onText={onNames} />
+                  </div>
+                  <h4>Who says each line</h4>
+                  {base.lines.length === 0 && <p className="hint guided-hint">There are no lines of speech in this block.</p>}
+                  <ul className="guided-lines">
+                    {base.lines.map((l, i) => (
+                      <li key={i}>
+                        <span className="line-text" title={l.text}>
+                          {Array.from(l.text).length > 22 ? `${Array.from(l.text).slice(0, 22).join("")}…` : l.text}
+                        </span>
+                        <select
+                          aria-label={`Speaker of line ${i + 1}`}
+                          value={effectiveSpeakers[i] ?? ""}
+                          onChange={(e) => setSpeakers((cur) => cur.map((s, n) => (n === i ? (e.target.value === "" ? null : e.target.value) : s)))}
+                        >
+                          <option value="">not known</option>
+                          {people.map((p) => (
+                            <option key={p.source} value={p.source}>
+                              {label(p)}
+                            </option>
+                          ))}
+                        </select>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
                 <div className="guided-foot">
                   <button className="primary" onClick={() => void translate()} disabled={working !== null || !model || problems.length > 0} title={problems.length > 0 ? "Fix what is marked first" : undefined}>
                     {working === "translate" ? "Translating…" : block.status === "translated" ? "Confirm and translate again" : "Confirm and translate"}
                   </button>
-                  <button onClick={guessSpeakers} disabled={working !== null} title="Work out who says the lines marked with ?, from the names above">
+                  <button onClick={guessSpeakers} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
                     Guess the speakers
                   </button>
                   <button onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again, discarding your changes here">

@@ -533,6 +533,30 @@ describe("translating step by step", () => {
     expect(fixed.blocks[0]).toMatchObject({ translation: "My own version.", status: "translated", warning: null });
   });
 
+  it("carries the narrator on to the blocks read after it, until the user changes it", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    const paragraphs = Array.from({ length: 40 }, (_, i) => (i === 0 ? "ぼくは山田太郎という。" : i === 20 ? "ぼくは花子を見た。" : `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`));
+    const started = service.guidedStart({ documentId: docId, text: paragraphs.join("\n"), blockSize: "small" });
+    expect(started.blocks.length).toBeGreaterThan(1);
+    const first = await service.guidedInterpret(0);
+    const interp = structuredClone(first.blocks[0]!.interpretation!);
+    interp.narrator = "山田太郎";
+    if (!interp.names.some((n) => n.source === "山田太郎")) interp.names.push({ source: "山田太郎", english: "Taro", kind: "character", aliases: [], reading: "", known: false });
+    for (const n of interp.names) if (n.source === "山田太郎") n.english = "Taro";
+    service.guidedSave(0, interp);
+    await service.guidedTranslate({ ...model, index: 0 });
+    const second = await service.guidedInterpret(1);
+    expect(second.blocks[1]!.interpretation!.narrator).toBe("山田太郎");
+    // Changed on this block, it is the new one for the next.
+    const changed = structuredClone(second.blocks[1]!.interpretation!);
+    changed.narrator = null;
+    service.guidedSave(1, changed);
+    if (started.blocks.length > 2) expect((await service.guidedInterpret(2)).blocks[2]!.interpretation!.narrator).toBe(null);
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

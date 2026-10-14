@@ -1245,7 +1245,7 @@ export class WorkspaceService {
     return this.knowledge
       .all()
       .filter((e) => e.kind === "term" && e.status !== "rejected")
-      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, narrator: (e.attrs["role"] ?? []).some((r) => /narrator/i.test(r)), gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
+      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
   }
 
   /** Reads one block: who is named, who is telling it, who says each line. */
@@ -1254,7 +1254,9 @@ export class WorkspaceService {
     const glossary = this.knownNames();
     const candidates = await findCandidateNames(block.text);
     const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
-    block.interpretation = interpretPassage({ passage: block.text, candidates, readings, glossary });
+    // The narrator carries on from the nearest block read before this one.
+    const earlier = this.guided!.blocks.slice(0, index).reverse().find((b) => b.interpretation);
+    block.interpretation = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null });
     if (block.status === "new") block.status = "interpreted";
     this.guided!.current = index;
     this.guidedChanged();
@@ -1275,22 +1277,10 @@ export class WorkspaceService {
     for (const n of interp.names) {
       if (n.english.trim() === "") continue;
       const found = entries.find((e) => e.source === n.source);
-      const isNarrator = interp.narrator === n.source;
       const attrs = { ...(found?.attrs ?? {}) };
-      if (isNarrator) attrs["role"] = ["narrator"];
       if (n.gender) attrs["gender"] = [n.gender];
       const aliases = [...new Set([...(found?.aliases ?? []), ...n.aliases])].filter((a) => a !== n.source);
       this.knowledge.save({ ...(found ? { id: found.id } : {}), kind: "term", source: n.source, target: n.english.trim(), hint: found?.hint ?? "", category: n.kind, aliases, attrs, text: "", about: null });
-    }
-    // Only one narrator: anyone else who was marked as one no longer is.
-    if (interp.narrator) {
-      for (const e of this.knowledge.all().filter((x) => x.kind === "term" && x.source !== interp.narrator && (x.attrs["role"] ?? []).some((r) => /narrator/i.test(r)))) {
-        const rest = (e.attrs["role"] ?? []).filter((r) => !/narrator/i.test(r));
-        const attrs = { ...e.attrs };
-        if (rest.length > 0) attrs["role"] = rest;
-        else delete attrs["role"];
-        this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: e.aliases, attrs, text: "", about: null });
-      }
     }
     this.knowledgeChanged();
   }
