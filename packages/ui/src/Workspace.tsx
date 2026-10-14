@@ -544,7 +544,7 @@ export function Workspace({
               </div>
             ) : block.status === "translated" ? (
               <>
-                <TextArea className="guided-translation" variant="soft" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck />
+                <TextArea className="guided-translation" variant="soft" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck={false} />
                 <Flex gap="2" p="3" className="guided-foot">
                   <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
                     {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
