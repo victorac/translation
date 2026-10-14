@@ -19,7 +19,7 @@ const KIND_LABEL: Record<string, string> = { character: "person", family: "famil
  * One name of the block: a line to read at a glance, which opens to the choices its topic has. What is offered comes from the
  * classes file: the kind of topic, and every attribute that is a choice or a link to another topic. Free text stays in the topic file.
  */
-export function NameRow({ name, classes, topics, focused, onFocus, onOpen, onEnglish, onKind, onAttribute }: { name: GuidedName; classes: ClassInfo[]; topics: TopicRef[]; focused: boolean; onFocus: () => void; onOpen: () => void; onEnglish: (english: string) => void; onKind: (kind: string) => void; onAttribute: (key: string, values: string[]) => void }) {
+export function NameRow({ name, classes, topics, focused, onFocus, onAccept, onOpen, onEnglish, onKind, onAttribute }: { name: GuidedName; classes: ClassInfo[]; topics: TopicRef[]; focused: boolean; onFocus: () => void; onAccept: () => void; onOpen: () => void; onEnglish: (english: string) => void; onKind: (kind: string) => void; onAttribute: (key: string, values: string[]) => void }) {
   const [open, setOpen] = useState(false);
   const [english, setEnglish] = useState(name.english);
   // The glossary may change the English name from elsewhere (the topic file); the box follows it unless it is being typed in.
@@ -57,11 +57,6 @@ export function NameRow({ name, classes, topics, focused, onFocus, onOpen, onEng
             }
           }}
         />
-        {!name.known && (
-          <span className="check-mark" title="Suggested by the app: not accepted yet. Changing anything here accepts it.">
-            ?
-          </span>
-        )}
         <select className="kind-select" aria-label={`Kind of ${name.source}`} title="What kind of topic this is" value={name.kind} onChange={(e) => onKind(e.target.value)}>
           {classes.length === 0 && <option value={name.kind}>{KIND_LABEL[name.kind] ?? name.kind}</option>}
           {classes.map((c) => (
@@ -70,6 +65,11 @@ export function NameRow({ name, classes, topics, focused, onFocus, onOpen, onEng
             </option>
           ))}
         </select>
+        {!name.known && (
+          <button className="accept-btn" onClick={onAccept} aria-label={`Accept ${name.source}`} title="Accept this word as it is">
+            ✓
+          </button>
+        )}
       </div>
       {open && (
         <div className="name-attrs">

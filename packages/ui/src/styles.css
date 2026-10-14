@@ -481,3 +481,13 @@ button.toggle .tag { margin-left: 0.35rem; }
 .source-find-word { font-weight: 600; }
 .source-text mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 3px; }
 .source-text mark.current { background: color-mix(in srgb, var(--accent) 55%, transparent); outline: 2px solid var(--accent); }
+
+.project-name { background: transparent; border-color: transparent; padding: 0.2rem 0.4rem; }
+.project-name:hover { background: var(--sunken); border-color: var(--border); }
+.project-name-input { font-weight: 600; width: 14rem; }
+button.primary.pressed { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-text) 55%, transparent); }
+.accept-btn { flex: none; padding: 0.15rem 0.4rem; color: var(--ok); border-color: var(--ok); background: transparent; font-weight: 700; }
+.accept-btn:hover { background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.glossary-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.guided-lines .line-text { text-align: left; background: transparent; border-color: transparent; padding: 0.2rem 0.35rem; }
+.guided-lines .line-text:hover, .guided-lines .line-text.focused { background: var(--accent-soft); border-color: var(--accent); }

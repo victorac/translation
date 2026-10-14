@@ -34,18 +34,12 @@ import {
   resolveName,
   titleOf,
   entriesFromText,
-  entriesToConsider,
   fitMaterial,
   knowledgeCap,
   knowledgeReserve,
   parseKnowledge,
-  parseResearchReply,
-  researchBatches,
-  researchSystemPrompt,
-  researchUserMessage,
   sha256Hex,
   splitEntries,
-  updateRecord,
   blockSettingsHash,
   BLOCK_SIZES,
   chunkSource,
@@ -89,9 +83,6 @@ import {
   type ProjectVersion,
   type ProjectView,
   type PromptPreset,
-  type ResearchInput,
-  type ResearchRecord,
-  type ResearchResult,
   type SourceRevision,
   type SplitPreview,
   type StartJobInput,
@@ -732,7 +723,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes: string }; guided: GuidedState | null } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; classes: string }; guided: GuidedState | null } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -744,13 +735,13 @@ export class WorkspaceService {
       })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
-      knowledge: { entries: this.knowledge.everything(), research: Object.fromEntries(this.research), classes: this.classesText },
+      knowledge: { entries: this.knowledge.everything(), classes: this.classesText },
       guided: this.guided ? structuredClone(this.guided) : null,
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined; classes?: string | undefined } | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined } | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -770,7 +761,6 @@ export class WorkspaceService {
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
     this.guided = project.guided ? structuredClone(project.guided) : null;
-    this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
     this.classesText = project.knowledge?.classes === undefined || isOldDefaultClasses(project.knowledge.classes) ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
@@ -801,7 +791,6 @@ export class WorkspaceService {
     this.guided = null;
     this.knowledge.load([]);
     this.classesText = DEFAULT_CLASSES_TEXT;
-    this.research.clear();
     this.epoch++;
     this.jobIds = [];
     this.waitingInfo.clear();
@@ -1621,66 +1610,15 @@ export class WorkspaceService {
 
   // ---- choosing the background for each block ----
 
-  /** What has been decided about each passage, by the passage's hash. Saved with the project. */
-  private research = new Map<string, ResearchRecord>();
-
-  /** The background chosen for a block, or undefined if no one has looked through the knowledge for it (a backup is used then). */
+  /** The background that goes with a block: the knowledge that applies to its text. */
   private materialFor(blockText: string, documentId: string | null): BlockMaterial | undefined {
     const hash = sha256Hex(blockText);
-    return blockMaterial(this.knowledge.all(), this.research.get(hash)?.ids ?? null, hash, documentId) ?? undefined;
+    return blockMaterial(this.knowledge.all(), null, hash, documentId) ?? undefined;
   }
 
   /** Which document a version of the text belongs to. */
   private documentOfRevision(revisionId: string): string | null {
     return this.docs.find((d) => d.versions.some((v) => v.revision.id === revisionId))?.id ?? null;
-  }
-
-  /**
-   * A model reads one block and the project's knowledge and chooses which entries matter for translating it.
-   * Only entries that are new or changed since the last time are looked at, so asking again is cheap.
-   */
-  async researchBlock(input: ResearchInput): Promise<ResearchResult> {
-    const abort = this.beginSideRequest();
-    try {
-      const entries = this.knowledge.all();
-      const key = sha256Hex(input.passage);
-      const record = this.research.get(key);
-      const pending = entriesToConsider(entries, record);
-      if (entries.length === 0 || pending.length === 0) {
-        if (entries.length > 0 && !record) this.research.set(key, updateRecord(undefined, entries, [], [], new Date().toISOString()));
-        return { asked: false, chosen: record?.ids.length ?? 0, canceled: false };
-      }
-      const system = researchSystemPrompt(input.sourceLanguage, input.targetLanguage);
-      const replyTokens = Math.min(input.maxOutputTokens, 256); // the reply is only a list of numbers
-      const room = input.contextLimit - estimateTokens(system) - estimateTokens(input.passage) - replyTokens - DEFAULTS.messageOverheadTokens - 40;
-      if (room < 60) throw new UserError("context_overflow", `This block and the knowledge base do not fit the context of ${input.modelId}, which is set to ${input.contextLimit}. Raise the context size for this model (in its settings), or use smaller blocks.`);
-      const chosen: string[] = [];
-      for (const batch of researchBatches(pending, room)) {
-        const reply = await this.askModel(
-          {
-            backend: input.backend,
-            modelId: input.modelId,
-            maxOutputTokens: replyTokens,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: researchUserMessage(input.passage, batch) },
-            ],
-            // The practice translator has no judgement: it picks names that appear in the text, and every note.
-            practiceReply: () => batch.map((e, i) => (e.kind === "note" || input.passage.includes(e.source) ? i + 1 : 0)).filter(Boolean).join(", ") || "NONE",
-          },
-          abort,
-        );
-        if (reply === null) return { asked: true, chosen: 0, canceled: true };
-        for (const i of parseResearchReply(reply, batch.length)) chosen.push(batch[i]!.id);
-      }
-      const next = updateRecord(record, entries, pending, chosen, new Date().toISOString());
-      this.research.set(key, next);
-      this.refreshOutdated();
-      this.notify("state");
-      return { asked: true, chosen: next.ids.length, canceled: false };
-    } finally {
-      this.analysisAbort = null;
-    }
   }
 
   cancelAnalysis(): { canceled: boolean } {

@@ -1,6 +1,5 @@
 import type { GuidedState } from "./guided.js";
 import type { KnowledgeEntry } from "./entries.js";
-import type { ResearchRecord } from "./research.js";
 import { z } from "zod";
 import type { BlockSize } from "./defaults.js";
 import type { Backend } from "./ipc.js";
@@ -64,7 +63,7 @@ export interface ProjectFile {
   providerLabel?: string;
   settings?: ProjectSettings;
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
-  knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord>; classes?: string };
+  knowledge?: { entries: KnowledgeEntry[]; classes?: string };
   /** The blocks of the step-by-step translation, with what was confirmed and translated so far. */
   guided?: GuidedState;
   activeDocumentId: string;
@@ -434,7 +433,7 @@ export function buildProjectFile(input: {
   version: number;
   providerLabel?: string;
   settings?: ProjectSettings | null;
-  knowledge?: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes?: string | undefined };
+  knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined };
   guided?: GuidedState | null;
   activeDocumentId: string;
   documents: ProjectDocument[];
@@ -445,7 +444,7 @@ export function buildProjectFile(input: {
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
     ...(input.settings ? { settings: input.settings } : {}),
-    ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(Object.keys(input.knowledge.research).length > 0 ? { research: input.knowledge.research } : {}), ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
+    ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
     ...(input.guided ? { guided: input.guided } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,

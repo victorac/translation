@@ -117,46 +117,10 @@ export function App() {
     setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
     snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
 
-  // Before translating, the researcher model chooses the background for each block.
-  const researcher = setup.models.find((m) => m.name === setup.researcher) ?? setup.models[0] ?? null;
-  const [work, setWork] = useState<{ what: "choose"; at: number; of: number } | null>(null);
-  const [workNote, setWorkNote] = useState<string | null>(null);
-  const stopWork = useRef(false);
   const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
-  const blockTexts = split.preview?.blocks.map((b) => b.text) ?? [];
-
-  /** Before translating, the researcher chooses what matters for each block. Returns false if the user stopped it. */
-  const prepare = async (): Promise<boolean> => {
-    const s = setupRef.current;
-    if (!researcher || blockTexts.length === 0 || known === 0) return true;
-    stopWork.current = false;
-    setWorkNote(null);
-    try {
-      for (let i = 0; i < blockTexts.length; i++) {
-        setWork({ what: "choose", at: i + 1, of: blockTexts.length });
-        const r = await api.invoke("research.block", {
-          backend: s.backend,
-          modelId: researcher.name,
-          contextLimit: researcher.contextLimit,
-          maxOutputTokens: researcher.maxOutputTokens,
-          sourceLanguage: s.sourceLanguage,
-          targetLanguage: s.targetLanguage,
-          passage: blockTexts[i]!,
-        });
-        if (stopWork.current || (r.ok && r.value.canceled)) return false;
-        if (!r.ok) {
-          setWorkNote(`Could not choose the background for every block: ${r.error.message} The remaining blocks use name matching as a backup.`);
-          return true;
-        }
-      }
-      return true;
-    } finally {
-      setWork(null);
-    }
-  };
 
   const run = async (rerun: string[] = []) => {
-    if (busy || work || (rerun.length === 0 && !canRun)) return;
+    if (busy || (rerun.length === 0 && !canRun)) return;
     let labels = rerun;
     if (labels.length === 0 && !needsRun) {
       // Nothing is missing, but the user asked: translate everything again rather than refusing.
@@ -164,7 +128,6 @@ export function App() {
       labels = setupRef.current.models.map((m) => labelOf(m, setupRef.current));
     }
     setMode(null);
-    if (!(await prepare())) return;
     await send("job.start", toStartInput(setupRef.current, labels));
   };
 
@@ -222,7 +185,6 @@ export function App() {
           },
         }}
         guided={{ open: guidedOpen, onToggle: () => setGuidedOpen((o) => !o) }}
-        researcher={{ models: setup.models.map((m) => m.name), value: researcher?.name ?? null, onChange: (name) => setSetup((x) => ({ ...x, researcher: name })) }}
       />
 
       {project?.recovery && (
@@ -332,28 +294,6 @@ export function App() {
         />
 
         <main className="center">
-          {work && (
-            <div className="strip">
-              <span>{`Choosing the background, block ${work.at} of ${work.of}…`}</span>
-              <button
-                className="small"
-                onClick={() => {
-                  stopWork.current = true;
-                  void api.invoke("notes.cancel");
-                }}
-              >
-                Stop
-              </button>
-            </div>
-          )}
-          {workNote && (
-            <div className="strip">
-              <span>{workNote}</span>
-              <button className="small" onClick={() => setWorkNote(null)}>
-                Dismiss
-              </button>
-            </div>
-          )}
           {snap && hasVersion && !viewingLatest && (
             <div className="strip">
               <span>Looking at an earlier version of the text.</span>

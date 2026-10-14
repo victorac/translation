@@ -42,6 +42,8 @@ export interface ProjectServiceOptions {
 }
 
 interface Meta {
+  /** The name the user gave the project. Without one, the name is the file's. */
+  title: string | null;
   id: string | null;
   createdAt: string | null;
   path: string | null;
@@ -79,7 +81,7 @@ const stripExtension = (name: string): string => (name.endsWith(PROJECT_EXTENSIO
  */
 export class ProjectService {
   readonly workspace: WorkspaceService;
-  private meta: Meta = { id: null, createdAt: null, path: null, lastSavedAt: null };
+  private meta: Meta = { title: null, id: null, createdAt: null, path: null, lastSavedAt: null };
   private changes = 0;
   private savedChanges = 0;
   private pending: PendingRecovery | null = null;
@@ -122,7 +124,7 @@ export class ProjectService {
   view(): ProjectView {
     const p = this.pending;
     return {
-      title: this.meta.path ? stripExtension(basename(this.meta.path)) : "Untitled",
+      title: this.meta.title ?? (this.meta.path ? stripExtension(basename(this.meta.path)) : "Untitled"),
       path: this.meta.path,
       dirty: this.isDirty(),
       lastSavedAt: this.meta.lastSavedAt,
@@ -215,10 +217,19 @@ export class ProjectService {
   }
 
   /** Start with an empty workspace. The caller has already asked about unsaved changes. */
+  /** Gives the project a name of its own. An empty name goes back to the file's name. */
+  rename(title: string): void {
+    const clean = title.trim().slice(0, 120);
+    this.meta.title = clean === "" ? null : clean;
+    this.changes++;
+    this.scheduleAutosave("state");
+    this.emit();
+  }
+
   newProject(): void {
     this.requireIdle();
     this.workspace.reset();
-    this.meta = { id: null, createdAt: null, path: null, lastSavedAt: null };
+    this.meta = { title: null, id: null, createdAt: null, path: null, lastSavedAt: null };
     this.changes = 0;
     this.savedChanges = 0;
     this.notice = null;
@@ -319,7 +330,9 @@ export class ProjectService {
       ...(file.guided ? { guided: file.guided } : {}),
       documents: file.documents.map((d) => ({ ...d, versions: d.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })) })),
     });
-    this.meta = { id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };
+    // A name that is only the file's name (or the word Untitled) is not a name the user gave, so renaming the file renames the project.
+    const own = !file.project.title || file.project.title === "Untitled" || (path !== null && file.project.title === stripExtension(basename(path))) ? null : file.project.title;
+    this.meta = { title: own, id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };
     this.changes = 1;
     this.savedChanges = 1;
     this.openProblem = null;

@@ -11,6 +11,7 @@ interface Saved {
   mode: LayoutMode;
   tree: PaneNode | null;
   linked: boolean;
+  /** Whether the knowledge base pane is showing. It starts hidden every time the app opens. */
   showKnowledge: boolean;
 }
 
@@ -25,9 +26,9 @@ function loadColumns(): ColumnLayout {
 function loadPanes(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(PANES_KEY) ?? "null") as Partial<Saved> | null;
-    return raw ? { mode: raw.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw.tree), linked: raw.linked !== false, showKnowledge: raw.showKnowledge === true } : { mode: "panes", tree: null, linked: true, showKnowledge: true };
+    return raw ? { mode: raw.mode === "panes" ? "panes" : "aligned", tree: parseTree(raw.tree), linked: raw.linked !== false, showKnowledge: false } : { mode: "panes", tree: null, linked: true, showKnowledge: false };
   } catch {
-    return { mode: "panes", tree: null, linked: true, showKnowledge: true };
+    return { mode: "panes", tree: null, linked: true, showKnowledge: false };
   }
 }
 

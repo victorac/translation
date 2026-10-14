@@ -37,6 +37,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const [topic, setTopic] = useState<{ id: string; n: number } | null>(null);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [focus, setFocus] = useState<string | null>(null);
+  const [lineFocus, setLineFocus] = useState<number | null>(null);
   const [hit, setHit] = useState(0);
   const [filter, setFilter] = useState("");
   const sourceBox = useRef<HTMLDivElement>(null);
@@ -113,18 +114,41 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
 
   // The word being looked at: where it stands in the block, for the source pane.
   const focused = base?.names.find((n) => n.source === focus) ?? null;
-  const hits = focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  // Where each line of speech stands in the text, in order.
+  const lineRanges = (() => {
+    let at = 0;
+    return (base?.lines ?? []).map((l) => {
+      const i = (block?.text ?? "").indexOf(l.text, at);
+      if (i < 0) return null;
+      at = i + l.text.length;
+      return { start: i, end: at };
+    });
+  })();
+  const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
+  const hits = lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
+  const looking = lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   useEffect(() => {
     sourceBox.current?.querySelector("mark.current")?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focus, current, state?.current]);
+  }, [focus, lineFocus, current, state?.current]);
   useEffect(() => {
     setFocus(null);
+    setLineFocus(null);
     setHit(0);
   }, [state?.current]);
   const look = (source: string) => {
+    setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
     setHit(0);
+  };
+  const lookAtLine = (i: number) => {
+    setFocus(null);
+    setLineFocus((f) => (f === i ? null : i));
+    setHit(0);
+  };
+  const stopLooking = () => {
+    setFocus(null);
+    setLineFocus(null);
   };
 
   // The words of this block's glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
@@ -141,6 +165,16 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const choose = async (narrator: string | null, who: (string | null)[], fill: boolean) => {
     if (!block || !base) return;
     const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: who, fill }));
+    if (s) setState(s);
+  };
+
+  /** Accepts glossary words as they are: the topic, with the choices the app made for it. */
+  const accept = async (names: GuidedName[]) => {
+    const ids = names.filter((n) => !n.known && n.id).map((n) => n.id!);
+    if (ids.length === 0) return;
+    const r = await call(() => api.invoke("knowledge.confirm", { ids }));
+    if (r === null) return;
+    const s = await call(() => api.invoke("guided.get"));
     if (s) setState(s);
   };
 
@@ -280,10 +314,10 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
         <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
           <section className="guided-pane">
             <h3>Source</h3>
-            {focused && (
+            {looking !== null && (
               <div className="source-find">
-                <span className="source-find-word">{focused.source}</span>
-                <span className="hint">{hits.length === 0 ? "does not stand on its own here" : `${current + 1} of ${hits.length}`}</span>
+                <span className="source-find-word">{looking}</span>
+                <span className="hint">{hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}</span>
                 <span className="row">
                   <button className="small" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
                     ↑
@@ -291,7 +325,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                   <button className="small" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
                     ↓
                   </button>
-                  <button className="small" onClick={() => setFocus(null)} aria-label="Stop looking">
+                  <button className="small" onClick={stopLooking} aria-label="Stop looking">
                     ×
                   </button>
                 </span>
@@ -345,8 +379,15 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                   </label>
                   {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
 
-                  <h4>
-                    Glossary in this block <span className="hint">{base.names.length}</span>
+                  <h4 className="glossary-heading">
+                    <span>
+                      Glossary in this block <span className="hint">{base.names.length}</span>
+                    </span>
+                    {base.names.some((n) => !n.known) && (
+                      <button className="small" onClick={() => void accept(base.names)} title="Accept every word of this block as it is">
+                        Accept all ({base.names.filter((n) => !n.known).length})
+                      </button>
+                    )}
                   </h4>
                   {base.names.length === 0 && <p className="hint guided-hint">Nothing from the glossary found in this block. Add a word from the text below.</p>}
                   {base.names.length > 0 && <input className="glossary-search" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)} />}
@@ -365,6 +406,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                             topics={topics}
                             focused={focus === n.source}
                             onFocus={() => look(n.source)}
+                            onAccept={() => void accept([n])}
                             onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
                             onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
                             onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
@@ -392,9 +434,9 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                   <ul className="guided-lines">
                     {base.lines.map((l, i) => (
                       <li key={i}>
-                        <span className="line-text" title={l.text}>
+                        <button className={lineFocus === i ? "line-text focused" : "line-text"} onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title="Show where it is in the text">
                           {Array.from(l.text).length > 22 ? `${Array.from(l.text).slice(0, 22).join("")}…` : l.text}
-                        </span>
+                        </button>
                         <select aria-label={`Speaker of line ${i + 1}`} value={l.speaker ?? ""} onChange={(e) => void choose(base.narrator, speakers.map((s, n) => (n === i ? (e.target.value === "" ? null : e.target.value) : s)), false)}>
                           <option value="">not known</option>
                           {people.map((p) => (

@@ -62,6 +62,26 @@ const runWholeJob = async (p: ProjectService, input = job()) => {
 const cellsOf = (s: WorkspaceSnapshot) => s.runs.flatMap((r) => Object.values(r.blocks));
 
 describe("saving and reopening", () => {
+  it("lets the user name the project, keeps that name when it is saved and reopened, and otherwise follows the file's name", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await runWholeJob(a);
+    expect(a.view().title).toBe("Untitled");
+    a.rename("  My story  ");
+    expect(a.view()).toMatchObject({ title: "My story", dirty: true });
+    answers.save = join(dir, "file-name");
+    await a.save(false);
+    expect(a.view()).toMatchObject({ title: "My story", dirty: false });
+
+    const b = make({ recoveryPath: join(dir, "other-recovery.json") });
+    answers.open = join(dir, "file-name.ltw.json");
+    await b.open(false);
+    expect(b.view().title).toBe("My story");
+    // An empty name goes back to the file's name.
+    b.rename("   ");
+    expect(b.view().title).toBe("file-name");
+  });
+
   it("saves a finished translation and reopens it exactly as it was", async () => {
     const { dir, answers, make } = env();
     const a = make();
@@ -789,8 +809,6 @@ describe("names, hints and notes in saved projects", () => {
     a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "He speaks formally.", about: king.id, category: "term" as const, aliases: [] });
     // A note that is about nothing has nowhere to live, and is dropped when the project is opened.
     a.workspace.knowledgeSave({ kind: "note", source: "", target: "", hint: "", text: "A loose note.", about: null, category: "term" as const, aliases: [] });
-    await a.workspace.researchBlock({ backend: "practice", modelId: "x", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage: "魔王が来た。" });
-    expect(Object.keys(a.workspace.exportProject().knowledge.research)).toHaveLength(1);
     answers.save = join(dir, "kb.ltw.json");
     await a.save(false);
 
@@ -799,7 +817,6 @@ describe("names, hints and notes in saved projects", () => {
     await b.open(false);
     expect(b.workspace.knowledgeList({}).entries).toMatchObject([{ source: "魔王", hint: "villain" }, { text: "He speaks formally." }]);
     expect(b.workspace.snapshot().knowledge).toMatchObject({ terms: 1, notes: 1 });
-    expect(b.workspace.exportProject().knowledge.research).toEqual(a.workspace.exportProject().knowledge.research);
 
     // An older project kept them in its settings.
     const old = JSON.parse(readFileSync(join(dir, "kb.ltw.json"), "utf8"));

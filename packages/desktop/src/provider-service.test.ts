@@ -347,53 +347,6 @@ describe("storage", () => {
   });
 });
 
-describe("choosing the background for each block", () => {
-  const ask = (passage: string, over = {}) => ({ backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, sourceLanguage: "Japanese", targetLanguage: "English", passage, ...over });
-  const save = (service: ReturnType<typeof setup>["service"], source: string, target: string, hint = "") => service.knowledgeSave({ kind: "term", source, target, hint, text: "", about: null, category: "term" as const, aliases: [] });
-  const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
-
-  it("lets a model choose, so a person who is only implied still reaches the translation", async () => {
-    const lm = await fakeLmStudio({ researchReply: "2" });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    save(service, "魔王", "Demon King");
-    save(service, "勇者", "Hero", "shy, the one being spoken to");
-    const text = "魔王が来た。";
-    const r = await service.researchBlock(ask(text));
-    expect(r).toEqual({ asked: true, chosen: 1, canceled: false });
-    expect(bodies(lm)[0]!.messages[1]!.content).toBe("KNOWN SO FAR:\n1. 魔王 = Demon King\n2. 勇者 = Hero (shy, the one being spoken to)\n\nPASSAGE:\n魔王が来た。");
-
-    service.start(job({ text }));
-    await service.whenIdle();
-    const translation = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(parseUserMessage(translation)!.glossary).toEqual([{ source: "勇者", target: "Hero" }]); // chosen by the model, although 魔王 is in the text
-  });
-
-  it("asks again only about entries that are new or changed, and not at all when nothing changed", async () => {
-    const lm = await fakeLmStudio({ researchReply: "NONE" });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    save(service, "魔王", "Demon King");
-    await service.researchBlock(ask("本文。"));
-    expect((await service.researchBlock(ask("本文。"))).asked).toBe(false);
-    save(service, "勇者", "Hero");
-    expect((await service.researchBlock(ask("本文。"))).asked).toBe(true);
-    const last = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(last).toContain("1. 勇者 = Hero");
-    expect(last).not.toContain("魔王");
-  });
-
-  it("splits a long list over several requests and reports a model that is too small", async () => {
-    const lm = await fakeLmStudio({ researchReply: "1" });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    for (let i = 0; i < 80; i++) save(service, `名${i}`, `Name${i}`, "a fairly long hint so that the list takes room in the request");
-    await service.researchBlock(ask("本文。", { contextLimit: 1400 }));
-    expect(bodies(lm).length).toBeGreaterThan(1);
-    await expect(service.researchBlock(ask("本文。".repeat(300), { contextLimit: 600, maxOutputTokens: 300 }))).rejects.toThrow(/do not fit/);
-  });
-});
-
 describe("topics as files", () => {
   const setupService = () => new WorkspaceService({ speedMs: 0 });
 

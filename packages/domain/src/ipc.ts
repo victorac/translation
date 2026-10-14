@@ -64,25 +64,6 @@ export interface SplitPreview {
   notes: string[];
 }
 
-/** Ask a model which of the project's names, hints and notes matter for one block. */
-export interface ResearchInput {
-  backend: Backend;
-  modelId: string;
-  contextLimit: number;
-  maxOutputTokens: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  passage: string;
-}
-
-export interface ResearchResult {
-  /** False when nothing needed asking (nothing is known yet, or this block was already looked through). */
-  asked: boolean;
-  /** How many entries are now chosen for this block. */
-  chosen: number;
-  canceled: boolean;
-}
-
 /** Which model translates a block in the step-by-step way, and how. */
 export interface GuidedModelInput {
   backend: Backend;
@@ -233,6 +214,7 @@ export interface CommandMap {
   "project.save": { saveAs: boolean };
   "project.open": { useBackup: boolean };
   "project.new": undefined;
+  "project.rename": { title: string };
   "project.restoreRecovery": undefined;
   "project.discardRecovery": undefined;
   "project.dismissProblem": undefined;
@@ -240,7 +222,6 @@ export interface CommandMap {
   "export.write": ExportInput;
   "source.preview": StartJobInput;
   "notes.cancel": undefined;
-  "research.block": ResearchInput;
   "guided.get": undefined;
   "guided.go": { index: number };
   "guided.sync": GuidedStartInput;
@@ -271,11 +252,10 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.translate" | "guided.setTranslation" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.translate" | "guided.setTranslation" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.cancel": { canceled: boolean };
-  "research.block": ResearchResult;
   "guided.get": GuidedState | null;
   "guided.go": GuidedState;
   "guided.sync": GuidedState | null;
@@ -331,6 +311,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "project.save",
   "project.open",
   "project.new",
+  "project.rename",
   "project.restoreRecovery",
   "project.discardRecovery",
   "project.dismissProblem",
@@ -338,7 +319,6 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "export.write",
   "source.preview",
   "notes.cancel",
-  "research.block",
   "guided.get",
   "guided.go",
   "guided.sync",

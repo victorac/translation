@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { WorkspaceSnapshot } from "@ltw/domain";
 import { Menu } from "./Popover";
 import { countCells } from "./status";
@@ -5,7 +6,44 @@ import type { useWorkspace } from "./useWorkspace";
 
 type Send = ReturnType<typeof useWorkspace>["send"];
 
-/** Run, save and export on one slim line. */
+/** The project's name, which becomes a field to rename it when clicked. */
+function ProjectName({ title, path, onRename }: { title: string; path: string | null; onRename: (title: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+  const box = useRef<HTMLInputElement>(null);
+  useEffect(() => setValue(title), [title]);
+  useEffect(() => {
+    if (editing) box.current?.select();
+  }, [editing]);
+  const done = (save: boolean) => {
+    setEditing(false);
+    if (save && value.trim() !== title) onRename(value);
+    else setValue(title);
+  };
+  return editing ? (
+    <input
+      ref={box}
+      className="project-name-input"
+      aria-label="Project name"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => done(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") done(true);
+        if (e.key === "Escape") done(false);
+      }}
+    />
+  ) : (
+    <button className="project-name" title={`${path ?? "Not saved yet"}\nClick to rename`} onClick={() => setEditing(true)}>
+      {title}
+    </button>
+  );
+}
+
+/**
+ * The top line: the project's name on the left; on the right the two ways of translating, the knowledge base, the file menu
+ * (open, save, export) and the settings.
+ */
 export function Toolbar({
   snap,
   send,
@@ -18,13 +56,12 @@ export function Toolbar({
   splitCount,
   onSplit,
   knowledge,
-  researcher,
   guided,
 }: {
   snap: WorkspaceSnapshot | null;
   send: Send;
   canRun: boolean;
-  /** Why Run is unavailable, in a couple of words. */
+  /** Why Translate is unavailable, in a couple of words. */
   runHint: string | null;
   onRun: () => void;
   onSettings: () => void;
@@ -35,9 +72,7 @@ export function Toolbar({
   onSplit: () => void;
   /** The knowledge base pane: whether it is showing, how many entries there are, and how many are waiting to be checked. */
   knowledge: { open: boolean; count: number; suggested: number; onToggle: () => void };
-  /** The model that reads the text for knowledge and chooses the background for each block. */
-  researcher: { models: string[]; value: string | null; onChange: (name: string) => void };
-  /** The step-by-step translation: whether its screen is showing. */
+  /** Deep translate, the block-by-block way: whether its screen is showing. */
   guided: { open: boolean; onToggle: () => void };
 }) {
   const project = snap?.project;
@@ -49,21 +84,14 @@ export function Toolbar({
   return (
     <header className="toolbar">
       <div className="toolbar-left">
-        <span className="project-name" title={project?.path ?? "Not saved yet"}>
-          {project?.title ?? "Untitled"}
-        </span>
+        <ProjectName title={project?.title ?? "Untitled"} path={project?.path ?? null} onRename={(title) => void send("project.rename", { title })} />
         {project?.dirty && (
           <span className="dirty" title="Unsaved changes" role="img" aria-label="Unsaved changes">
             ●
           </span>
         )}
         {snap && snap.versions.length > 1 && (
-          <select
-            aria-label="Version of the text"
-            className="version-select"
-            value={snap.viewingId ?? ""}
-            onChange={(e) => void send("version.view", { versionId: e.target.value })}
-          >
+          <select aria-label="Version of the text" className="version-select" value={snap.viewingId ?? ""} onChange={(e) => void send("version.view", { versionId: e.target.value })}>
             {snap.versions.map((v) => (
               <option key={v.id} value={v.id}>
                 Version {v.number}
@@ -85,54 +113,39 @@ export function Toolbar({
             <span className="progress-fill" style={{ width: `${pct}%` }} />
           </span>
         )}
-        <button className={guided.open ? "toggle on" : "toggle"} aria-pressed={guided.open} onClick={guided.onToggle} title="Translate one block at a time, checking what is read from each block">
-          Step by step
-        </button>
-        <button className={knowledge.open ? "toggle on" : "toggle"} aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
-          Knowledge base
-          {knowledge.count > 0 && <span className="count">{knowledge.count}</span>}
-          {knowledge.suggested > 0 && <span className="tag warn-tag">{knowledge.suggested} to check</span>}
-        </button>
-        <label className="inline-select" title="The model that reads the text for the knowledge base and chooses the background for each block">
-          Researcher
-          <select value={researcher.value ?? ""} onChange={(e) => researcher.onChange(e.target.value)} disabled={researcher.models.length === 0}>
-            {researcher.models.length === 0 && <option value="">No model</option>}
-            {researcher.models.map((n) => (
-              <option key={n}>{n}</option>
-            ))}
-          </select>
-        </label>
         {!busy && runHint && <span className="hint">{runHint}</span>}
+        <button className={guided.open ? "primary pressed" : "primary"} aria-pressed={guided.open} onClick={guided.onToggle} title="Translate one block at a time, checking the words, who is speaking and the result">
+          Deep translate
+        </button>
         {busy ? (
           <button className="danger" onClick={() => void send("job.cancel", { kind: "job" })} title="Stop everything">
             ■ Stop
           </button>
         ) : (
-          <button className="primary" onClick={onRun} disabled={!canRun} title="Run (Ctrl/Cmd + Enter)">
-            ▶ Run
+          <button onClick={onRun} disabled={!canRun} title="Translate the whole text with every model (Ctrl/Cmd + Enter)">
+            Translate
           </button>
         )}
         <span className="sep" />
-        <button onClick={() => confirmDiscard("Opening another project") && void send("project.open", { useBackup: false })} disabled={busy || !!project?.recovery}>
-          Open
-        </button>
-        <button className={project?.dirty ? "emph" : undefined} onClick={() => void send("project.save", { saveAs: false })} disabled={!has} title="Save (Ctrl/Cmd + S)">
-          Save
-        </button>
-        <button onClick={onExport} disabled={!has}>
-          Export
-        </button>
-        <button className="icon-button" onClick={onSettings} aria-label="Settings" title="Settings">
-          ⚙
+        <button className={knowledge.open ? "toggle on" : "toggle"} aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
+          Knowledge base
+          {knowledge.count > 0 && <span className="count">{knowledge.count}</span>}
+          {knowledge.suggested > 0 && <span className="tag warn-tag">{knowledge.suggested} to check</span>}
         </button>
         <Menu
-          label="More"
-          trigger="⋯"
+          label="File"
+          trigger="File ▾"
           items={[
+            { label: "Open…", onSelect: () => confirmDiscard("Opening another project") && void send("project.open", { useBackup: false }), disabled: busy || !!project?.recovery },
+            { label: "Save", onSelect: () => void send("project.save", { saveAs: false }), disabled: !has },
             { label: "Save as…", onSelect: () => void send("project.save", { saveAs: true }), disabled: !has },
+            { label: "Export…", onSelect: onExport, disabled: !has },
             { label: "New project", onSelect: () => confirmDiscard("Starting a new project") && void send("project.new"), disabled: busy, separated: true },
           ]}
         />
+        <button className="icon-button" onClick={onSettings} aria-label="Settings" title="Settings">
+          ⚙
+        </button>
       </div>
     </header>
   );
