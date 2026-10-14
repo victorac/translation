@@ -102,6 +102,7 @@ const schemas: Record<CommandName, z.ZodType> = {
     contextLimit: z.number().int().min(512).max(10_000_000),
     maxOutputTokens: z.number().int().min(16).max(1_000_000),
     temperature: z.number().min(0).max(2),
+    promptId: z.string().max(200).optional(),
     sourceLanguage: z.string().max(100),
     targetLanguage: z.string().max(100),
   }),

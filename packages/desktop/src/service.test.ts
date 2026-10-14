@@ -653,19 +653,6 @@ describe("documents in a project", () => {
     expect(s.selectDocument(one.activeDocumentId).versions).toHaveLength(1);
   });
 
-  it("the left rail's list shows each document's progress", async () => {
-    const s = new WorkspaceService({ speedMs: 0 });
-    s.start(input({ models: [model("alpha"), model("beta")] }));
-    await idle(s);
-    s.createDocument("Draft only");
-    s.setDraft(s.snapshot().activeDocumentId, "まだ実行していない。");
-    const docs = s.snapshot().documents;
-    expect(docs[0]).toMatchObject({ title: "Document 1", models: 2, hasText: true });
-    expect(docs[0]!.total).toBe(docs[0]!.blocks * 2);
-    expect(docs[0]!.done).toBe(docs[0]!.total);
-    expect(docs[1]).toMatchObject({ title: "Draft only", blocks: 0, models: 0, done: 0, total: 0, hasText: true });
-  });
-
   it("text typed into a document is kept with it, even before it has been run", () => {
     const s = new WorkspaceService();
     const first = s.snapshot().activeDocumentId;

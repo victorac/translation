@@ -1,58 +1,52 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeSource } from "@ltw/domain/pure";
+import { useEffect, useRef, useState } from "react";
+import { Button, Callout, Flex, Text } from "@radix-ui/themes";
 import { ExportDialog } from "./ExportDialog";
-import { Guided } from "./Guided";
-import { Grid, type SourceMode } from "./Grid";
-import { Panes } from "./Panes";
-import { useColumnLayout } from "./useColumnLayout";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar } from "./Toolbar";
-import { Tray } from "./Tray";
+import { Workspace } from "./Workspace";
 import { api } from "./api";
-import { labelOf, loadSetup, mergeRunModels, saveSetup, settingsOf, toStartInput, withSettings, type SetupState } from "./setup";
+import { loadSetup, saveSetup, settingsOf, withSettings, type SetupState } from "./setup";
 import { useProvider } from "./useProvider";
-import { useSplitPreview } from "./useSplitPreview";
 import { useWorkspace } from "./useWorkspace";
 
-/** One screen: the text, the models, the translations side by side, and the controls around them. */
+/** A message above the work, with the buttons that answer it. */
+function Banner({ color, children, actions }: { color: "amber" | "red" | "blue"; children: React.ReactNode; actions?: React.ReactNode }) {
+  return (
+    <Callout.Root color={color} size="1" role="alert" mx="3" my="1">
+      <Callout.Text>
+        <Flex align="center" justify="between" gap="3" wrap="wrap">
+          <span>{children}</span>
+          <Flex gap="2">{actions}</Flex>
+        </Flex>
+      </Callout.Text>
+    </Callout.Root>
+  );
+}
+
+/** One screen: the left panel, the workspace (source, what was read, translation), and the settings beside it when open. */
 export function App() {
   const { snapshot: snap, error, clearError, send } = useWorkspace();
   const provider = useProvider();
   const [setup, setSetup] = useState<SetupState>(loadSetup);
   const [tab, setTab] = useState<SettingsTab | null>(null);
-  const [mode, setMode] = useState<SourceMode | null>(null);
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const columns = useColumnLayout();
-  const [trayOpen, setTrayOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [guidedOpen, setGuidedOpen] = useState(false);
+  const [kb, setKb] = useState<{ open: boolean; request: { id: string; n: number } | null }>({ open: false, request: null });
 
   const setupRef = useRef(setup);
   setupRef.current = setup;
   useEffect(() => saveSetup(setup), [setup]);
 
-  // Tell the background process which choices decide how blocks are translated, so Retry and Run use the current ones
-  // and it can mark blocks translated under older choices.
+  // Tell the background process the choices that belong to the project (languages, models, styles), so it keeps them in the file.
   const syncKey = JSON.stringify(settingsOf(setup));
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const s = setupRef.current;
-      void api.invoke("settings.sync", settingsOf(s));
-    }, 250);
+    const timer = setTimeout(() => void api.invoke("settings.sync", settingsOf(setupRef.current)), 250);
     return () => clearTimeout(timer);
   }, [syncKey]);
 
-  const hasVersion = !!snap?.revision;
-  const viewingLatest = !snap || snap.viewingId === snap.latestId;
-  const busy = snap?.busy ?? false;
-  const edited = snap?.latestText != null && normalizeSource(setup.text) !== snap.latestText;
-  const effectiveMode: SourceMode = mode ?? (hasVersion ? "blocks" : "text");
-
   // ---- keep the editor and the choices in step with the project ----
-  // The text belongs to the open document, and the models, glossary and styles to the project.
-  // They are taken from the project when it is opened or started and when another document is opened,
-  // never while typing.
+  // The text belongs to the open document, and the models and styles to the project. They are taken from the project when it is
+  // opened or started and when another document is opened, never while typing.
   const seen = useRef<{ epoch: number; doc: string }>({ epoch: -1, doc: "" });
   useEffect(() => {
     if (!snap) return;
@@ -63,7 +57,6 @@ export function App() {
     const cur = setupRef.current;
     const base = epochChanged && snap.settings ? withSettings(cur, snap.settings) : cur;
     setSetup({ ...base, text: snap.draftText });
-    setMode(null);
   }, [snap?.epoch, snap?.activeDocumentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Text typed into the editor is sent to the open document shortly after typing stops (and before switching documents).
@@ -84,63 +77,13 @@ export function App() {
     textTimer.current = setTimeout(() => void flushText(), 400);
   };
 
-  // Runs that exist (for example one just brought back) always have a model entry.
-  const runKey = snap ? snap.runs.map((r) => r.label).join("\u0000") : "";
-  useEffect(() => {
-    if (!snap || snap.viewingId !== snap.latestId) return;
-    const cur = setupRef.current;
-    const merged = mergeRunModels(cur, snap.runs);
-    if (merged !== cur.models) setSetup({ ...cur, models: merged });
-  }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ---- what Run would do, and why it might not ----
-  const startInput = useMemo(() => toStartInput(setup), [setup]);
-  const split = useSplitPreview(startInput);
-  const splitProblem = split.preview ? (split.preview.problem ?? split.preview.issues[0] ?? null) : null;
-  const runHint =
-    setup.text.trim() === ""
-      ? "No text"
-      : setup.models.length === 0
-        ? "No model"
-        : splitProblem
-          ? "Doesn't fit"
-          : setup.backend === "provider" && provider.view?.problem
-            ? "Server problem"
-            : null;
-  const canRun = runHint === null && !busy;
-
-  // Is there anything for Run to do? New text, a model not run yet, unfinished blocks, or blocks translated with older settings.
-  const needsRun =
-    !snap?.revision ||
-    edited ||
-    !viewingLatest ||
-    setup.models.some((m) => !snap.runs.some((r) => r.label === labelOf(m, setup))) ||
-    snap.runs.some((r) => r.unfinished > 0 || r.outdated > 0);
-
-  const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
-
-  const run = async (rerun: string[] = []) => {
-    if (busy || (rerun.length === 0 && !canRun)) return;
-    let labels = rerun;
-    if (labels.length === 0 && !needsRun) {
-      // Nothing is missing, but the user asked: translate everything again rather than refusing.
-      if (!window.confirm("Everything is already translated with the current settings. Translate it all again?")) return;
-      labels = setupRef.current.models.map((m) => labelOf(m, setupRef.current));
-    }
-    setMode(null);
-    await send("job.start", toStartInput(setupRef.current, labels));
-  };
-
   // ---- shortcuts ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === "Enter") {
+      if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void run();
-      } else if (mod && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        if (snap?.revision) void send("project.save", { saveAs: e.shiftKey });
+        void send("project.save", { saveAs: e.shiftKey });
       } else if (mod && e.key === ",") {
         e.preventDefault();
         setTab((t) => (t ? null : "server"));
@@ -156,7 +99,7 @@ export function App() {
 
   const confirmDiscard = (what: string): boolean => !snap?.project.dirty || window.confirm(`This project has unsaved changes. ${what} will discard them. Continue?`);
   const project = snap?.project;
-  const visibleRuns = (snap?.runs ?? []).filter((r) => !hidden.has(r.label));
+  const known = (snap?.knowledge.terms ?? 0) + (snap?.knowledge.notes ?? 0);
   // Embedding models cannot translate; leave them out of the suggestions (they can still be typed in).
   const discovered = provider.test?.ok ? provider.test.models.filter((id) => !/embed/i.test(id)) : [];
 
@@ -165,98 +108,71 @@ export function App() {
       <Toolbar
         snap={snap}
         send={send}
-        canRun={canRun}
-        runHint={runHint}
-        onRun={() => void run()}
         onSettings={() => setTab((t) => (t ? null : "server"))}
         onExport={() => setExporting(true)}
         confirmDiscard={confirmDiscard}
-        splitCount={split.preview && split.preview.blocks.length > 0 ? split.preview.blocks.length : null}
-        onSplit={() => setTab("text")}
-        knowledge={{
-          open: columns.mode === "panes" && columns.showKnowledge,
-          count: known,
-          suggested: snap?.knowledge.suggested ?? 0,
-          onToggle: () => {
-            if (columns.mode !== "panes") {
-              columns.setMode("panes");
-              columns.setShowKnowledge(true);
-            } else columns.setShowKnowledge(!columns.showKnowledge);
-          },
-        }}
-        guided={{ open: guidedOpen, onToggle: () => setGuidedOpen((o) => !o) }}
+        knowledge={{ open: kb.open, count: known, suggested: snap?.knowledge.suggested ?? 0, onToggle: () => setKb((k) => ({ open: !k.open, request: null })) }}
       />
 
       {project?.recovery && (
-        <div className="banner warn" role="alert">
-          <span>
-            Unsaved work from last time ({project.recovery.blocks} blocks, {project.recovery.models} model{project.recovery.models === 1 ? "" : "s"}).
-          </span>
-          <span className="row">
-            <button className="small primary" onClick={() => void send("project.restoreRecovery")}>
-              Restore
-            </button>
-            <button className="small" onClick={() => window.confirm("Discard the recovered work? This cannot be undone.") && void send("project.discardRecovery")}>
-              Discard
-            </button>
-          </span>
-        </div>
+        <Banner
+          color="amber"
+          actions={
+            <>
+              <Button size="1" onClick={() => void send("project.restoreRecovery")}>
+                Restore
+              </Button>
+              <Button size="1" variant="soft" color="gray" onClick={() => window.confirm("Discard the recovered work? This cannot be undone.") && void send("project.discardRecovery")}>
+                Discard
+              </Button>
+            </>
+          }
+        >
+          Unsaved work from last time ({project.recovery.blocks} blocks, {project.recovery.documents} {project.recovery.documents === 1 ? "document" : "documents"}).
+        </Banner>
       )}
       {project?.openProblem && (
-        <div className="banner err" role="alert">
-          <span>{project.openProblem.message}</span>
-          <span className="row">
-            {project.openProblem.canOpenBackup && (
-              <button className="small primary" onClick={() => void send("project.open", { useBackup: true })}>
-                Open previous copy
-              </button>
-            )}
-            <button className="small" onClick={() => void send("project.dismissProblem")}>
-              Dismiss
-            </button>
-          </span>
-        </div>
+        <Banner
+          color="red"
+          actions={
+            <>
+              {project.openProblem.canOpenBackup && (
+                <Button size="1" onClick={() => void send("project.open", { useBackup: true })}>
+                  Open previous copy
+                </Button>
+              )}
+              <Button size="1" variant="soft" color="gray" onClick={() => void send("project.dismissProblem")}>
+                Dismiss
+              </Button>
+            </>
+          }
+        >
+          {project.openProblem.message}
+        </Banner>
       )}
       {project?.notice && !project.openProblem && (
-        <div className="banner info" role="status">
-          <span>{project.notice}</span>
-          <button className="small" onClick={() => void send("project.dismissProblem")}>
-            Dismiss
-          </button>
-        </div>
+        <Banner
+          color="blue"
+          actions={
+            <Button size="1" variant="soft" color="gray" onClick={() => void send("project.dismissProblem")}>
+              Dismiss
+            </Button>
+          }
+        >
+          {project.notice}
+        </Banner>
       )}
       {error && (
-        <div className="banner err" role="alert">
-          <span>{error}</span>
-          <button className="small" onClick={clearError}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      {snap?.waiting && (
-        <div className="banner warn" role="alert">
-          <span>
-            <strong>{snap.waiting.label}</strong> is waiting: {snap.waiting.message}
-          </span>
-          <span className="row">
-            {snap.backend === "practice" && snap.waiting.code === "model_unavailable" && snap.demoModelUnloaded && (
-              <button className="small" onClick={() => void send("demo.loadModel")}>
-                Load model
-              </button>
-            )}
-            <button className="small primary" onClick={() => void send("run.resolveWaiting", { runId: snap.waiting!.runId, resolution: "retry" })}>
-              Retry
-            </button>
-            <button className="small" onClick={() => void send("run.resolveWaiting", { runId: snap.waiting!.runId, resolution: "skip" })}>
-              Skip
-            </button>
-          </span>
-        </div>
-      )}
-      {snap?.job?.stopReason && (
-        <div className="banner err" role="alert">
-          Stopped: {snap.job.stopReason}
-        </div>
+        <Banner
+          color="red"
+          actions={
+            <Button size="1" variant="soft" color="gray" onClick={clearError}>
+              Dismiss
+            </Button>
+          }
+        >
+          {error}
+        </Banner>
       )}
 
       <div className="body">
@@ -264,19 +180,7 @@ export function App() {
           snap={snap}
           setup={setup}
           onSetup={setSetup}
-          send={send}
-          hidden={hidden}
-          onToggleHidden={(label) =>
-            setHidden((h) => {
-              const next = new Set(h);
-              if (!next.delete(label)) next.add(label);
-              return next;
-            })
-          }
-          layoutControl={{ mode: columns.mode, linked: columns.linked, onMode: columns.setMode, onLinked: columns.setLinked, showKnowledge: columns.showKnowledge, onShowKnowledge: columns.setShowKnowledge, onReset: columns.reset }}
           discovered={discovered}
-          viewingLatest={viewingLatest}
-          onRunAgain={(label) => void run([label])}
           provider={provider}
           onSettings={() => setTab("server")}
           docs={{
@@ -294,77 +198,29 @@ export function App() {
         />
 
         <main className="center">
-          {snap && hasVersion && !viewingLatest && (
-            <div className="strip">
-              <span>Looking at an earlier version of the text.</span>
-              <button className="small" onClick={() => void send("version.view", { versionId: snap.latestId! })}>
-                Back to latest
-              </button>
-            </div>
-          )}
-          {snap && hasVersion && viewingLatest && edited && (
-            <div className="strip">
-              <span>Text edited. The translations below are from the previous text.</span>
-              <button className="small primary" onClick={() => void run()} disabled={!canRun}>
-                Run
-              </button>
-            </div>
-          )}
-          {snap && guidedOpen ? (
-            <Guided setup={setup} documentId={snap.activeDocumentId} knowledgeRev={snap.knowledge.rev} knowledgeCounts={snap.knowledge} />
-          ) : snap ? (
-            columns.mode === "panes" ? (
-              <Panes
-                snap={snap}
-                text={setup.text}
-                onText={onText}
-                title={snap.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Source"}
-                previewBlocks={split.preview?.blocks ?? null}
-                editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
-                mode={effectiveMode}
-                onMode={setMode}
-                runs={visibleRuns}
-                send={send}
-                edited={edited && viewingLatest}
-                readOnlyOld={!viewingLatest}
-                tree={columns.tree}
-                onTree={columns.setTree}
-                onHide={(label) => setHidden((h) => new Set(h).add(label))}
-                linked={columns.linked}
-                showKnowledge={columns.showKnowledge}
-                onCloseKnowledge={() => columns.setShowKnowledge(false)}
-                knowledgeRev={snap.knowledge.rev}
-                knowledgeCounts={snap.knowledge}
-              />
-            ) : (
-            <Grid
-              snap={snap}
+          {snap ? (
+            <Workspace
+              setup={setup}
+              documentId={snap.activeDocumentId}
               text={setup.text}
               onText={onText}
-              title={snap.documents.find((d) => d.id === snap.activeDocumentId)?.title ?? "Source"}
-              previewBlocks={split.preview?.blocks ?? null}
               editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
-              mode={effectiveMode}
-              onMode={setMode}
-              runs={visibleRuns}
-              layout={columns.layout}
-              onLayout={columns.setLayout}
-              onHide={(label) => setHidden((h) => new Set(h).add(label))}
-              send={send}
-              edited={edited && viewingLatest}
-              readOnlyOld={!viewingLatest}
+              knowledgeRev={snap.knowledge.rev}
+              knowledgeCounts={snap.knowledge}
+              kb={kb}
+              onKb={setKb}
             />
-            )
           ) : (
-            <p className="hint pad">Loading…</p>
+            <Text as="p" size="2" color="gray" m="4">
+              Loading…
+            </Text>
           )}
-          {snap && hasVersion && <Tray snap={snap} open={trayOpen} onToggle={() => setTrayOpen((o) => !o)} send={send} />}
         </main>
 
-        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} split={split} />}
+        {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} />}
       </div>
 
-      {exporting && snap?.revision && <ExportDialog snap={snap} onClose={() => setExporting(false)} />}
+      {exporting && <ExportDialog title={project?.title ?? "translation"} onClose={() => setExporting(false)} />}
     </div>
   );
 }

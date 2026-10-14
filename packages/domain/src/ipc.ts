@@ -71,6 +71,8 @@ export interface GuidedModelInput {
   contextLimit: number;
   maxOutputTokens: number;
   temperature: number;
+  /** The translation style (instructions) to use: a built-in one or the user's own. */
+  promptId?: string;
   sourceLanguage: string;
   targetLanguage: string;
 }

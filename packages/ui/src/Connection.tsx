@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Badge, Button, Callout, Checkbox, Flex, SegmentedControl, Text, TextField } from "@radix-ui/themes";
 import type { Backend } from "@ltw/domain";
 import type { useProvider } from "./useProvider";
 
@@ -30,20 +31,20 @@ export function Connection({
   const [allowRemote, setAllowRemote] = useState<boolean | null>(null);
 
   return (
-    <div className="stack">
-      <div className="segmented" role="radiogroup" aria-label="Translator">
-        <button role="radio" aria-checked={backend === "provider"} className={backend === "provider" ? "on" : ""} onClick={() => onBackend("provider")}>
-          LM Studio
-        </button>
-        <button role="radio" aria-checked={backend === "practice"} className={backend === "practice" ? "on" : ""} onClick={() => onBackend("practice")} title="A fake translator for trying the app. Nothing is sent anywhere.">
-          Practice
-        </button>
-      </div>
+    <Flex direction="column" gap="4">
+      <SegmentedControl.Root value={backend} onValueChange={(v) => onBackend(v as Backend)} aria-label="Translator">
+        <SegmentedControl.Item value="provider">LM Studio</SegmentedControl.Item>
+        <SegmentedControl.Item value="practice">Practice</SegmentedControl.Item>
+      </SegmentedControl.Root>
 
       {backend === "practice" ? (
-        <p className="hint">Echoes the text with a label. Nothing leaves this computer.</p>
+        <Text size="2" color="gray">
+          A pretend translator for trying the app. It writes a placeholder and nothing leaves this computer.
+        </Text>
       ) : !view ? (
-        <p className="hint">Loading…</p>
+        <Text size="2" color="gray">
+          Loading…
+        </Text>
       ) : (
         (() => {
           const shown = address ?? view.baseUrl;
@@ -52,9 +53,12 @@ export function Connection({
           const test = () => void provider.saveAndTest({ baseUrl: shown, allowRemote: local ? false : approved, ...(key !== null ? { apiKey: key } : {}) });
           return (
             <>
-              <label>
-                Address
-                <input
+              <Flex direction="column" gap="1">
+                <Text size="2" weight="medium">
+                  Address
+                </Text>
+                <TextField.Root
+                  size="2"
                   value={shown}
                   spellCheck={false}
                   onChange={(e) => {
@@ -63,64 +67,86 @@ export function Connection({
                   }}
                   onKeyDown={(e) => e.key === "Enter" && test()}
                 />
-              </label>
+              </Flex>
               {!local && (
-                <label className="check warn-line">
-                  <input type="checkbox" checked={approved} onChange={(e) => setAllowRemote(e.target.checked)} />
-                  <span>
-                    This is not your computer. Allow sending text to <strong>{(() => { try { return new URL(shown).host; } catch { return shown; } })()}</strong>.
-                  </span>
-                </label>
+                <Callout.Root color="amber" size="1">
+                  <Callout.Text>
+                    <Text as="label" size="2">
+                      <Flex gap="2" align="start">
+                        <Checkbox checked={approved} onCheckedChange={(c) => setAllowRemote(c === true)} />
+                        <span>
+                          This is not your computer. Allow sending text to{" "}
+                          <strong>
+                            {(() => {
+                              try {
+                                return new URL(shown).host;
+                              } catch {
+                                return shown;
+                              }
+                            })()}
+                          </strong>
+                          .
+                        </span>
+                      </Flex>
+                    </Text>
+                  </Callout.Text>
+                </Callout.Root>
               )}
-              <label>
-                API key <span className="hint">optional</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  placeholder={view.hasApiKey && key === null ? "Saved. Type to replace." : ""}
-                  value={key ?? ""}
-                  onChange={(e) => setKey(e.target.value)}
-                />
-              </label>
-              {view.hasApiKey && key === null && (
-                <button className="link-button" onClick={() => setKey("")}>
-                  Remove saved key
-                </button>
-              )}
-              <div className="row">
-                <button className="primary" onClick={test} disabled={provider.testing}>
-                  {provider.testing ? "Testing…" : "Test connection"}
-                </button>
-              </div>
-              <div role="status" aria-live="polite" className="stack tight">
-                {provider.saveError && <p className="note error-note">{provider.saveError}</p>}
-                {provider.test && (
-                  <p className={provider.test.ok ? "note ok-note" : "note error-note"}>
-                    <span aria-hidden="true">{provider.test.ok ? "✓ " : "✕ "}</span>
-                    {provider.test.message}
-                  </p>
+              <Flex direction="column" gap="1">
+                <Text size="2" weight="medium">
+                  API key{" "}
+                  <Text size="1" color="gray" weight="regular">
+                    optional
+                  </Text>
+                </Text>
+                <TextField.Root size="2" type="password" autoComplete="off" placeholder={view.hasApiKey && key === null ? "Saved. Type to replace." : ""} value={key ?? ""} onChange={(e) => setKey(e.target.value)} />
+                {view.hasApiKey && key === null && (
+                  <Button variant="ghost" size="1" style={{ alignSelf: "flex-start" }} onClick={() => setKey("")}>
+                    Remove saved key
+                  </Button>
                 )}
-                {view.problem && !provider.test && !provider.saveError && <p className="note error-note">{view.problem}</p>}
-              </div>
+              </Flex>
+              <Flex>
+                <Button onClick={test} disabled={provider.testing}>
+                  {provider.testing ? "Testing…" : "Test connection"}
+                </Button>
+              </Flex>
+              <Flex direction="column" gap="2" role="status" aria-live="polite">
+                {provider.saveError && (
+                  <Callout.Root color="red" size="1">
+                    <Callout.Text>{provider.saveError}</Callout.Text>
+                  </Callout.Root>
+                )}
+                {provider.test && (
+                  <Callout.Root color={provider.test.ok ? "green" : "red"} size="1">
+                    <Callout.Text>{provider.test.message}</Callout.Text>
+                  </Callout.Root>
+                )}
+                {view.problem && !provider.test && !provider.saveError && (
+                  <Callout.Root color="red" size="1">
+                    <Callout.Text>{view.problem}</Callout.Text>
+                  </Callout.Root>
+                )}
+              </Flex>
               {provider.test?.ok && provider.test.models.length > 0 && (
-                <div>
-                  <p className="hint">Listed models (listed is not loaded). Click to add:</p>
-                  <ul className="chips">
+                <Flex direction="column" gap="2">
+                  <Text size="2" color="gray">
+                    Models on the server (listed is not loaded). Click to add:
+                  </Text>
+                  <Flex wrap="wrap" gap="1">
                     {provider.test.models.map((id) => (
-                      <li key={id}>
-                        <button className="chip" onClick={() => onAddModel(id)} disabled={haveModel(id)}>
-                          {haveModel(id) ? "✓ " : "+ "}
-                          {id}
-                        </button>
-                      </li>
+                      <Button key={id} size="1" variant="soft" color="gray" onClick={() => onAddModel(id)} disabled={haveModel(id)}>
+                        {haveModel(id) ? "✓" : "+"} {id}
+                      </Button>
                     ))}
-                  </ul>
-                </div>
+                  </Flex>
+                </Flex>
               )}
+              {view.hasApiKey && key !== null && key === "" && <Badge color="amber">The saved key will be removed</Badge>}
             </>
           );
         })()
       )}
-    </div>
+    </Flex>
   );
 }

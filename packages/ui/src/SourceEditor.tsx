@@ -72,6 +72,43 @@ const blockField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/** Places in the text to point out (where a word or a line stands), the current one drawn stronger. */
+export interface Hit {
+  from: number;
+  to: number;
+  current: boolean;
+}
+
+const setHits = StateEffect.define<readonly Hit[]>();
+const hitField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setHits)) return Decoration.set(e.value.map((h) => Decoration.mark({ class: h.current ? "cm-hit cm-hit-current" : "cm-hit" }).range(h.from, h.to)), true);
+    return tr.docChanged ? Decoration.none : value; // positions mean nothing once the text moves
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** The block being worked on: its lines get a bar at their left. */
+const setCurrent = StateEffect.define<{ from: number; to: number } | null>();
+const currentField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (!e.is(setCurrent)) continue;
+      if (!e.value) return Decoration.none;
+      const doc = tr.state.doc;
+      const first = doc.lineAt(Math.min(e.value.from, doc.length)).number;
+      const last = doc.lineAt(Math.min(Math.max(e.value.from, e.value.to - 1), doc.length)).number;
+      const lines: Range<Decoration>[] = [];
+      for (let n = first; n <= last; n++) lines.push(Decoration.line({ class: "cm-blk-current" }).range(doc.line(n).from));
+      return Decoration.set(lines, true);
+    }
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 const theme = EditorView.theme({
   "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "1.03rem" },
   "&.cm-focused": { outline: "2px solid var(--focus)", outlineOffset: "-2px" },
@@ -81,6 +118,9 @@ const theme = EditorView.theme({
   ".cm-cursor": { borderLeftColor: "var(--text)" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
   ".cm-placeholder": { color: "var(--muted)" },
+  ".cm-hit": { backgroundColor: "color-mix(in srgb, var(--warn) 30%, transparent)", borderRadius: "3px" },
+  ".cm-hit-current": { backgroundColor: "color-mix(in srgb, var(--accent) 50%, transparent)", outline: "2px solid var(--accent)" },
+  ".cm-blk-current": { boxShadow: "inset 3px 0 0 var(--accent)" },
 });
 
 export interface SourceEditorProps {
@@ -89,17 +129,27 @@ export interface SourceEditorProps {
   /** The split of the current text. Drawn only if it is exactly this text. */
   blocks: readonly PreviewBlock[] | null;
   placeholder: string;
+  /** Places to point out in the text. */
+  hits?: readonly Hit[];
+  /** The block being worked on: where it starts and ends in the text. */
+  current?: { from: number; to: number } | null;
+  /** The cursor was put somewhere in the text by the user (a click or the arrow keys). */
+  onCursor?: (position: number) => void;
+  /** Take the editor to this place (the start of a block chosen elsewhere). `n` changes each time. */
+  reveal?: { at: number; n: number } | null;
 }
 
 /**
  * The source text as an editor that shows where it will be split into blocks, live as you type.
  * The labels are decorations only: they are never part of the text, so copying and saving ignore them.
  */
-export function SourceEditor({ value, onChange, blocks, placeholder }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, blocks, placeholder, hits, current, onCursor, reveal }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onCursorRef = useRef(onCursor);
+  onCursorRef.current = onCursor;
   const latest = useRef({ value, blocks });
   latest.current = { value, blocks };
 
@@ -114,9 +164,13 @@ export function SourceEditor({ value, onChange, blocks, placeholder }: SourceEdi
       EditorView.contentAttributes.of({ "aria-label": "Source text", spellcheck: "false" }),
       placeholderExt(placeholder),
       blockField,
+      hitField,
+      currentField,
       theme,
       EditorView.updateListener.of((u) => {
         if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+        // Where the user put the cursor (not where typing moved it).
+        else if (u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
       }),
     ];
     const v = new EditorView({ state: EditorState.create({ doc: normalizeSource(latest.current.value), extensions }), parent: host.current });
@@ -144,6 +198,23 @@ export function SourceEditor({ value, onChange, blocks, placeholder }: SourceEdi
     const markers = blockMarkers(v.state.doc.toString(), blocks);
     if (markers) v.dispatch({ effects: setMarkers.of(markers) });
   }, [blocks]);
+
+  // Points in the text to show, and the block being worked on. The current place is brought into view.
+  useEffect(() => {
+    const v = view.current;
+    if (!v) return;
+    const list = (hits ?? []).filter((h) => h.to <= v.state.doc.length);
+    v.dispatch({ effects: setHits.of(list) });
+    const here = list.find((h) => h.current);
+    if (here) v.dispatch({ effects: EditorView.scrollIntoView(here.from, { y: "center" }) });
+  }, [hits]);
+  useEffect(() => {
+    const v = view.current;
+    if (v && reveal && reveal.at <= v.state.doc.length) v.dispatch({ effects: EditorView.scrollIntoView(reveal.at, { y: "start", yMargin: 8 }) });
+  }, [reveal?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    view.current?.dispatch({ effects: setCurrent.of(current ?? null) });
+  }, [current?.from, current?.to, blocks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div className="source-editor" ref={host} />;
 }

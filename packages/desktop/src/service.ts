@@ -650,6 +650,8 @@ export class WorkspaceService {
       if (this.activeDocId === documentId) this.activeDocId = this.docs[Math.min(index, this.docs.length - 1)]!.id;
     }
     for (const v of doc.versions) for (const id of v.runIds) this.outdated.delete(id);
+    this.guidedByDoc.delete(documentId);
+    if (this.guided?.documentId === documentId) this.guided = null;
     this.notify("state");
     return this.snapshot();
   }
@@ -724,7 +726,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; classes: string }; guided: GuidedState | null } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; classes: string }; guided: GuidedState[] } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -737,12 +739,12 @@ export class WorkspaceService {
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
       knowledge: { entries: this.knowledge.everything(), classes: this.classesText },
-      guided: this.guided ? structuredClone(this.guided) : null,
+      guided: [...this.guidedByDoc.values(), ...(this.guided ? [this.guided] : [])].map((g) => structuredClone(g)),
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined } | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState[] | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined } | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -761,7 +763,8 @@ export class WorkspaceService {
     });
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
-    this.guided = project.guided ? structuredClone(project.guided) : null;
+    this.guided = null;
+    this.guidedByDoc = new Map((project.guided ?? []).map((g) => [g.documentId, structuredClone(g)] as const));
     this.classesText = project.knowledge?.classes === undefined || isOldDefaultClasses(project.knowledge.classes) ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
@@ -790,6 +793,7 @@ export class WorkspaceService {
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
     this.guided = null;
+    this.guidedByDoc.clear();
     this.knowledge.load([]);
     this.classesText = DEFAULT_CLASSES_TEXT;
     this.epoch++;
@@ -973,20 +977,11 @@ export class WorkspaceService {
     const c = this.coordinator;
     return this.docs.map((d) => {
       const latest = d.versions.at(-1);
-      let done = 0;
-      let total = 0;
-      let models = 0;
-      if (latest && c) {
-        for (const id of latest.runIds) {
-          const run = c.peekRun(id);
-          if (run.archived) continue;
-          models++;
-          for (const o of Object.values(run.outputs)) {
-            total++;
-            if (o.state === "succeeded") done++;
-          }
-        }
-      }
+      // How far the translation of this document has got: its blocks that are translated, of all its blocks.
+      const work = this.guided?.documentId === d.id ? this.guided : this.guidedByDoc.get(d.id);
+      const done = work?.blocks.filter((b) => b.status === "translated").length ?? 0;
+      const total = work?.blocks.length ?? 0;
+      const models = 0;
       return { id: d.id, title: d.title, blocks: latest?.revision.blocks.length ?? 0, models, done, total, hasText: d.draft.trim() !== "" || !!latest };
     });
   }
@@ -1189,9 +1184,20 @@ export class WorkspaceService {
 
   // ---- step by step translation ----
 
+  /** The block work of the open document. The other documents' work is kept beside it and comes back when they are opened. */
   private guided: GuidedState | null = null;
+  private guidedByDoc = new Map<string, GuidedState>();
+
+  /** Makes the block work of this document the one being worked on. */
+  private useDocument(documentId: string): void {
+    if (this.guided && this.guided.documentId === documentId) return;
+    if (this.guided) this.guidedByDoc.set(this.guided.documentId, this.guided);
+    this.guided = this.guidedByDoc.get(documentId) ?? null;
+    this.guidedByDoc.delete(documentId);
+  }
 
   guidedGet(): GuidedState | null {
+    this.useDocument(this.activeDocId);
     return this.guided ? this.guidedView() : null;
   }
 
@@ -1263,6 +1269,7 @@ export class WorkspaceService {
    * split again and a block whose text is unchanged keeps what was read, set and translated; the others start again.
    */
   guidedSync(input: GuidedStartInput): GuidedState | null {
+    this.useDocument(input.documentId);
     const text = normalizeSource(input.text);
     if (text.trim() === "") return this.guided ? this.guidedView() : null;
     if (!this.guided) return this.guidedStart(input);
@@ -1302,6 +1309,7 @@ export class WorkspaceService {
 
   guidedClear(): null {
     this.guided = null;
+    this.guidedByDoc.clear();
     this.guidedChanged();
     return null;
   }
@@ -1533,7 +1541,7 @@ export class WorkspaceService {
 
   /**
    * Translates a block with what the user confirmed. A long block goes in pieces, each with the end of the one before it,
-   * so that a small model does not skip or cut off the rest; a piece with fewer paragraphs than its source is asked for again.
+   * so that a small model does not skip or cut off the rest.
    */
   async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
@@ -1544,7 +1552,9 @@ export class WorkspaceService {
     try {
       this.commitWords(interp);
       this.guidedView();
-      const system = renderPrompt(STANDARD_PROMPT, input.sourceLanguage, input.targetLanguage);
+      // The style of the translation: one of the built-in ones or the user's own, as the model's settings say.
+      const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
+      const system = renderPrompt(style, input.sourceLanguage, input.targetLanguage);
       const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
       // What fits: the pieces are made so that a piece, its translation and the request around it fit the model's context.
       const room = input.contextLimit - estimateTokens(system) - DEFAULTS.messageOverheadTokens - 500;
@@ -1554,45 +1564,38 @@ export class WorkspaceService {
       block.warning = null;
       const done: string[] = [];
       let before: { source: string; translation: string } | null = previous && previous.status === "translated" ? { source: previous.text, translation: previous.translation } : null;
-      let short = 0;
       for (const piece of pieces) {
         const glossary = glossaryFor(interp, piece);
         const paragraphs = paragraphCount(piece);
         const notes = [...notesFor(interp, piece), ...(paragraphs > 1 ? [`SOURCE_BLOCK has ${paragraphs} paragraphs. Translate every one of them, in order, and leave nothing out.`] : [])];
-        let translation = "";
-        for (const attempt of [0, 1]) {
-          let user = "";
-          for (const lines of [3, 2, 1, 0]) {
-            const context = before && lines > 0 ? { source: lastLines(before.source, lines, 500), translation: lastLines(before.translation, lines, 500), translationStatus: "available" as const } : { source: null, translation: null, translationStatus: "none" as const };
-            user = renderUserMessage(glossary, context, piece, attempt === 0 ? notes : [...notes, "The first attempt left paragraphs out. Translate all of them."]);
-            if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-            if (lines === 0) throw new UserError("context_overflow", `A piece of this block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-          }
-          const reply = await this.askModel(
-            {
-              backend: input.backend,
-              modelId: input.modelId,
-              maxOutputTokens: input.maxOutputTokens,
-              temperature: input.temperature,
-              messages: [
-                { role: "system", content: system },
-                { role: "user", content: user },
-              ],
-              practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
-            },
-            abort,
-          );
-          if (reply === null) return this.guidedView(); // stopped
-          translation = reply.trim();
-          if (paragraphCount(translation) >= paragraphs) break;
+        let user = "";
+        for (const lines of [3, 2, 1, 0]) {
+          const context = before && lines > 0 ? { source: lastLines(before.source, lines, 500), translation: lastLines(before.translation, lines, 500), translationStatus: "available" as const } : { source: null, translation: null, translationStatus: "none" as const };
+          user = renderUserMessage(glossary, context, piece, notes);
+          if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+          if (lines === 0) throw new UserError("context_overflow", `A piece of this block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
         }
-        if (paragraphCount(translation) < paragraphs) short += paragraphs - paragraphCount(translation);
+        const reply = await this.askModel(
+          {
+            backend: input.backend,
+            modelId: input.modelId,
+            maxOutputTokens: input.maxOutputTokens,
+            temperature: input.temperature,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
+          },
+          abort,
+        );
+        if (reply === null) return this.guidedView(); // stopped
+        const translation = reply.trim();
         done.push(translation);
         before = { source: piece, translation };
       }
       block.translation = done.join("\n\n");
       block.status = "translated";
-      if (short > 0) block.warning = `The translation has fewer paragraphs than the source (${paragraphCount(block.translation)} of ${paragraphCount(block.text)}). Check that nothing was left out.`;
     } catch (e) {
       block.error = e instanceof UserError ? e.message : "The translation failed.";
       this.guidedChanged();

@@ -758,11 +758,35 @@ describe("translating step by step", () => {
     expect(two.blocks[0]).toMatchObject({ status: "new", interpretation: null, translation: "" });
   });
 
+  it("keeps the block work of each document, so switching documents loses nothing, and counts it in the document list", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const first = service.snapshot().activeDocumentId;
+    service.guidedSync({ documentId: first, text: "太郎は笑った。", blockSize: "normal" });
+    await service.guidedReadAll();
+    await service.guidedTranslate({ ...model, index: 0 });
+
+    // Another document has its own blocks; the first one's work is kept aside.
+    const second = service.createDocument("Second").activeDocumentId;
+    expect(service.guidedSync({ documentId: second, text: "花子は泣いた。", blockSize: "normal" })!.blocks.map((b) => b.text)).toEqual(["花子は泣いた。"]);
+    expect(service.snapshot().documents.map((d) => `${d.done}/${d.total}`)).toEqual(["1/1", "0/1"]);
+
+    // Coming back, the translation is there.
+    const back = service.guidedSync({ documentId: first, text: "太郎は笑った。", blockSize: "normal" })!;
+    expect(back.blocks[0]).toMatchObject({ status: "translated" });
+    expect(service.exportProject().guided.map((g) => g.documentId).sort()).toEqual([first, second].sort());
+
+    // Deleting a document takes its work with it.
+    service.deleteDocument(second);
+    expect(service.exportProject().guided.map((g) => g.documentId)).toEqual([first]);
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "短い文。", blockSize: "normal" });
-    expect(service.exportProject().guided?.blocks).toHaveLength(1);
+    expect(service.exportProject().guided.map((g) => g.blocks.length)).toEqual([1]);
     service.guidedClear();
     expect(service.guidedGet()).toBe(null);
   });

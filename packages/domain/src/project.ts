@@ -65,7 +65,7 @@ export interface ProjectFile {
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
   knowledge?: { entries: KnowledgeEntry[]; classes?: string };
   /** The blocks of the step-by-step translation, with what was confirmed and translated so far. */
-  guided?: GuidedState;
+  guided?: GuidedState[];
   activeDocumentId: string;
   documents: ProjectDocument[];
 }
@@ -250,7 +250,8 @@ const fileSchema = z.object({
   providerLabel: z.string().max(2000).optional(),
   settings: settingsSchema.optional(),
   knowledge: z.object({ entries: z.array(entrySchema).max(50_000), research: z.record(z.string().max(100), z.object({ ids: z.array(id).max(50_000), seen: z.array(id).max(50_000), at: iso })).optional(), classes: z.string().max(200_000).optional() }).optional(),
-  guided: guidedSchema.optional(),
+  // One block record per document. A file from before documents had their own had just one.
+  guided: z.union([guidedSchema, z.array(guidedSchema).max(200)]).transform((g) => (Array.isArray(g) ? g : [g])).optional(),
   activeDocumentId: id,
   documents: z.array(documentSchema).min(1).max(200),
 });
@@ -434,7 +435,7 @@ export function buildProjectFile(input: {
   providerLabel?: string;
   settings?: ProjectSettings | null;
   knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined };
-  guided?: GuidedState | null;
+  guided?: GuidedState[];
   activeDocumentId: string;
   documents: ProjectDocument[];
 }): ProjectFile {
@@ -445,7 +446,7 @@ export function buildProjectFile(input: {
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
     ...(input.settings ? { settings: input.settings } : {}),
     ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
-    ...(input.guided ? { guided: input.guided } : {}),
+    ...(input.guided && input.guided.length > 0 ? { guided: input.guided } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,
   };

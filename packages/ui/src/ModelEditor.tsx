@@ -1,15 +1,28 @@
 import { useState } from "react";
+import { Button, Flex, Text, TextField } from "@radix-ui/themes";
 import type { ModelSetting, PromptPreset } from "@ltw/domain";
 import { allPrompts } from "@ltw/domain/pure";
-import { labelOf, newModel, type SetupState } from "./setup";
+import { Pick } from "./Pick";
+import { newModel, type SetupState } from "./setup";
 
-/** Add a model, or change one's settings. Settings apply to new runs; an existing run keeps what it was made with. */
+/** A labelled field: what it is above, the box below, and a hint if it needs one. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <Flex direction="column" gap="1" title={hint}>
+      <Text size="1" color="gray">
+        {label}
+      </Text>
+      {children}
+    </Flex>
+  );
+}
+
+/** Add a model, or change one's settings. */
 export function ModelEditor({
   initial,
   setup,
   discovered,
-  takenLabels,
-  existingRun,
+  takenNames,
   live = false,
   onSave,
   onCancel,
@@ -19,9 +32,8 @@ export function ModelEditor({
   setup: Pick<SetupState, "prompts">;
   /** Model names the server listed. */
   discovered: string[];
-  /** Labels already in use by other models. */
-  takenLabels: Set<string>;
-  existingRun: boolean;
+  /** Names already in use by other models. */
+  takenNames: Set<string>;
   /** Apply every valid change straight away instead of waiting for a Save button. */
   live?: boolean;
   onSave: (m: ModelSetting) => void;
@@ -30,13 +42,7 @@ export function ModelEditor({
   const [m, setM] = useState<ModelSetting>(initial ?? newModel(""));
   const styles: PromptPreset[] = allPrompts(setup.prompts);
   const problemOf = (x: ModelSetting): string | null =>
-    x.name.trim() === ""
-      ? "Enter the model name"
-      : takenLabels.has(labelOf(x, setup))
-        ? "Already added with these settings"
-        : x.maxOutputTokens >= x.contextLimit
-          ? "The reply limit must be smaller than the context"
-          : null;
+    x.name.trim() === "" ? "Enter the model name" : takenNames.has(x.name.trim()) ? "A model with this name is already added" : x.maxOutputTokens >= x.contextLimit ? "The reply limit must be smaller than the context" : null;
   const problem = problemOf(m);
   const set = (patch: Partial<ModelSetting>) => {
     const next = { ...m, ...patch };
@@ -44,72 +50,60 @@ export function ModelEditor({
     if (live && problemOf(next) === null) onSave({ ...next, name: next.name.trim() });
   };
   const listId = "discovered-models";
+  const number = (value: number, onChange: (n: number) => void, props: { min: number; step: number; max?: number }) => (
+    <TextField.Root size="2" type="number" min={props.min} step={props.step} {...(props.max !== undefined ? { max: props.max } : {})} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+  );
 
   return (
     <form
-      className="model-editor"
       onSubmit={(e) => {
         e.preventDefault();
         if (!problem) onSave({ ...m, name: m.name.trim() });
       }}
     >
-      <label>
-        Model
-        <input
-          autoFocus={!live}
-          list={listId}
-          value={m.name}
-          placeholder="Exact name in LM Studio"
-          onChange={(e) => set({ name: e.target.value })}
-          spellCheck={false}
-          disabled={existingRun}
-        />
-        <datalist id={listId}>
-          {discovered.map((d) => (
-            <option key={d} value={d} />
-          ))}
-        </datalist>
-      </label>
-      <div className="stack">
-        <label>
-          Style
-          <select value={m.promptId} onChange={(e) => set({ promptId: e.target.value })} disabled={existingRun}>
-            {styles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
+      <Flex direction="column" gap="3">
+        <Field label="Model">
+          <TextField.Root size="2" list={listId} autoFocus={!live} value={m.name} placeholder="Exact name in LM Studio" spellCheck={false} onChange={(e) => set({ name: e.target.value })} />
+          <datalist id={listId}>
+            {discovered.map((d) => (
+              <option key={d} value={d} />
             ))}
-          </select>
-        </label>
-      </div>
-      <div className="three">
-        <label title="The context size this model is loaded with in LM Studio. It is not reported, so enter it yourself.">
-          Context
-          <input type="number" min={512} step={256} value={m.contextLimit} onChange={(e) => set({ contextLimit: Math.floor(Number(e.target.value)) })} />
-        </label>
-        <label title="The most text the model may write for one block. Thinking models need room for their thinking too.">
-          Reply limit
-          <input type="number" min={128} step={128} value={m.maxOutputTokens} onChange={(e) => set({ maxOutputTokens: Math.floor(Number(e.target.value)) })} />
-        </label>
-        <label>
-          Temp.
-          <input type="number" min={0} max={2} step={0.1} value={m.temperature} onChange={(e) => set({ temperature: Number(e.target.value) })} />
-        </label>
-      </div>
-      {existingRun && <p className="hint">Limits apply to new runs. Use “Run again” to redo this model with them. To try another style, add the model again.</p>}
-      {live ? (
-        problem && <span className="hint">{problem}</span>
-      ) : (
-        <div className="row-end">
-          {problem && <span className="hint">{problem}</span>}
-          <button type="button" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="primary" disabled={problem !== null}>
-            {initial ? "Save" : "Add"}
-          </button>
-        </div>
-      )}
+          </datalist>
+        </Field>
+        <Field label="Style">
+          <Pick label="Translation style" value={m.promptId} options={styles.map((p) => ({ value: p.id, label: p.name }))} onChange={(promptId) => set({ promptId })} />
+        </Field>
+        <Flex gap="2">
+          <Field label="Context" hint="The context size this model is loaded with in LM Studio. It is not reported, so enter it yourself.">
+            {number(m.contextLimit, (n) => set({ contextLimit: Math.floor(n) }), { min: 512, step: 256 })}
+          </Field>
+          <Field label="Reply limit" hint="The most text the model may write for one block. Thinking models need room for their thinking too.">
+            {number(m.maxOutputTokens, (n) => set({ maxOutputTokens: Math.floor(n) }), { min: 128, step: 128 })}
+          </Field>
+          <Field label="Temperature">{number(m.temperature, (n) => set({ temperature: n }), { min: 0, max: 2, step: 0.1 })}</Field>
+        </Flex>
+        {live ? (
+          problem && (
+            <Text size="1" color="amber">
+              {problem}
+            </Text>
+          )
+        ) : (
+          <Flex justify="end" align="center" gap="2">
+            {problem && (
+              <Text size="1" color="gray">
+                {problem}
+              </Text>
+            )}
+            <Button type="button" variant="soft" color="gray" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={problem !== null}>
+              {initial ? "Save" : "Add"}
+            </Button>
+          </Flex>
+        )}
+      </Flex>
     </form>
   );
 }

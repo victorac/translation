@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { occurrencesOf } from "@ltw/domain/pure";
+import { estimateTokens, normalizeSource, occurrencesOf } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
+import type { PreviewBlock } from "./blockMarkers";
 import { KnowledgeFiles } from "./KnowledgeFiles";
+import { SourceEditor, type Hit } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
-const WIDTHS_KEY = "ltw.guided.widths.v3";
+const WIDTHS_KEY = "ltw.workspace.widths.v1";
 const MIN = 0.1;
-const DEFAULT_WIDTHS = [0.2, 0.27, 0.23, 0.3];
+const DEFAULT_WIDTHS = [0.3, 0.27, 0.23, 0.2];
 
 const loadWidths = (): number[] => {
   try {
@@ -24,20 +26,39 @@ const loadWidths = (): number[] => {
 };
 
 /**
- * Translating one block at a time. The program reads who is named, who is telling it and who says each line. The names
- * are topics of the glossary: they are listed here and opened as files in the pane on the right. The narrator and the
- * speakers are chosen from them. Only then is the block translated, and the translation can be corrected beside it.
+ * The workspace: the source text, which is edited here and shown cut into blocks; what was read from the block being worked on
+ * (its glossary words, the narrator and who says each line); and its translation. The knowledge base opens as a pane on the right.
  */
-export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { setup: SetupState; documentId: string; knowledgeRev: number; knowledgeCounts: { terms: number; notes: number; suggested: number } }) {
+export function Workspace({
+  setup,
+  documentId,
+  text,
+  onText,
+  editorKey,
+  knowledgeRev,
+  knowledgeCounts,
+  kb,
+  onKb,
+}: {
+  setup: SetupState;
+  documentId: string;
+  text: string;
+  onText: (text: string) => void;
+  /** Changes when another document or project is opened, so the editor starts over. */
+  editorKey: string;
+  knowledgeRev: number;
+  knowledgeCounts: { terms: number; notes: number; suggested: number };
+  /** Whether the knowledge base pane is showing, and the topic it was asked to open. */
+  kb: { open: boolean; request: { id: string; n: number } | null };
+  onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
+}) {
   const [state, setState] = useState<GuidedState | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   const [translation, setTranslation] = useState("");
   const [newTerm, setNewTerm] = useState("");
   const [widths, setWidths] = useState<number[]>(loadWidths);
-  const [topic, setTopic] = useState<{ id: string; n: number } | null>(null);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [focus, setFocus] = useState<string | null>(null);
   const [lineFocus, setLineFocus] = useState<number | null>(null);
@@ -45,7 +66,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
   const [filter, setFilter] = useState("");
-  const sourceBox = useRef<HTMLDivElement>(null);
+  // The cursor was put in a block by the user; the editor then does not need to scroll to it.
+  const fromCursor = useRef(false);
   const [topics, setTopics] = useState<TopicRef[]>([]);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
@@ -71,9 +93,9 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
 
   /** Makes the blocks from the text in the editor, or brings them up to date with it, and reads every block that has not been read. */
   const sync = async () => {
-    if (setup.text.trim() === "") return;
+    if (text.trim() === "") return;
     setWorking("read");
-    const made = await call(() => api.invoke("guided.sync", { documentId, text: setup.text, blockSize: setup.blockSize }));
+    const made = await call(() => api.invoke("guided.sync", { documentId, text, blockSize: setup.blockSize }));
     if (made) {
       setState(made);
       const all = await call(() => api.invoke("guided.readAll"));
@@ -82,18 +104,12 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
     setWorking(null);
   };
 
-  // This screen always shows the text in the editor: opening it makes the blocks from it, and a block whose text is unchanged keeps its work.
+  // The blocks always follow the text: made when it first appears, and brought up to date a moment after typing stops. A block whose
+  // text is unchanged keeps its work.
   useEffect(() => {
-    void sync().then(() => setLoaded(true));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // A change in the text while this is open is followed too.
-  const seenText = useRef(setup.text);
-  useEffect(() => {
-    if (seenText.current === setup.text) return;
-    seenText.current = setup.text;
-    void sync();
-  }, [setup.text]); // eslint-disable-line react-hooks/exhaustive-deps
+    const timer = setTimeout(() => void sync(), state === null ? 0 : 600);
+    return () => clearTimeout(timer);
+  }, [text, setup.blockSize, documentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When the glossary changes (a topic edited in the pane on the right), the names listed here follow it.
   const first = useRef(true);
@@ -133,9 +149,6 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
   const hits = lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
   const looking = lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
-  useEffect(() => {
-    sourceBox.current?.querySelector("mark.current")?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focus, lineFocus, current, state?.current]);
   useEffect(() => {
     setFocus(null);
     setLineFocus(null);
@@ -188,7 +201,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
     setNewTerm("");
     setState(s);
     const name = s.blocks[block.index]?.interpretation?.names.find((n) => n.source === word || n.aliases.includes(word));
-    if (name?.id) setTopic({ id: name.id, n: Date.now() });
+    if (name?.id) onKb({ open: true, request: { id: name.id, n: Date.now() } });
   };
 
   const go = async (index: number) => {
@@ -210,6 +223,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
         contextLimit: model.contextLimit,
         maxOutputTokens: model.maxOutputTokens,
         temperature: model.temperature,
+        promptId: model.promptId,
         sourceLanguage: setup.sourceLanguage,
         targetLanguage: setup.targetLanguage,
       }),
@@ -225,8 +239,43 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
     if (s) setState(s);
   };
 
+  // ---- the source, shown as blocks in the editor ----
+  const view: GuidedState = state ?? { documentId, blocks: [], current: 0 };
+  const inSync = state !== null && state.source !== undefined && normalizeSource(text) === state.source;
+  const starts: number[] = [];
+  {
+    let at = 0;
+    for (const b of view.blocks) {
+      starts.push(at);
+      at += b.text.length;
+    }
+  }
+  const editorBlocks: PreviewBlock[] | null = inSync ? view.blocks.map((b) => ({ index: b.index, text: b.text, estimatedTokens: estimateTokens(b.text), boundaryKind: "paragraph" as const })) : null;
+  const currentRange = inSync && block ? { from: starts[view.current]!, to: starts[view.current]! + block.text.length } : null;
+  const editorHits: Hit[] = inSync && block ? hits.map((h, i) => ({ from: starts[view.current]! + h.start, to: starts[view.current]! + h.end, current: i === current })) : [];
+  // Moving to another block with the arrows or the numbers takes the editor there; clicking in the text does not need to.
+  const [reveal, setReveal] = useState<{ at: number; n: number } | null>(null);
+  useEffect(() => {
+    if (fromCursor.current) {
+      fromCursor.current = false;
+      return;
+    }
+    if (inSync && starts[view.current] !== undefined) setReveal({ at: starts[view.current]!, n: Date.now() });
+  }, [view.current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cursorAt = (position: number) => {
+    if (!inSync) return;
+    let index = 0;
+    starts.forEach((s, i) => {
+      if (s <= position) index = i;
+    });
+    if (index !== view.current) {
+      fromCursor.current = true;
+      void go(index);
+    }
+  };
+
   // ---- the panes and the handles between them ----
-  const shown = topic ? [0, 1, 2, 3] : [0, 1, 2];
+  const shown = kb.open ? [0, 1, 2, 3] : [0, 1, 2];
   const total = shown.reduce((sum, i) => sum + widths[i]!, 0);
   const columns = shown.map((i, n) => `${widths[i]! / total}fr${n < shown.length - 1 ? " 6px" : ""}`).join(" ");
   const box = useRef<HTMLDivElement>(null);
@@ -258,43 +307,35 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
     }
   };
 
-  if (!loaded) return <p className="hint pad">Loading…</p>;
-
-  if (!state) {
-    return (
-      <div className="guided-empty">
-        <p className="hint">{error ?? (!model ? "Add a model in the left panel to translate step by step." : setup.text.trim() === "" ? "Paste the text in the editor, and its blocks appear here." : "Reading…")}</p>
-      </div>
-    );
-  }
-
-  const done = state.blocks.filter((b) => b.status === "translated").length;
+  const done = view.blocks.filter((b) => b.status === "translated").length;
 
   return (
     <div className="guided">
       <Flex align="center" justify="between" gap="3" wrap="wrap" px="3" py="2" className="guided-bar">
         <Flex align="center" gap="2">
-          <IconButton variant="soft" color="gray" size="1" aria-label="Previous block" onClick={() => void go(state.current - 1)} disabled={state.current === 0 || working !== null}>
+          <IconButton variant="soft" color="gray" size="1" aria-label="Previous block" onClick={() => void go(view.current - 1)} disabled={view.current === 0 || working !== null}>
             <ArrowLeftIcon />
           </IconButton>
           <Text weight="bold" size="2">
-            Block {state.current + 1} of {state.blocks.length}
+            {view.blocks.length === 0 ? "No blocks yet" : `Block ${view.current + 1} of ${view.blocks.length}`}
           </Text>
-          <IconButton variant="soft" color="gray" size="1" aria-label="Next block" onClick={() => void go(state.current + 1)} disabled={state.current >= state.blocks.length - 1 || working !== null}>
+          <IconButton variant="soft" color="gray" size="1" aria-label="Next block" onClick={() => void go(view.current + 1)} disabled={view.current >= view.blocks.length - 1 || working !== null}>
             <ArrowRightIcon />
           </IconButton>
-          <Text size="1" color="gray">
-            {done} translated
-          </Text>
+          {view.blocks.length > 0 && (
+            <Text size="1" color="gray">
+              {done} translated
+            </Text>
+          )}
         </Flex>
         <Flex gap="1" wrap="wrap" justify="center" flexGrow="1" aria-label="Blocks" role="group">
-          {state.blocks.map((b) => (
+          {view.blocks.map((b) => (
             <Button
               key={b.index}
               size="1"
               radius="full"
-              variant={b.index === state.current ? "solid" : b.status === "translated" ? "soft" : "outline"}
-              color={b.status === "translated" || b.index === state.current ? "indigo" : "gray"}
+              variant={b.index === view.current ? "solid" : b.status === "translated" ? "soft" : "outline"}
+              color={b.status === "translated" || b.index === view.current ? "indigo" : "gray"}
               onClick={() => void go(b.index)}
               title={`Block ${b.index + 1}: ${b.status === "translated" ? "translated" : b.status === "interpreted" ? "read" : "not read yet"}`}
               disabled={working !== null}
@@ -307,7 +348,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
           <Text size="1" color="gray">
             Model
           </Text>
-          <Pick size="1" label="Model" value={model?.name ?? ""} options={setup.models.map((m) => ({ value: m.name, label: m.name }))} onChange={setModelName} />
+          <Pick size="1" label="Model" value={model?.name ?? ""} placeholder="Add a model" options={setup.models.map((m) => ({ value: m.name, label: m.name }))} onChange={setModelName} />
         </Flex>
       </Flex>
       {error && (
@@ -323,57 +364,46 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
         </Callout.Root>
       )}
 
-      {block && (
-        <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
-          <section className="guided-pane">
-            <h3>Source</h3>
-            {looking !== null && (
-              <Flex align="center" justify="between" gap="2" px="3" py="1" className="source-find">
-                <Text size="2" weight="bold">
-                  {looking}
-                </Text>
-                <Text size="1" color="gray">
-                  {hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
-                </Text>
-                <Flex gap="1">
-                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
-                    <ArrowUpIcon />
-                  </IconButton>
-                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
-                    <ArrowDownIcon />
-                  </IconButton>
-                  <IconButton variant="ghost" size="1" color="gray" onClick={stopLooking} aria-label="Stop looking">
-                    <Cross2Icon />
-                  </IconButton>
-                </Flex>
+      <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
+        <section className="guided-pane">
+          <h3>Source</h3>
+          {looking !== null && (
+            <Flex align="center" justify="between" gap="2" px="3" py="1" className="source-find">
+              <Text size="2" weight="bold">
+                {looking}
+              </Text>
+              <Text size="1" color="gray">
+                {hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
+              </Text>
+              <Flex gap="1">
+                <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
+                  <ArrowUpIcon />
+                </IconButton>
+                <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
+                  <ArrowDownIcon />
+                </IconButton>
+                <IconButton variant="ghost" size="1" color="gray" onClick={stopLooking} aria-label="Stop looking">
+                  <Cross2Icon />
+                </IconButton>
               </Flex>
-            )}
-            <div className="guided-body source-text" ref={sourceBox}>
-              {hits.length === 0
-                ? block.text
-                : (() => {
-                    const parts: React.ReactNode[] = [];
-                    let at = 0;
-                    hits.forEach((h, i) => {
-                      parts.push(block.text.slice(at, h.start));
-                      parts.push(
-                        <mark key={i} className={i === current ? "current" : undefined}>
-                          {block.text.slice(h.start, h.end)}
-                        </mark>,
-                      );
-                      at = h.end;
-                    });
-                    parts.push(block.text.slice(at));
-                    return parts;
-                  })()}
-            </div>
-          </section>
+            </Flex>
+          )}
+          <div className="source-pane-editor">
+            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
+          </div>
+        </section>
 
-          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
+        <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
 
           <section className="guided-pane">
             <h3>What was read</h3>
-            {!base ? (
+            {!block ? (
+              <div className="guided-body">
+                <Text as="p" size="2" color="gray">
+                  Paste or type the source text on the left. It is cut into blocks, and what is read from each one shows here.
+                </Text>
+              </div>
+            ) : !base ? (
               <div className="guided-body">
                 <Text as="p" size="2" color="gray" mb="2">
                   This block has not been read yet.
@@ -436,7 +466,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
                             focused={focus === n.source}
                             onToggle={() => look(n.source)}
                             onUse={(use) => void call(() => api.invoke("guided.setUse", { source: n.source, use })).then((s) => s && setState(s))}
-                            onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
+                            onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                             onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
                             onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
                             onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
@@ -501,22 +531,24 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
             )}
           </section>
 
-          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1, 2)} />
+
+        <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1, 2)} />
 
           <section className="guided-pane">
             <h3>Translation</h3>
-            {block.status === "translated" ? (
+            {!block ? (
+              <div className="guided-body">
+                <Text as="p" size="2" color="gray">
+                  The translation of the block you are working on appears here.
+                </Text>
+              </div>
+            ) : block.status === "translated" ? (
               <>
-                {block.warning && (
-                  <Callout.Root color="amber" size="1" m="2">
-                    <Callout.Text>{block.warning}</Callout.Text>
-                  </Callout.Root>
-                )}
                 <TextArea className="guided-translation" variant="soft" aria-label="Translation of this block" value={translation} onChange={(e) => setTranslation(e.target.value)} onBlur={() => void saveTranslation()} spellCheck />
                 <Flex gap="2" p="3" className="guided-foot">
-                  <Button onClick={() => void go(block.index + 1)} disabled={block.index >= state.blocks.length - 1 || working !== null}>
-                    {block.index >= state.blocks.length - 1 ? "Last block" : "Next block"}
-                    {block.index < state.blocks.length - 1 && <ArrowRightIcon />}
+                  <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
+                    {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
+                    {block.index < view.blocks.length - 1 && <ArrowRightIcon />}
                   </Button>
                 </Flex>
               </>
@@ -529,24 +561,24 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { s
             )}
           </section>
 
-          {topic && (
-            <>
-              <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the translation and the knowledge base" onPointerDown={beginDrag(2, 3)} />
-              <section className="guided-pane">
-                <h3 className="guided-pane-title">
-                  Knowledge base
-                  <IconButton variant="ghost" size="1" color="gray" onClick={() => setTopic(null)} aria-label="Close the knowledge base pane">
-                    <Cross2Icon />
-                  </IconButton>
-                </h3>
-                <div className="guided-kb">
-                  <KnowledgeFiles rev={knowledgeRev} counts={knowledgeCounts} openRequest={topic} compact />
-                </div>
-              </section>
-            </>
-          )}
-        </div>
-      )}
+
+        {kb.open && (
+          <>
+            <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the translation and the knowledge base" onPointerDown={beginDrag(2, 3)} />
+            <section className="guided-pane">
+              <h3 className="guided-pane-title">
+                Knowledge base
+                <IconButton variant="ghost" size="1" color="gray" onClick={() => onKb({ open: false, request: null })} aria-label="Close the knowledge base pane">
+                  <Cross2Icon />
+                </IconButton>
+              </h3>
+              <div className="guided-kb">
+                <KnowledgeFiles rev={knowledgeRev} counts={knowledgeCounts} openRequest={kb.request} compact={kb.request !== null} />
+              </div>
+            </section>
+          </>
+        )}
+      </div>
     </div>
   );
 }

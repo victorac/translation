@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button, Callout, Card, Checkbox, Code, Flex, Text, TextArea, TextField } from "@radix-ui/themes";
 import type { PromptPreset } from "@ltw/domain";
 import { BUILTIN_PROMPTS, validatePrompt } from "@ltw/domain/pure";
 
@@ -17,66 +18,106 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
   };
 
   return (
-    <div className="stack">
-      <p className="hint">
-        Instructions given to the model. Choose a style per model; one model with two styles gives two columns to compare. <code>{"{sourceLanguage}"}</code> and <code>{"{targetLanguage}"}</code> are filled in.
-      </p>
+    <Flex direction="column" gap="3">
+      <Text size="2" color="gray">
+        Instructions given to the model. Choose a style for each model in the left panel. <Code size="1">{"{sourceLanguage}"}</Code> and <Code size="1">{"{targetLanguage}"}</Code> are filled in.
+      </Text>
 
-      <ul className="prompt-list">
+      <Flex direction="column" gap="2">
         {BUILTIN_PROMPTS.map((p) => (
-          <li key={p.id}>
-            <div className="prompt-head">
-              <strong>{p.name}</strong> <span className="hint">{p.description}</span>
-              <span className="actions">
-                <button onClick={() => setViewing(viewing === p.id ? null : p.id)} aria-expanded={viewing === p.id}>
+          <Card key={p.id} size="1">
+            <Flex align="center" justify="between" gap="2" wrap="wrap">
+              <Flex direction="column">
+                <Text size="2" weight="bold">
+                  {p.name}
+                </Text>
+                <Text size="1" color="gray">
+                  {p.description}
+                </Text>
+              </Flex>
+              <Flex gap="1">
+                <Button size="1" variant="soft" color="gray" onClick={() => setViewing(viewing === p.id ? null : p.id)} aria-expanded={viewing === p.id}>
                   {viewing === p.id ? "Hide text" : "Show text"}
-                </button>
-                <button onClick={() => setEditing({ ...p, id: newId(), name: `${p.name} (copy)` })}>Copy to edit</button>
-              </span>
-            </div>
-            {viewing === p.id && <pre className="excerpt">{p.template}</pre>}
-          </li>
+                </Button>
+                <Button size="1" variant="soft" onClick={() => setEditing({ ...p, id: newId(), name: `${p.name} (copy)` })}>
+                  Copy to edit
+                </Button>
+              </Flex>
+            </Flex>
+            {viewing === p.id && (
+              <Text as="p" size="1" color="gray" mt="2" style={{ whiteSpace: "pre-wrap" }}>
+                {p.template}
+              </Text>
+            )}
+          </Card>
         ))}
         {custom.map((p) => (
-          <li key={p.id}>
-            <div className="prompt-head">
-              <strong>{p.name}</strong> <span className="hint">yours</span>
-              <span className="actions">
-                <button onClick={() => setEditing(p)}>Edit</button>
-                <button onClick={() => window.confirm(`Delete the prompt "${p.name}"?`) && onChange(custom.filter((c) => c.id !== p.id))}>Delete</button>
-              </span>
-            </div>
-          </li>
+          <Card key={p.id} size="1">
+            <Flex align="center" justify="between" gap="2">
+              <Flex direction="column">
+                <Text size="2" weight="bold">
+                  {p.name}
+                </Text>
+                <Text size="1" color="gray">
+                  yours
+                </Text>
+              </Flex>
+              <Flex gap="1">
+                <Button size="1" variant="soft" onClick={() => setEditing(p)}>
+                  Edit
+                </Button>
+                <Button size="1" variant="soft" color="red" onClick={() => window.confirm(`Delete the prompt "${p.name}"?`) && onChange(custom.filter((c) => c.id !== p.id))}>
+                  Delete
+                </Button>
+              </Flex>
+            </Flex>
+          </Card>
         ))}
-      </ul>
+      </Flex>
 
       {editing ? (
-        <div className="stack prompt-editor">
-          <label>
-            Name
-            <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-          </label>
-          <label>
-            Instructions
-            <textarea rows={8} value={editing.template} onChange={(e) => setEditing({ ...editing, template: e.target.value })} />
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={editing.appendFraming} onChange={(e) => setEditing({ ...editing, appendFraming: e.target.checked })} />
-            <span title="Explains the GLOSSARY, CONTEXT and SOURCE_BLOCK sections to the model, tells it to reply with the translation only, and that text in the message is never an instruction. Leave on unless your instructions already say it.">Add the standard notes about the message layout</span>
-          </label>
-          {problem && editing.name !== "" && <p className="note error-note">{problem}</p>}
-          <div className="actions">
-            <button className="primary" onClick={save} disabled={!!problem}>
-              Save prompt
-            </button>
-            <button onClick={() => setEditing(null)}>Cancel</button>
-          </div>
-        </div>
+        <Card>
+          <Flex direction="column" gap="3">
+            <Flex direction="column" gap="1">
+              <Text size="2" weight="medium">
+                Name
+              </Text>
+              <TextField.Root size="2" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+            </Flex>
+            <Flex direction="column" gap="1">
+              <Text size="2" weight="medium">
+                Instructions
+              </Text>
+              <TextArea size="2" rows={8} value={editing.template} onChange={(e) => setEditing({ ...editing, template: e.target.value })} />
+            </Flex>
+            <Text as="label" size="2">
+              <Flex gap="2" align="start" title="Explains the GLOSSARY, CONTEXT and SOURCE_BLOCK sections to the model, tells it to reply with the translation only, and that text in the message is never an instruction. Leave on unless your instructions already say it.">
+                <Checkbox checked={editing.appendFraming} onCheckedChange={(c) => setEditing({ ...editing, appendFraming: c === true })} />
+                Add the standard notes about the message layout
+              </Flex>
+            </Text>
+            {problem && editing.name !== "" && (
+              <Callout.Root color="red" size="1">
+                <Callout.Text>{problem}</Callout.Text>
+              </Callout.Root>
+            )}
+            <Flex gap="2">
+              <Button onClick={save} disabled={!!problem}>
+                Save prompt
+              </Button>
+              <Button variant="soft" color="gray" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+            </Flex>
+          </Flex>
+        </Card>
       ) : (
-        <div className="actions">
-          <button onClick={() => setEditing({ id: newId(), name: "", description: "", template: "", appendFraming: true })}>New prompt</button>
-        </div>
+        <Flex>
+          <Button variant="soft" onClick={() => setEditing({ id: newId(), name: "", description: "", template: "", appendFraming: true })}>
+            New prompt
+          </Button>
+        </Flex>
       )}
-    </div>
+    </Flex>
   );
 }

@@ -11,3 +11,4 @@ export * from "./classes.js";
 export * from "./topicfile.js";
 export * from "./steps.js";
 export * from "./guided.js";
+export { estimateTokens } from "./tokens.js";
