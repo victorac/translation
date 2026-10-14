@@ -371,7 +371,7 @@ export function App() {
             </div>
           )}
           {snap && guidedOpen ? (
-            <Guided setup={setup} documentId={snap.activeDocumentId} knowledgeRev={snap.knowledge.rev} knowledgeCounts={snap.knowledge} onClose={() => setGuidedOpen(false)} />
+            <Guided setup={setup} documentId={snap.activeDocumentId} knowledgeRev={snap.knowledge.rev} knowledgeCounts={snap.knowledge} />
           ) : snap ? (
             columns.mode === "panes" ? (
               <Panes

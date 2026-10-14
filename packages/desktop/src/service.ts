@@ -1263,13 +1263,14 @@ export class WorkspaceService {
   }
 
   /**
-   * Brings the blocks up to date with the text in the editor. Nothing changes when the text is the same. When it is not, the text is
+   * Makes the blocks from the text in the editor, or brings them up to date with it. Nothing changes when the text is the same. When it is not, the text is
    * split again and a block whose text is unchanged keeps what was read, set and translated; the others start again.
    */
   guidedSync(input: GuidedStartInput): GuidedState | null {
-    if (!this.guided) return null;
     const text = normalizeSource(input.text);
-    if (text.trim() === "" || this.guided.source === text) return this.guidedView();
+    if (text.trim() === "") return this.guided ? this.guidedView() : null;
+    if (!this.guided) return this.guidedStart(input);
+    if (this.guided.source === text) return this.guidedView();
     const old = this.guided;
     const limits = BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
     const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });

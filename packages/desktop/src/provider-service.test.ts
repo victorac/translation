@@ -781,6 +781,22 @@ describe("translating step by step", () => {
     expect(service.guidedSync({ documentId: docId, text: "", blockSize: "small" })!.blocks.length).toBe(edited.blocks.length); // an empty editor leaves it alone
   });
 
+  it("makes the blocks from the text when there are none yet, and a different text replaces them all", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    expect(service.guidedSync({ documentId: docId, text: "", blockSize: "normal" })).toBe(null);
+    const one = service.guidedSync({ documentId: docId, text: "太郎は笑った。", blockSize: "normal" })!;
+    expect(one.blocks.map((b) => b.text)).toEqual(["太郎は笑った。"]);
+    await service.guidedReadAll();
+    expect(service.guidedGet()!.blocks[0]!.interpretation).not.toBe(null);
+    // Another text: nothing of the old blocks is left, and what was read is read again.
+    const two = service.guidedSync({ documentId: docId, text: "花子は泣いた。", blockSize: "normal" })!;
+    expect(two.blocks.map((b) => b.text)).toEqual(["花子は泣いた。"]);
+    expect(two.blocks[0]).toMatchObject({ status: "new", interpretation: null, translation: "" });
+  });
+
   it("is kept in the project and can be started over", async () => {
     const { service } = setup();
     const docId = service.snapshot().activeDocumentId;

@@ -25,7 +25,7 @@ const loadWidths = (): number[] => {
  * are topics of the glossary: they are listed here and opened as files in the pane on the right. The narrator and the
  * speakers are chosen from them. Only then is the block translated, and the translation can be corrected beside it.
  */
-export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClose }: { setup: SetupState; documentId: string; knowledgeRev: number; knowledgeCounts: { terms: number; notes: number; suggested: number }; onClose: () => void }) {
+export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts }: { setup: SetupState; documentId: string; knowledgeRev: number; knowledgeCounts: { terms: number; notes: number; suggested: number } }) {
   const [state, setState] = useState<GuidedState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
@@ -41,7 +41,6 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   const [filter, setFilter] = useState("");
   const sourceBox = useRef<HTMLDivElement>(null);
   const [topics, setTopics] = useState<TopicRef[]>([]);
-  const started = useRef(false);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
   const block = state ? state.blocks[state.current] : undefined;
@@ -64,49 +63,31 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
     if (s) setState(s);
   };
 
-  /** Brings the blocks up to date with the text in the editor; a block that changed is read again by itself. */
-  const sync = async (s: GuidedState) => {
-    const now = await call(() => api.invoke("guided.sync", { documentId, text: setup.text, blockSize: setup.blockSize }));
-    const next = now ?? s;
-    setState(next);
-    const cur = next.blocks[next.current];
-    if (cur && cur.status === "new") await read(next.current);
+  /** Makes the blocks from the text in the editor, or brings them up to date with it, and reads every block that has not been read. */
+  const sync = async () => {
+    if (setup.text.trim() === "") return;
+    setWorking("read");
+    const made = await call(() => api.invoke("guided.sync", { documentId, text: setup.text, blockSize: setup.blockSize }));
+    if (made) {
+      setState(made);
+      const all = await call(() => api.invoke("guided.readAll"));
+      if (all) setState(all);
+    }
+    setWorking(null);
   };
 
-  // Opening this screen picks up where it was left, brought up to date with the text, or starts on the text in the editor straight away.
+  // This screen always shows the text in the editor: opening it makes the blocks from it, and a block whose text is unchanged keeps its work.
   useEffect(() => {
-    void api.invoke("guided.get").then(async (r) => {
-      if (r.ok && r.value) {
-        setState(r.value);
-        setLoaded(true);
-        if (setup.text.trim() !== "") await sync(r.value);
-        return;
-      }
-      setLoaded(true);
-      if (started.current || setup.text.trim() === "" || !model) return;
-      started.current = true;
-      const s = await call(() => api.invoke("guided.start", { documentId, text: setup.text, blockSize: setup.blockSize }));
-      if (s) {
-        setState(s);
-        await read(0);
-      }
-    });
+    void sync().then(() => setLoaded(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A change in the source while this is open (for example from another window) is followed too.
+  // A change in the text while this is open is followed too.
   const seenText = useRef(setup.text);
   useEffect(() => {
     if (seenText.current === setup.text) return;
     seenText.current = setup.text;
-    if (state && setup.text.trim() !== "") void sync(state);
+    void sync();
   }, [setup.text]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const readAll = async () => {
-    setWorking("read");
-    const s = await call(() => api.invoke("guided.readAll"));
-    setWorking(null);
-    if (s) setState(s);
-  };
 
   // When the glossary changes (a topic edited in the pane on the right), the names listed here follow it.
   const first = useRef(true);
@@ -208,13 +189,6 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
     if (s) setState(s);
   };
 
-  const startOver = async () => {
-    if (state && state.blocks.some((b) => b.status === "translated") && !window.confirm("Start over? The blocks translated so far will be discarded. The names stay in the knowledge base.")) return;
-    await call(() => api.invoke("guided.clear"));
-    setState(null);
-    onClose();
-  };
-
   // ---- the panes and the handles between them ----
   const shown = topic ? [0, 1, 2, 3] : [0, 1, 2];
   const total = shown.reduce((sum, i) => sum + widths[i]!, 0);
@@ -253,8 +227,7 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   if (!state) {
     return (
       <div className="guided-empty">
-        <p className="hint">{error ?? (!model ? "Add a model in the left panel to translate step by step." : setup.text.trim() === "" ? "Paste the text in the editor first, then open this again." : "Starting…")}</p>
-        <button onClick={onClose}>Back to the editor</button>
+        <p className="hint">{error ?? (!model ? "Add a model in the left panel to translate step by step." : setup.text.trim() === "" ? "Paste the text in the editor, and its blocks appear here." : "Reading…")}</p>
       </div>
     );
   }
@@ -292,17 +265,6 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
               ))}
             </select>
           </label>
-          {state.blocks.some((b) => !b.interpretation) && (
-            <button className="small" onClick={() => void readAll()} disabled={working !== null} title="Read every block that has not been read, so the glossary holds the words of the whole text">
-              {working === "read" ? "Reading…" : "Read all blocks"}
-            </button>
-          )}
-          <button className="small" onClick={() => void startOver()}>
-            Start over
-          </button>
-          <button className="small" onClick={onClose}>
-            Back to the editor
-          </button>
         </span>
       </div>
       {error && (
