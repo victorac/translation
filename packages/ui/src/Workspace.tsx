@@ -131,7 +131,11 @@ export function Workspace({
     setTranslation(block?.translation ?? "");
   }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const people = (base?.names ?? []).filter((n) => n.kind === "character" && n.use !== false);
+  // Everyone who can speak: the people of this block, and every person of the knowledge base, even when the block never says their name.
+  const people: { source: string; english: string }[] = [
+    ...(base?.names ?? []).filter((n) => n.kind === "character" && n.use !== false),
+    ...topics.filter((t) => t.category === "character" && !(base?.names ?? []).some((n) => n.source === t.source)),
+  ];
 
   // The word being looked at: where it stands in the block, for the source pane.
   const focused = base?.names.find((n) => n.source === focus) ?? null;
@@ -183,7 +187,7 @@ export function Workspace({
   const firstAt = (n: GuidedName): number => occurrencesOf(block?.text ?? "", [n.source, ...n.aliases], topics.map((t) => t.source))[0]?.start ?? Number.MAX_SAFE_INTEGER;
   const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
   const groups = kinds.map((kind) => ({ kind, names: shownNames.filter((n) => n.kind === kind).sort((a, b) => firstAt(a) - firstAt(b)) })).filter((g) => g.names.length > 0);
-  const label = (p: GuidedName): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
+  const label = (p: { source: string; english: string }): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
   const speakers = (base?.lines ?? []).map((l) => l.speaker);
 
   /** Saves the narrator and speakers as chosen. With `fill`, lines whose speaker is not known yet are worked out by the app. */

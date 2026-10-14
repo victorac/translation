@@ -1376,6 +1376,12 @@ export class WorkspaceService {
     this.guidedView();
     const interp = block.interpretation;
     if (interp) {
+      // A person the user picks from the knowledge base who is not written in this block joins its glossary, so the model gets their name and details.
+      for (const who of [narrator, ...speakers]) {
+        if (!who || interp.names.some((n) => n.source === who)) continue;
+        const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === who);
+        if (entry) interp.names.push({ source: who, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
+      }
       interp.narrator = narrator;
       const fresh = fill ? labelLines(block.text, interp.names, narrator, interp.narratorWord, this.carryFor(index), speakers) : [];
       interp.lines = interp.lines.map((l, i) => ({ ...l, speaker: speakers[i] ?? (fill && fresh[i]?.text === l.text ? (fresh[i]?.speaker ?? null) : null) }));

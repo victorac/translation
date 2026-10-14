@@ -127,7 +127,7 @@ export interface TopicEditorProps {
   id: string;
   /** Changes when the knowledge base changes somewhere else. */
   rev: number;
-  /** Ctrl/Cmd+click on a link. */
+  /** A click on a link. */
   onLink: (name: string, key: string) => void;
   /** The text, the problems and what links here, whenever the file is read or applied. */
   onLoaded: (file: { text: string; problems: Problem[]; backlinks: { id: string; title: string }[]; title: string }) => void;
@@ -211,7 +211,7 @@ export function TopicEditor({ id, rev, onLink, onLoaded, onText }: TopicEditorPr
           void send().then(() => void load());
         },
         mousedown: (e, v) => {
-          if (!(e.ctrlKey || e.metaKey)) return false;
+          if (e.button !== 0 || e.shiftKey || e.detail > 1) return false;
           const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
           const l = pos === null ? null : linkAt(v, pos);
           if (!l) return false;
