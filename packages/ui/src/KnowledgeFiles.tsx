@@ -19,12 +19,12 @@ function loadTabs(): { open: string[]; active: string | null } {
  * The knowledge base as files: a list of topics (and scenes, summaries, notes and classes) you can search, open in tabs
  * and edit as text. Links between files can be followed, and each file shows what links to it.
  */
-export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: number; notes: number; suggested: number } }) {
+export function KnowledgeFiles({ rev, counts, openRequest, compact }: { rev: number; counts: { terms: number; notes: number; suggested: number }; openRequest?: { id: string; n: number } | null; compact?: boolean }) {
   const [list, setList] = useState<FileList | null>(null);
   const [tabs, setTabs] = useState(loadTabs);
   const [query, setQuery] = useState("");
   const [onlyChecking, setOnlyChecking] = useState(false);
-  const [listOpen, setListOpen] = useState(true);
+  const [listOpen, setListOpen] = useState(!compact);
   const [creating, setCreating] = useState<{ type: string; name: string } | null>(null);
   const [loaded, setLoaded] = useState<{ title: string; problems: Problem[]; backlinks: { id: string; title: string }[] } | null>(null);
   const [typed, setTyped] = useState("");
@@ -46,6 +46,11 @@ export function KnowledgeFiles({ rev, counts }: { rev: number; counts: { terms: 
       /* the open tabs then last for this session only */
     }
   }, [tabs]);
+
+  // Another part of the app asks for a topic to be opened (n changes each time, so the same topic can be asked for again).
+  useEffect(() => {
+    if (openRequest) setTabs((t) => ({ open: t.open.includes(openRequest.id) ? t.open : [...t.open, openRequest.id], active: openRequest.id }));
+  }, [openRequest?.id, openRequest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const files = list?.files ?? [];
   const byId = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);

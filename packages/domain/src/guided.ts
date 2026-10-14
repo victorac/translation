@@ -18,6 +18,8 @@ export interface GuidedName {
   reading: string;
   /** True when the name is already in the project's glossary. */
   known: boolean;
+  /** The glossary topic this is, when it has been made one. */
+  id?: string;
   /** For a person: how the text refers to them, when it is clear. */
   gender?: Gender | null;
 }
@@ -108,6 +110,12 @@ export function guessGender(passage: string, names: readonly string[], otherName
     else if (next.startsWith("彼")) male++;
   });
   return female > 0 && male === 0 ? "female" : male > 0 && female === 0 ? "male" : null;
+}
+
+/** A first guess at a name that is not in the glossary yet: what kind it is, and its English form where the dictionary gives one. */
+export function nameGuess(source: string, reading: readonly string[] | undefined): { kind: NameKind; english: string; reading: string } {
+  const kind = guessKind(source);
+  return { kind, english: englishFor(kind, reading), reading: readingLetters(reading) };
 }
 
 const namesOf = (n: { source: string; aliases: readonly string[] }): string[] => [n.source, ...n.aliases];

@@ -478,10 +478,13 @@ describe("translating step by step", () => {
 
     const read = await service.guidedInterpret(0);
     expect(read.blocks[0]!.status).toBe("interpreted");
-    const interp = structuredClone(read.blocks[0]!.interpretation!);
-    // The user fixes an English name and confirms.
-    for (const n of interp.names) n.english = n.source === "花子" ? "Hanako" : n.source === "太郎" ? "Taro" : n.english;
-    service.guidedSave(0, interp);
+    // The names are glossary topics, suggested for the user to check. The user fixes the English names there.
+    const topics = service.knowledgeList({ kind: "term" }).entries;
+    expect(topics.map((e) => `${e.source}:${e.status}`)).toEqual(expect.arrayContaining(["花子:suggested", "太郎:suggested"]));
+    for (const e of topics) {
+      if (e.source === "花子" || e.source === "太郎") service.knowledgeSave({ id: e.id, kind: "term", source: e.source, target: e.source === "花子" ? "Hanako" : "Taro", hint: e.hint, category: e.category, aliases: e.aliases, attrs: e.attrs, text: "", about: null });
+    }
+    expect(service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === "花子")).toMatchObject({ english: "Hanako", known: true });
     const done = await service.guidedTranslate({ ...model, index: 0 });
     expect(done.blocks[0]).toMatchObject({ status: "translated", error: null });
     expect(done.blocks[0]!.translation).toContain("EN(qwen2.5-7b-instruct)");
@@ -542,19 +545,38 @@ describe("translating step by step", () => {
     const started = service.guidedStart({ documentId: docId, text: paragraphs.join("\n"), blockSize: "small" });
     expect(started.blocks.length).toBeGreaterThan(1);
     const first = await service.guidedInterpret(0);
-    const interp = structuredClone(first.blocks[0]!.interpretation!);
-    interp.narrator = "山田太郎";
-    if (!interp.names.some((n) => n.source === "山田太郎")) interp.names.push({ source: "山田太郎", english: "Taro", kind: "character", aliases: [], reading: "", known: false });
-    for (const n of interp.names) if (n.source === "山田太郎") n.english = "Taro";
-    service.guidedSave(0, interp);
+    expect(first.blocks[0]!.interpretation!.names.map((n) => n.source)).toContain("山田太郎");
+    service.guidedSave(0, "山田太郎", first.blocks[0]!.interpretation!.lines.map((l) => l.speaker));
     await service.guidedTranslate({ ...model, index: 0 });
     const second = await service.guidedInterpret(1);
     expect(second.blocks[1]!.interpretation!.narrator).toBe("山田太郎");
     // Changed on this block, it is the new one for the next.
-    const changed = structuredClone(second.blocks[1]!.interpretation!);
-    changed.narrator = null;
-    service.guidedSave(1, changed);
+    service.guidedSave(1, null, second.blocks[1]!.interpretation!.lines.map((l) => l.speaker));
     if (started.blocks.length > 2) expect((await service.guidedInterpret(2)).blocks[2]!.interpretation!.narrator).toBe(null);
+  });
+
+  it("lists the names of a block from the glossary: a word the user adds becomes a topic, and a deleted topic is gone from the list and not offered again", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は魔法使いだった。太郎が来た。", blockSize: "normal" });
+    const read = await service.guidedInterpret(0);
+    const hanako = read.blocks[0]!.interpretation!.names.find((n) => n.source === "花子")!;
+    expect(hanako).toMatchObject({ kind: "character", known: false });
+    expect(hanako.id).toBeTruthy();
+
+    const added = await service.guidedAddName(0, "魔法使い");
+    const term = added.blocks[0]!.interpretation!.names.find((n) => n.source === "魔法使い")!;
+    expect(term.id).toBeTruthy();
+    expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "魔法使い")).toBe(true);
+    // Adding it again changes nothing.
+    expect((await service.guidedAddName(0, "魔法使い")).blocks[0]!.interpretation!.names.filter((n) => n.source === "魔法使い")).toHaveLength(1);
+
+    service.knowledgeDelete(hanako.id!);
+    expect(service.guidedGet()!.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
+    const again = await service.guidedInterpret(0);
+    expect(again.blocks[0]!.interpretation!.names.some((n) => n.source === "花子")).toBe(false);
   });
 
   it("is kept in the project and can be started over", async () => {

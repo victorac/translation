@@ -62,4 +62,3 @@ export * from "./classes.js";
 export * from "./topicfile.js";
 export * from "./steps.js";
 export * from "./guided.js";
-export * from "./guidedtext.js";

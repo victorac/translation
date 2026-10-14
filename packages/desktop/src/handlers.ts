@@ -84,25 +84,10 @@ const schemas: Record<CommandName, z.ZodType> = {
   "guided.interpret": z.object({ index: z.number().int().min(0).max(100_000) }),
   "guided.save": z.object({
     index: z.number().int().min(0).max(100_000),
-    interpretation: z.object({
-      names: z
-        .array(
-          z.object({
-            source: z.string().min(1).max(200),
-            english: z.string().max(300),
-            kind: z.enum(["character", "family", "place", "organization", "term"]),
-            aliases: z.array(z.string().min(1).max(200)).max(50),
-            reading: z.string().max(300),
-            known: z.boolean(),
-            gender: z.enum(["female", "male"]).nullable().optional(),
-          }),
-        )
-        .max(500),
-      narrator: z.string().max(200).nullable(),
-      narratorWord: z.string().max(20).nullable(),
-      lines: z.array(z.object({ text: z.string().max(20_000), speaker: z.string().max(200).nullable() })).max(5000),
-    }),
+    narrator: z.string().max(200).nullable(),
+    speakers: z.array(z.string().max(200).nullable()).max(5000),
   }),
+  "guided.addName": z.object({ index: z.number().int().min(0).max(100_000), source: z.string().min(1).max(100) }),
   "guided.translate": z.object({
     index: z.number().int().min(0).max(100_000),
     backend: z.enum(["provider", "practice"]),
@@ -216,7 +201,8 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "guided.start": (p) => service.guidedStart(p),
     "guided.go": (p) => service.guidedGo(p.index),
     "guided.interpret": (p) => service.guidedInterpret(p.index),
-    "guided.save": (p) => service.guidedSave(p.index, p.interpretation),
+    "guided.save": (p) => service.guidedSave(p.index, p.narrator, p.speakers),
+    "guided.addName": (p) => service.guidedAddName(p.index, p.source),
     "guided.translate": (p) => service.guidedTranslate(p),
     "guided.clear": () => service.guidedClear(),
     "guided.setTranslation": (p) => service.guidedSetTranslation(p.index, p.text),

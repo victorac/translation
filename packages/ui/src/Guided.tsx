@@ -1,38 +1,41 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { labelLines, namesFromText, namesToText } from "@ltw/domain/pure";
-import type { GuidedName, GuidedState, Interpretation } from "@ltw/domain";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { labelLines } from "@ltw/domain/pure";
+import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
-import { ReadingEditor } from "./ReadingEditor";
+import { KnowledgeFiles } from "./KnowledgeFiles";
 import type { SetupState } from "./setup";
 
-const WIDTHS_KEY = "ltw.guided.widths";
-const MIN = 0.12;
+const WIDTHS_KEY = "ltw.guided.widths.v3";
+const MIN = 0.1;
+const DEFAULT_WIDTHS = [0.2, 0.27, 0.23, 0.3];
 
-const loadWidths = (): [number, number] => {
+const KIND_LABEL: Record<GuidedName["kind"], string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
+
+const loadWidths = (): number[] => {
   try {
     const v = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? "null") as unknown;
-    if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "number" && x >= MIN) && v[0] + v[1] <= 1 - MIN) return [v[0], v[1]];
+    if (Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === "number" && x >= MIN)) return v as number[];
   } catch {
     /* storage may be unavailable */
   }
-  return [1 / 3, 1 / 3];
+  return DEFAULT_WIDTHS;
 };
 
 /**
- * Translating one block at a time: the program reads who is named, who is telling it and who says each line, and shows
- * that as a text to check and fix. Only then is the block translated, with the result beside it, which can be fixed too.
+ * Translating one block at a time. The program reads who is named, who is telling it and who says each line. The names
+ * are topics of the glossary: they are listed here and opened as files in the pane on the right. The narrator and the
+ * speakers are chosen from them. Only then is the block translated, and the translation can be corrected beside it.
  */
-export function Guided({ setup, documentId, onClose }: { setup: SetupState; documentId: string; onClose: () => void }) {
+export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClose }: { setup: SetupState; documentId: string; knowledgeRev: number; knowledgeCounts: { terms: number; notes: number; suggested: number }; onClose: () => void }) {
   const [state, setState] = useState<GuidedState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
-  const [namesText, setNamesText] = useState("");
-  const [narrator, setNarrator] = useState<string | null>(null);
-  const [speakers, setSpeakers] = useState<(string | null)[]>([]);
   const [translation, setTranslation] = useState("");
-  const [widths, setWidths] = useState<[number, number]>(loadWidths);
+  const [newTerm, setNewTerm] = useState("");
+  const [widths, setWidths] = useState<number[]>(loadWidths);
+  const [topic, setTopic] = useState<{ id: string; n: number } | null>(null);
   const started = useRef(false);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
@@ -71,46 +74,42 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // What is being edited follows the block being shown.
+  // When the glossary changes (a topic edited in the pane on the right), the names listed here follow it.
+  const first = useRef(true);
   useEffect(() => {
-    setNamesText(base ? namesToText(base.names) : "");
-    setNarrator(base?.narrator ?? null);
-    setSpeakers(base ? base.lines.map((l) => l.speaker) : []);
-  }, [state?.current, base]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+  }, [knowledgeRev]);
+
   useEffect(() => {
     setTranslation(block?.translation ?? "");
   }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The names as typed. Everything that refers to a name (the narrator, who says each line) is checked against them as they are now.
-  const parsed = useMemo(() => (base ? namesFromText(namesText, base.names) : null), [namesText, base]);
-  const problems = parsed?.problems ?? [];
-  const people: GuidedName[] = useMemo(() => (parsed?.names ?? []).filter((n) => n.kind === "character"), [parsed]);
-  const has = (source: string | null): source is string => source !== null && people.some((p) => p.source === source);
-  const effectiveNarrator = has(narrator) ? narrator : null;
-  const effectiveSpeakers = speakers.map((s) => (has(s) ? s : null));
+  const people = (base?.names ?? []).filter((n) => n.kind === "character");
   const label = (p: GuidedName): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
+  const speakers = (base?.lines ?? []).map((l) => l.speaker);
 
-  /** What is shown and what is sent: the names as typed, the narrator and the speakers chosen. */
-  const draft: Interpretation | null =
-    base && parsed
-      ? { names: parsed.names, narrator: effectiveNarrator, narratorWord: base.narratorWord, lines: base.lines.map((l, i) => ({ text: l.text, speaker: effectiveSpeakers[i] ?? null })) }
-      : null;
+  /** Saves the narrator and speakers as chosen. Lines whose speaker is not known yet are worked out from the names and the narrator. */
+  const choose = async (narrator: string | null, who: (string | null)[], fill: boolean) => {
+    if (!block || !base) return;
+    const fresh = fill ? labelLines(block.text, base.names, narrator, base.narratorWord) : [];
+    const next = who.map((s, i) => (s === null && fill && fresh[i]?.text === base.lines[i]?.text ? (fresh[i]?.speaker ?? null) : s));
+    const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: next }));
+    if (s) setState(s);
+  };
 
-  /** After the names or the narrator change, lines whose speaker is not known yet are worked out again; the ones already set stay. */
-  const fill = (names: GuidedName[], who: string | null, current: (string | null)[]) => {
-    if (!block || !base) return current;
-    const fresh = labelLines(block.text, names, who, base.narratorWord);
-    return current.map((s, i) => (s === null && fresh[i]?.text === base.lines[i]?.text ? (fresh[i]?.speaker ?? null) : s));
-  };
-  const onNames = (text: string) => {
-    setNamesText(text);
-    if (!base) return;
-    const next = namesFromText(text, base.names);
-    setSpeakers((cur) => fill(next.names, has(narrator) ? narrator : null, cur));
-  };
-  const onNarrator = (value: string | null) => {
-    setNarrator(value);
-    setSpeakers((cur) => fill(parsed?.names ?? [], value, cur));
+  const addTerm = async () => {
+    const word = newTerm.trim();
+    if (!block || word === "") return;
+    const s = await call(() => api.invoke("guided.addName", { index: block.index, source: word }));
+    if (!s) return;
+    setNewTerm("");
+    setState(s);
+    const name = s.blocks[block.index]?.interpretation?.names.find((n) => n.source === word || n.aliases.includes(word));
+    if (name?.id) setTopic({ id: name.id, n: Date.now() });
   };
 
   const go = async (index: number) => {
@@ -122,31 +121,24 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   };
 
   const translate = async () => {
-    if (!state || !block || !model || !draft || problems.length > 0) return;
+    if (!state || !block || !model || !base) return;
     setWorking("translate");
-    const saved = await call(() => api.invoke("guided.save", { index: block.index, interpretation: draft }));
-    if (saved) {
-      setState(saved);
-      const s = await call(() =>
-        api.invoke("guided.translate", {
-          index: block.index,
-          backend: setup.backend,
-          modelId: model.name,
-          contextLimit: model.contextLimit,
-          maxOutputTokens: model.maxOutputTokens,
-          temperature: model.temperature,
-          sourceLanguage: setup.sourceLanguage,
-          targetLanguage: setup.targetLanguage,
-        }),
-      );
-      if (s) setState(s);
-      else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
-    }
+    const s = await call(() =>
+      api.invoke("guided.translate", {
+        index: block.index,
+        backend: setup.backend,
+        modelId: model.name,
+        contextLimit: model.contextLimit,
+        maxOutputTokens: model.maxOutputTokens,
+        temperature: model.temperature,
+        sourceLanguage: setup.sourceLanguage,
+        targetLanguage: setup.targetLanguage,
+      }),
+    );
+    if (s) setState(s);
+    else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setWorking(null);
   };
-
-  /** Lines whose speaker is not known are worked out again from the names and the narrator as they are now. */
-  const guessSpeakers = () => setSpeakers(fill(parsed?.names ?? [], effectiveNarrator, effectiveSpeakers));
 
   const saveTranslation = async () => {
     if (!block || translation === block.translation) return;
@@ -155,33 +147,34 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   };
 
   const startOver = async () => {
-    if (state && state.blocks.some((b) => b.status === "translated") && !window.confirm("Start over? The blocks translated so far will be discarded. The names you confirmed are kept in the knowledge base.")) return;
+    if (state && state.blocks.some((b) => b.status === "translated") && !window.confirm("Start over? The blocks translated so far will be discarded. The names stay in the knowledge base.")) return;
     await call(() => api.invoke("guided.clear"));
     setState(null);
     onClose();
   };
 
-  // ---- the three panes and the handles between them ----
+  // ---- the panes and the handles between them ----
+  const shown = topic ? [0, 1, 2, 3] : [0, 1, 2];
+  const total = shown.reduce((sum, i) => sum + widths[i]!, 0);
+  const columns = shown.map((i, n) => `${widths[i]! / total}fr${n < shown.length - 1 ? " 6px" : ""}`).join(" ");
   const box = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ which: 0 | 1; start: number; widths: [number, number] } | null>(null);
-  const beginDrag = (which: 0 | 1) => (e: ReactPointerEvent) => {
+  const drag = useRef<{ left: number; right: number; start: number; widths: number[] } | null>(null);
+  const beginDrag = (left: number, right: number) => (e: ReactPointerEvent) => {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { which, start: e.clientX, widths };
+    drag.current = { left, right, start: e.clientX, widths };
   };
   const moveDrag = (e: ReactPointerEvent) => {
     const d = drag.current;
     const width = box.current?.getBoundingClientRect().width;
     if (!d || !width) return;
-    const delta = (e.clientX - d.start) / width;
-    const [a, b] = d.widths;
-    // The handle between two panes moves their shared edge: one grows as the other shrinks, and the third keeps its width.
-    if (d.which === 0) {
-      const na = Math.min(Math.max(MIN, a + delta), a + b - MIN);
-      setWidths([na, a + b - na]);
-    } else {
-      const nb = Math.min(Math.max(MIN, b + delta), 1 - a - MIN);
-      setWidths([a, nb]);
-    }
+    // The handle moves the edge between two panes: one grows as the other shrinks, and the others keep their width.
+    const delta = ((e.clientX - d.start) / width) * total;
+    const pair = d.widths[d.left]! + d.widths[d.right]!;
+    const left = Math.min(Math.max(MIN, d.widths[d.left]! + delta), pair - MIN);
+    const next = [...d.widths];
+    next[d.left] = left;
+    next[d.right] = pair - left;
+    setWidths(next);
   };
   const endDrag = () => {
     if (!drag.current) return;
@@ -205,7 +198,6 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
   }
 
   const done = state.blocks.filter((b) => b.status === "translated").length;
-  const columns = `${widths[0]}fr 6px ${widths[1]}fr 6px ${Math.max(MIN, 1 - widths[0] - widths[1])}fr`;
 
   return (
     <div className="guided">
@@ -262,7 +254,7 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
             <div className="guided-body source-text">{block.text}</div>
           </section>
 
-          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0)} />
+          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
 
           <section className="guided-pane">
             <h3>What was read</h3>
@@ -278,7 +270,7 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
                 <div className="guided-scroll">
                   <label className="guided-narrator">
                     {base.narratorWord ? `Told as “${base.narratorWord}”. Narrator` : "Narrator"}
-                    <select aria-label="Narrator" value={effectiveNarrator ?? ""} onChange={(e) => onNarrator(e.target.value === "" ? null : e.target.value)}>
+                    <select aria-label="Narrator" value={base.narrator ?? ""} onChange={(e) => void choose(e.target.value === "" ? null : e.target.value, speakers, true)}>
                       <option value="">not set</option>
                       {people.map((p) => (
                         <option key={p.source} value={p.source}>
@@ -287,11 +279,35 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
                       ))}
                     </select>
                   </label>
-                  {base.narratorWord && effectiveNarrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
-                  <h4>Names</h4>
-                  <div className="guided-editor">
-                    <ReadingEditor docKey={`${state.current}`} text={namesText} problems={problems} onText={onNames} />
-                  </div>
+                  {base.narratorWord && base.narrator === null && <p className="hint guided-hint">Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.</p>}
+
+                  <h4>Names in this block</h4>
+                  {base.names.length === 0 && <p className="hint guided-hint">No names found. Add a word from the text below.</p>}
+                  <ul className="guided-glossary">
+                    {base.names.map((n) => (
+                      <li key={n.source}>
+                        <button className="glossary-row" onClick={() => n.id && setTopic({ id: n.id, n: Date.now() })} title="Open this topic in the knowledge base">
+                          <span className="name-source">{n.source}</span>
+                          <span className={n.english.trim() === "" ? "name-english missing" : "name-english"}>{n.english.trim() === "" ? "needs an English name" : n.english}</span>
+                          <span className="tag">{KIND_LABEL[n.kind]}</span>
+                          {!n.known && <span className="tag warn-tag">to check</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <form
+                    className="row"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void addTerm();
+                    }}
+                  >
+                    <input aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
+                    <button className="small" type="submit" disabled={newTerm.trim() === ""}>
+                      Add
+                    </button>
+                  </form>
+
                   <h4>Who says each line</h4>
                   {base.lines.length === 0 && <p className="hint guided-hint">There are no lines of speech in this block.</p>}
                   <ul className="guided-lines">
@@ -300,11 +316,7 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
                         <span className="line-text" title={l.text}>
                           {Array.from(l.text).length > 22 ? `${Array.from(l.text).slice(0, 22).join("")}…` : l.text}
                         </span>
-                        <select
-                          aria-label={`Speaker of line ${i + 1}`}
-                          value={effectiveSpeakers[i] ?? ""}
-                          onChange={(e) => setSpeakers((cur) => cur.map((s, n) => (n === i ? (e.target.value === "" ? null : e.target.value) : s)))}
-                        >
+                        <select aria-label={`Speaker of line ${i + 1}`} value={l.speaker ?? ""} onChange={(e) => void choose(base.narrator, speakers.map((s, n) => (n === i ? (e.target.value === "" ? null : e.target.value) : s)), false)}>
                           <option value="">not known</option>
                           {people.map((p) => (
                             <option key={p.source} value={p.source}>
@@ -317,22 +329,21 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
                   </ul>
                 </div>
                 <div className="guided-foot">
-                  <button className="primary" onClick={() => void translate()} disabled={working !== null || !model || problems.length > 0} title={problems.length > 0 ? "Fix what is marked first" : undefined}>
-                    {working === "translate" ? "Translating…" : block.status === "translated" ? "Confirm and translate again" : "Confirm and translate"}
+                  <button className="primary" onClick={() => void translate()} disabled={working !== null || !model}>
+                    {working === "translate" ? "Translating…" : block.status === "translated" ? "Translate again" : "Translate"}
                   </button>
-                  <button onClick={guessSpeakers} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
+                  <button onClick={() => void choose(base.narrator, speakers, true)} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
                     Guess the speakers
                   </button>
-                  <button onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again, discarding your changes here">
+                  <button onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again">
                     Read again
                   </button>
-                  {problems.length > 0 && <span className="hint">{problems.length === 1 ? "1 thing to fix" : `${problems.length} things to fix`}</span>}
                 </div>
               </>
             )}
           </section>
 
-          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1)} />
+          <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1, 2)} />
 
           <section className="guided-pane">
             <h3>Translation</h3>
@@ -348,10 +359,27 @@ export function Guided({ setup, documentId, onClose }: { setup: SetupState; docu
               </>
             ) : (
               <div className="guided-body">
-                <p className="hint">{working === "translate" ? "Translating…" : block.error ? block.error : "The translation appears here once you confirm what was read."}</p>
+                <p className="hint">{working === "translate" ? "Translating…" : block.error ? block.error : "The translation appears here once you translate the block."}</p>
               </div>
             )}
           </section>
+
+          {topic && (
+            <>
+              <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the translation and the knowledge base" onPointerDown={beginDrag(2, 3)} />
+              <section className="guided-pane">
+                <h3 className="guided-pane-title">
+                  Knowledge base
+                  <button className="small" onClick={() => setTopic(null)} aria-label="Close the knowledge base pane">
+                    ×
+                  </button>
+                </h3>
+                <div className="guided-kb">
+                  <KnowledgeFiles rev={knowledgeRev} counts={knowledgeCounts} openRequest={topic} compact />
+                </div>
+              </section>
+            </>
+          )}
         </div>
       )}
     </div>

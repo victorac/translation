@@ -1,6 +1,7 @@
 import {
   allPrompts,
   glossaryFor,
+  nameGuess,
   paragraphCount,
   splitPieces,
   interpretPassage,
@@ -1198,7 +1199,31 @@ export class WorkspaceService {
   private guided: GuidedState | null = null;
 
   guidedGet(): GuidedState | null {
-    return this.guided;
+    return this.guided ? this.guidedView() : null;
+  }
+
+  /**
+   * The state with every block's names taken from the glossary as it is now, so a topic edited or deleted in the knowledge pane
+   * shows right away: its English form, kind, aliases and gender. A name whose topic is gone is no longer listed.
+   */
+  private guidedView(): GuidedState {
+    const g = this.guided!;
+    const terms = this.knowledge.all().filter((e) => e.kind === "term");
+    for (const b of g.blocks) {
+      if (!b.interpretation) continue;
+      b.interpretation.names = b.interpretation.names.flatMap((n) => {
+        const e = terms.find((t) => t.source === n.source);
+        if (!e) return [];
+        const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
+        const gender = (e.attrs["gender"] ?? [])[0];
+        return [{ ...n, id: e.id, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+      });
+      if (b.interpretation.narrator && !b.interpretation.names.some((n) => n.source === b.interpretation!.narrator) && b.interpretation.narratorWord) {
+        const e = terms.find((t) => t.source === b.interpretation!.narrator);
+        if (!e) b.interpretation.narrator = null;
+      }
+    }
+    return g;
   }
 
   private guidedBlock(index: number) {
@@ -1223,7 +1248,7 @@ export class WorkspaceService {
       blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", status: "new" as const, error: null })),
     };
     this.guidedChanged();
-    return this.guided;
+    return this.guidedView();
   }
 
   guidedGo(index: number): GuidedState {
@@ -1244,45 +1269,90 @@ export class WorkspaceService {
     const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
     return this.knowledge
       .all()
-      .filter((e) => e.kind === "term" && e.status !== "rejected")
+      .filter((e) => e.kind === "term")
       .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
   }
 
-  /** Reads one block: who is named, who is telling it, who says each line. */
+  /** Makes a glossary topic, as a suggestion for the user to check, for a name that is not in the glossary yet. */
+  private suggestTopic(n: { source: string; english: string; kind: NameKind; aliases: string[]; gender?: "female" | "male" | null | undefined }, origin: { block?: number; by: "user" | "model" }): void {
+    const at = new Date().toISOString();
+    this.knowledge.addMany([
+      {
+        id: newId(),
+        kind: "term",
+        source: n.source,
+        target: n.english,
+        hint: "",
+        category: n.kind,
+        aliases: n.aliases,
+        attrs: n.gender ? { gender: [n.gender] } : {},
+        attrFlags: n.gender ? ["gender"] : [],
+        text: "",
+        about: null,
+        related: [],
+        scope: null,
+        origin: { by: origin.by, ...(origin.block !== undefined ? { block: origin.block } : {}) },
+        status: "suggested",
+        updatedAt: at,
+      },
+    ]);
+  }
+
+  /** Reads one block: who is named, who is telling it, who says each line. New names become glossary topics to check. */
   async guidedInterpret(index: number): Promise<GuidedState> {
     const block = this.guidedBlock(index);
     const glossary = this.knownNames();
-    const candidates = await findCandidateNames(block.text);
+    // A name the user deleted from the glossary is not offered again.
+    const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
+    const candidates = (await findCandidateNames(block.text)).filter((c) => !rejected.has(c));
     const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
     // The narrator carries on from the nearest block read before this one.
     const earlier = this.guided!.blocks.slice(0, index).reverse().find((b) => b.interpretation);
-    block.interpretation = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null });
+    const found = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null });
+    for (const n of found.names) if (!n.known) this.suggestTopic(n, { by: "model", block: index + 1 });
+    // Given names found alone became aliases of a known person: keep that in the glossary too.
+    for (const n of found.names.filter((x) => x.known && x.aliases.length > 0)) {
+      const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
+      if (e && n.aliases.some((a) => !e.aliases.includes(a))) this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: [...new Set([...e.aliases, ...n.aliases])], attrs: e.attrs, text: "", about: null });
+    }
+    block.interpretation = found;
     if (block.status === "new") block.status = "interpreted";
     this.guided!.current = index;
-    this.guidedChanged();
-    return this.guided!;
-  }
-
-  guidedSave(index: number, interpretation: Interpretation): GuidedState {
-    const block = this.guidedBlock(index);
-    block.interpretation = interpretation;
-    if (block.status === "new") block.status = "interpreted";
-    this.guidedChanged();
-    return this.guided!;
-  }
-
-  /** What the user confirmed becomes part of the glossary, so the next blocks start from it. */
-  private rememberInterpretation(interp: Interpretation): void {
-    const entries = this.knowledge.all().filter((e) => e.kind === "term");
-    for (const n of interp.names) {
-      if (n.english.trim() === "") continue;
-      const found = entries.find((e) => e.source === n.source);
-      const attrs = { ...(found?.attrs ?? {}) };
-      if (n.gender) attrs["gender"] = [n.gender];
-      const aliases = [...new Set([...(found?.aliases ?? []), ...n.aliases])].filter((a) => a !== n.source);
-      this.knowledge.save({ ...(found ? { id: found.id } : {}), kind: "term", source: n.source, target: n.english.trim(), hint: found?.hint ?? "", category: n.kind, aliases, attrs, text: "", about: null });
-    }
     this.knowledgeChanged();
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** The narrator and who says each line, as the user set them. The names are the glossary's. */
+  guidedSave(index: number, narrator: string | null, speakers: (string | null)[]): GuidedState {
+    const block = this.guidedBlock(index);
+    const interp = block.interpretation;
+    if (interp) {
+      interp.narrator = narrator;
+      interp.lines = interp.lines.map((l, i) => ({ ...l, speaker: speakers[i] ?? null }));
+    }
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** Adds a word from the text to this block's names, making a glossary topic for it when there is none. */
+  async guidedAddName(index: number, source: string): Promise<GuidedState> {
+    const block = this.guidedBlock(index);
+    const word = source.trim();
+    if (word === "") throw new UserError("no_name", "Type the word as it is written in the text.");
+    if (!block.interpretation) await this.guidedInterpret(index);
+    const interp = block.interpretation!;
+    const existing = this.knowledge.all().find((e) => e.kind === "term" && (e.source === word || e.aliases.includes(word)));
+    const sourceName = existing?.source ?? word;
+    if (!existing) {
+      const readings = await readNames([word]);
+      const guess = nameGuess(word, readings[word]);
+      this.suggestTopic({ source: word, english: guess.english, kind: guess.kind, aliases: [] }, { by: "user" });
+    }
+    if (!interp.names.some((n) => n.source === sourceName)) interp.names.push({ source: sourceName, english: "", kind: "term", aliases: [], reading: "", known: false });
+    this.knowledgeChanged();
+    this.guidedChanged();
+    return this.guidedView();
   }
 
   /** The user's own correction of a translation. */
@@ -1292,7 +1362,7 @@ export class WorkspaceService {
     if (text.trim() !== "") block.status = "translated";
     block.warning = null;
     this.guidedChanged();
-    return this.guided!;
+    return this.guidedView();
   }
 
   /**
@@ -1302,10 +1372,10 @@ export class WorkspaceService {
   async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
     if (!block.interpretation) await this.guidedInterpret(input.index);
+    this.guidedView();
     const interp = block.interpretation!;
     const abort = this.beginSideRequest();
     try {
-      this.rememberInterpretation(interp);
       const system = renderPrompt(STANDARD_PROMPT, input.sourceLanguage, input.targetLanguage);
       const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
       // What fits: the pieces are made so that a piece, its translation and the request around it fit the model's context.
@@ -1344,7 +1414,7 @@ export class WorkspaceService {
             },
             abort,
           );
-          if (reply === null) return this.guided!; // stopped
+          if (reply === null) return this.guidedView(); // stopped
           translation = reply.trim();
           if (paragraphCount(translation) >= paragraphs) break;
         }
@@ -1363,7 +1433,7 @@ export class WorkspaceService {
       this.analysisAbort = null;
     }
     this.guidedChanged();
-    return this.guided!;
+    return this.guidedView();
   }
 
   // ---- suggested notes ----

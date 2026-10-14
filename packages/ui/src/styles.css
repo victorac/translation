@@ -442,3 +442,12 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 .guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 0.4rem; align-items: center; }
 .guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.guided-glossary { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.glossary-row { width: 100%; display: flex; align-items: center; gap: 0.5rem; text-align: left; padding: 0.3rem 0.5rem; }
+.glossary-row .name-source { font-weight: 600; }
+.glossary-row .name-english { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glossary-row .name-english.missing { color: var(--warn); font-style: italic; }
+.guided-pane-title { display: flex; align-items: center; justify-content: space-between; }
+.guided-kb { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.guided-kb .kbf { flex: 1; min-height: 0; }

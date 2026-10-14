@@ -44,6 +44,7 @@ const COMMANDS = new Set([
   "guided.go",
   "guided.interpret",
   "guided.save",
+  "guided.addName",
   "guided.translate",
   "guided.clear",
   "guided.setTranslation",
