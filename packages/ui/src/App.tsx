@@ -3,7 +3,7 @@ import { Button, Callout, Flex, Text } from "@radix-ui/themes";
 import { ExportDialog } from "./ExportDialog";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
-import { Toolbar } from "./Toolbar";
+import { Toolbar, type Activity } from "./Toolbar";
 import { Workspace } from "./Workspace";
 import { api } from "./api";
 import { loadSetup, saveSetup, settingsOf, withSettings, type SetupState } from "./setup";
@@ -31,6 +31,7 @@ export function App() {
   const [setup, setSetup] = useState<SetupState>(loadSetup);
   const [tab, setTab] = useState<SettingsTab | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [activity, setActivity] = useState<Activity | null>(null);
   const [kb, setKb] = useState<{ open: boolean; request: { id: string; n: number } | null }>({ open: false, request: null });
 
   const setupRef = useRef(setup);
@@ -111,6 +112,7 @@ export function App() {
         onSettings={() => setTab((t) => (t ? null : "server"))}
         onExport={() => setExporting(true)}
         confirmDiscard={confirmDiscard}
+        activity={activity}
         knowledge={{ open: kb.open, count: known, suggested: snap?.knowledge.suggested ?? 0, onToggle: () => setKb((k) => ({ open: !k.open, request: null })) }}
       />
 
@@ -209,6 +211,7 @@ export function App() {
               knowledgeCounts={snap.knowledge}
               kb={kb}
               onKb={setKb}
+              onActivity={setActivity}
             />
           ) : (
             <Text as="p" size="2" color="gray" m="4">

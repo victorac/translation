@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { GearIcon } from "@radix-ui/react-icons";
-import { Badge, Button, DropdownMenu, Flex, IconButton, Text, TextField } from "@radix-ui/themes";
+import { Badge, Button, DropdownMenu, Flex, IconButton, Spinner, Text, TextField } from "@radix-ui/themes";
+import { api } from "./api";
 import type { WorkspaceSnapshot } from "@ltw/domain";
 import type { useWorkspace } from "./useWorkspace";
 
@@ -42,6 +43,35 @@ function ProjectName({ title, path, onRename }: { title: string; path: string | 
   );
 }
 
+/** What the app is doing for the user: in words, and whether it can be stopped. */
+export interface Activity {
+  what: string;
+  stop: boolean;
+}
+
+/** What the model is doing right now, with how long it has been at it and a way to stop it. */
+function Working({ what, stop }: Activity) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    setSeconds(0);
+    const t = setInterval(() => setSeconds((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [what]);
+  return (
+    <Flex align="center" gap="2" minWidth="0" role="status" aria-live="polite">
+      <Spinner size="1" />
+      <Text size="2" color="gray" truncate>
+        {what}… {seconds}s
+      </Text>
+      {stop && (
+        <Button variant="ghost" color="gray" size="1" onClick={() => void api.invoke("notes.cancel")} title="Stop what the model is doing">
+          Stop
+        </Button>
+      )}
+    </Flex>
+  );
+}
+
 /** The top line: the project's name on the left; on the right the knowledge base, the file menu (open, save, export) and the settings. */
 export function Toolbar({
   snap,
@@ -49,6 +79,7 @@ export function Toolbar({
   onSettings,
   onExport,
   confirmDiscard,
+  activity,
   knowledge,
 }: {
   snap: WorkspaceSnapshot | null;
@@ -56,6 +87,8 @@ export function Toolbar({
   onSettings: () => void;
   onExport: () => void;
   confirmDiscard: (what: string) => boolean;
+  /** What the model is doing for the user right now; null when it is idle. */
+  activity: Activity | null;
   /** The knowledge base pane: whether it is showing, how many entries there are, and how many are waiting to be checked. */
   knowledge: { open: boolean; count: number; suggested: number; onToggle: () => void };
 }) {
@@ -74,7 +107,8 @@ export function Toolbar({
           )}
         </Flex>
 
-        <Flex align="center" gap="4">
+        <Flex align="center" gap="4" minWidth="0">
+          {activity && <Working what={activity.what} stop={activity.stop} />}
           <Button variant={knowledge.open ? "solid" : "soft"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
             Knowledge base
             {knowledge.count > 0 && <Badge variant="soft">{knowledge.count}</Badge>}

@@ -4,6 +4,7 @@ import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField }
 import { estimateTokens, normalizeSource, occurrencesOf, rewriteRange, wholeParagraphs } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState, Located } from "@ltw/domain";
 import { api } from "./api";
+import type { Activity } from "./Toolbar";
 import type { PreviewBlock } from "./blockMarkers";
 import { KnowledgeFiles } from "./KnowledgeFiles";
 import { SourceEditor, type Hit } from "./SourceEditor";
@@ -11,6 +12,7 @@ import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
+const LOCATING = "Finding where the translation comes from";
 const WIDTHS_KEY = "ltw.workspace.widths.v2";
 const MIN = 0.1;
 const DEFAULT_WIDTHS = [0.28, 0.26, 0.22, 0.24];
@@ -39,6 +41,7 @@ export function Workspace({
   knowledgeCounts,
   kb,
   onKb,
+  onActivity,
 }: {
   setup: SetupState;
   documentId: string;
@@ -51,9 +54,13 @@ export function Workspace({
   /** Whether the knowledge base pane is showing, and the topic it was asked to open. */
   kb: { open: boolean; request: { id: string; n: number } | null };
   onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
+  /** What the model is doing for the user right now, in words; null when it is idle. */
+  onActivity: (what: Activity | null) => void;
 }) {
   const [state, setState] = useState<GuidedState | null>(null);
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
+  const [activity, setActivity] = useState<Activity | null>(null);
+  useEffect(() => onActivity(activity), [activity]); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   const [translation, setTranslation] = useState("");
@@ -94,7 +101,9 @@ export function Workspace({
 
   const read = async (index: number) => {
     setWorking("read");
+    setActivity({ what: `Reading block ${index + 1}`, stop: false });
     const s = await call(() => api.invoke("guided.interpret", { index }));
+    setActivity(null);
     setWorking(null);
     if (s) setState(s);
   };
@@ -106,9 +115,22 @@ export function Workspace({
     const made = await call(() => api.invoke("guided.sync", { documentId, text, blockSize: setup.blockSize }));
     if (made) {
       setState(made);
-      const all = await call(() => api.invoke("guided.readAll"));
-      if (all) setState(all);
+      // The blocks are read one after the other in one request; how many are done is asked for while it goes on.
+      const unread = (n: GuidedState) => n.blocks.filter((b) => b.status === "new").length;
+      const left = unread(made);
+      if (left > 0) {
+        setActivity({ what: `Reading the blocks: 0 of ${left}`, stop: false });
+        const poll = setInterval(() => {
+          void api.invoke("guided.get").then((r) => {
+            if (r.ok && r.value) setActivity({ what: `Reading the blocks: ${Math.min(left, left - unread(r.value))} of ${left}`, stop: false });
+          });
+        }, 1000);
+        const all = await call(() => api.invoke("guided.readAll"));
+        clearInterval(poll);
+        if (all) setState(all);
+      }
     }
+    setActivity(null);
     setWorking(null);
   };
 
@@ -231,6 +253,7 @@ export function Workspace({
   const translate = async () => {
     if (!state || !block || !model || !base) return;
     setWorking("translate");
+    setActivity({ what: `Translating block ${block.index + 1} with ${model.name}`, stop: true });
     const s = await call(() =>
       api.invoke("guided.translate", {
         index: block.index,
@@ -246,6 +269,7 @@ export function Workspace({
     );
     if (s) setState(s);
     else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    setActivity(null);
     setWorking(null);
   };
 
@@ -269,6 +293,7 @@ export function Workspace({
     if (known) return known;
     if (asking.current === key) return null;
     asking.current = key;
+    setActivity((a) => a ?? { what: LOCATING, stop: true });
     try {
       const r = await api.invoke("guided.locate", { ...modelInput(block.index), text: translation });
       if (!r.ok) return null;
@@ -276,6 +301,7 @@ export function Workspace({
       return r.value;
     } finally {
       asking.current = null;
+      setActivity((a) => (a?.what === LOCATING ? null : a));
     }
   };
   const placeOf = (found: Located[], from: number, to: number) => found.find((p) => from <= p.to && to >= p.from)?.source ?? null;
@@ -302,7 +328,9 @@ export function Workspace({
   const retranslate = async () => {
     if (!block || !model || !wholeParagraphs(translation, sel.from, sel.to)) return;
     setWorking("translate");
+    setActivity({ what: "Finding where the paragraph comes from", stop: true });
     const found = await locate();
+    setActivity({ what: `Writing the paragraph again with ${model.name}`, stop: true });
     // Paragraphs that share source text with the one under the cursor are written again together.
     const grown = found ? rewriteRange(found, sel.from, sel.to) : null;
     const range: { from: number; to: number } = grown ?? wholeParagraphs(translation, sel.from, sel.to)!;
@@ -314,6 +342,7 @@ export function Workspace({
       places.current.clear();
       setMapped(null);
     } else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    setActivity(null);
     setWorking(null);
   };
 
