@@ -395,3 +395,29 @@ button.toggle .tag { margin-left: 0.35rem; }
 .cm-kbf-problem { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .cm-kbf-msg { color: var(--danger); font-size: 0.85em; }
 .strip-details { margin: 0; padding: 0.3rem 1rem 0.3rem 2rem; background: var(--accent-soft); font-size: 0.9em; border-bottom: 1px solid var(--border); }
+
+/* ---- step by step translation ---- */
+.guided-start { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.guided { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.guided-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); }
+.guided-dots { display: flex; flex-wrap: wrap; gap: 0.2rem; flex: 1; justify-content: center; min-width: 0; }
+.guided-dots .dot { min-width: 1.6rem; padding: 0.05rem 0.3rem; font-size: 0.78em; border-radius: 0.8rem; background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.guided-dots .dot.interpreted { border-color: var(--accent); }
+.guided-dots .dot.translated { background: var(--accent-soft); border-color: var(--accent); color: inherit; }
+.guided-dots .dot.here { outline: 2px solid var(--accent); outline-offset: 1px; }
+.guided-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.guided-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+.guided-pane:last-child { border-right: none; }
+.guided-pane h3 { margin: 0; padding: 0.35rem 0.75rem; font-size: 0.85em; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); }
+.guided-pane h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
+.guided-body { flex: 1; min-height: 0; overflow: auto; padding: 0.75rem; }
+.guided-body.source-text, .translation-text { white-space: pre-wrap; line-height: 1.7; }
+.guided-field label { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.guided-names, .guided-lines { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.guided-names li { display: grid; grid-template-columns: minmax(4rem, auto) auto auto minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; }
+.guided-names input { min-width: 0; }
+.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; align-items: center; }
+.guided-lines .line-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guided-names .tag { margin-left: 0.35rem; }
+.guided-actions { margin-top: 1rem; }
+@media (max-width: 1000px) { .guided-cols { grid-template-columns: 1fr; overflow: auto; } .guided-pane { border-right: none; border-bottom: 1px solid var(--border); } }

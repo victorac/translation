@@ -83,8 +83,17 @@ export function properNounRuns(tokens: readonly WordToken[]): string[] {
     if (current !== "") runs.push(current);
     current = "";
   };
-  for (const t of tokens) {
+  for (const [i, t] of tokens.entries()) {
     const proper = t.details[0] === "名詞" && t.details[1] === "固有名詞";
+    // A surname followed by a plain one or two kanji word that ends the phrase is a full name (鈴木 + 花子 = 鈴木花子).
+    const next = tokens[i + 1];
+    const given = current !== "" && !proper && t.details[0] === "名詞" && t.details[1] === "一般" && /^[\u4E00-\u9FFF]{1,2}$/.test(t.surface) && t.byteStart === lastEnd && (next === undefined || next.details[0] !== "名詞") && !HONORIFICS.includes(t.surface);
+    if (given) {
+      current += t.surface;
+      lastEnd = t.byteEnd;
+      flush();
+      continue;
+    }
     const suffix = current !== "" && t.details[0] === "名詞" && t.details[1] === "接尾" && !HONORIFICS.includes(t.surface);
     if ((proper || suffix) && (current === "" || t.byteStart === lastEnd)) {
       current += t.surface;
@@ -284,7 +293,10 @@ export interface Quote {
 
 /** The 「…」 lines of a passage, in order. */
 export function findQuotes(passage: string): Quote[] {
-  return [...passage.matchAll(/「[^」]*」/g)].map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
+  // A word set in quotation marks and then named or called so (「山田」と呼んで) is not something said.
+  return [...passage.matchAll(/「[^」]*」/g)]
+    .filter((m) => !/^と(?:呼|称|名乗|名付)/.test(passage.slice(m.index! + m[0].length, m.index! + m[0].length + 3)))
+    .map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
 }
 
 /** Where `name` is written in `text` followed by one of `after`, and not as part of a longer name. */
@@ -328,7 +340,12 @@ export function speakerByForm(passage: string, quote: Quote, speakers: readonly 
 export function takeTurns(passage: string, quotes: readonly Quote[], who: readonly (string | null)[], speakers: readonly Speaker[]): (string | null)[] {
   const out = [...who];
   if (speakers.length !== 2) return out;
-  const alone = (q: Quote) => (q.start === 0 || passage[q.start - 1] === "\n") && (q.end === passage.length || passage[q.end] === "\n");
+  // A line of its own: it starts a paragraph, and after it comes at most a few words of narration ("…」と花子は言った。").
+  const alone = (q: Quote) => {
+    if (q.start !== 0 && passage[q.start - 1] !== "\n") return false;
+    const rest = passage.slice(q.end).split("\n")[0]!;
+    return !rest.includes("「") && rest.length <= 25;
+  };
   const other = (id: string) => speakers.find((s) => s.id !== id)!.id;
   const spokenTo = quotes.map((q) => addressedIn(q.text, speakers));
   for (let changed = true; changed; ) {

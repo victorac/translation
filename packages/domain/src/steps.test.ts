@@ -161,6 +161,10 @@ describe("speakers of quotations", () => {
     return speakerByForm(passage, quotes[n]!, people, quotes);
   };
 
+  it("does not count a word in quotation marks that is only being named or called", () => {
+    expect(findQuotes("ぼくを「山田」と呼んで「おはよう」と言った。").map((q) => q.text)).toEqual(["「おはよう」"]);
+  });
+
   it("finds the quotations in order", () => {
     expect(findQuotes("a「一」b「二」").map((q) => q.text)).toEqual(["「一」", "「二」"]);
   });
@@ -226,5 +230,18 @@ describe("names from readings", () => {
 
   it("does not accept a sentence about oneself as a name", () => {
     expect(plausibleName("I am Ken Tensan", "I am Ken Tensan")).toBe(false);
+  });
+});
+
+describe("surname and given name", () => {
+  const tok = (surface: string, d: string[], start: number) => ({ surface, details: d, byteStart: start, byteEnd: start + surface.length * 3 });
+  it("joins a surname and a plain word of one or two kanji that closes the phrase into a full name", () => {
+    const tokens = [tok("鈴木", ["名詞", "固有名詞", "地域"], 0), tok("花子", ["名詞", "一般"], 6), tok("。", ["記号", "句点"], 12)];
+    expect(properNounRuns(tokens)).toEqual(["鈴木花子"]);
+  });
+
+  it("does not join when another noun follows, or when the word is not next to the surname", () => {
+    expect(properNounRuns([tok("鈴木", ["名詞", "固有名詞", "地域"], 0), tok("花子", ["名詞", "一般"], 6), tok("先生", ["名詞", "一般"], 12)])).toEqual(["鈴木"]);
+    expect(properNounRuns([tok("鈴木", ["名詞", "固有名詞", "地域"], 0), tok("花子", ["名詞", "一般"], 9), tok("は", ["助詞"], 15)])).toEqual(["鈴木"]);
   });
 });

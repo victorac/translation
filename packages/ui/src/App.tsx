@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeSource } from "@ltw/domain/pure";
 import { ExportDialog } from "./ExportDialog";
+import { Guided } from "./Guided";
 import { Grid, type SourceMode } from "./Grid";
 import { Panes } from "./Panes";
 import { useColumnLayout } from "./useColumnLayout";
@@ -25,6 +26,7 @@ export function App() {
   const columns = useColumnLayout();
   const [trayOpen, setTrayOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [guidedOpen, setGuidedOpen] = useState(false);
 
   const setupRef = useRef(setup);
   setupRef.current = setup;
@@ -319,6 +321,7 @@ export function App() {
             } else columns.setShowKnowledge(!columns.showKnowledge);
           },
         }}
+        guided={{ open: guidedOpen, onToggle: () => setGuidedOpen((o) => !o) }}
         researcher={{ models: setup.models.map((m) => m.name), value: researcher?.name ?? null, onChange: (name) => setSetup((x) => ({ ...x, researcher: name })) }}
         onExtract={() => void extract()}
         canExtract={!!sideRequest && blockTexts.length > 0}
@@ -486,7 +489,9 @@ export function App() {
               </button>
             </div>
           )}
-          {snap ? (
+          {snap && guidedOpen ? (
+            <Guided setup={setup} documentId={snap.activeDocumentId} onClose={() => setGuidedOpen(false)} />
+          ) : snap ? (
             columns.mode === "panes" ? (
               <Panes
                 snap={snap}

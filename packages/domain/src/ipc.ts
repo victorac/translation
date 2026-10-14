@@ -5,6 +5,7 @@ import type { PromptPreset } from "./prompts.js";
 import type { BlockState, GlossaryEntry, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
 import type { BlockSize } from "./defaults.js";
+import type { GuidedState, Interpretation } from "./guided.js";
 import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
@@ -127,6 +128,23 @@ export interface MergeScenesResult {
   /** How many scenes were joined into the one before them. */
   joined: number;
   canceled: boolean;
+}
+
+/** Which model translates a block in the step-by-step way, and how. */
+export interface GuidedModelInput {
+  backend: Backend;
+  modelId: string;
+  contextLimit: number;
+  maxOutputTokens: number;
+  temperature: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+}
+
+export interface GuidedStartInput {
+  documentId: string;
+  text: string;
+  blockSize: BlockSize;
 }
 
 export interface SummarizeResult {
@@ -288,6 +306,13 @@ export interface CommandMap {
   "research.block": ResearchInput;
   "knowledge.summarize": SummarizeInput;
   "knowledge.mergeScenes": MergeScenesInput;
+  "guided.get": undefined;
+  "guided.start": GuidedStartInput;
+  "guided.go": { index: number };
+  "guided.interpret": { index: number };
+  "guided.save": { index: number; interpretation: Interpretation };
+  "guided.translate": GuidedModelInput & { index: number };
+  "guided.clear": undefined;
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
@@ -308,7 +333,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.mergeScenes" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "research.block" | "knowledge.summarize" | "knowledge.mergeScenes" | "guided.get" | "guided.start" | "guided.go" | "guided.interpret" | "guided.save" | "guided.translate" | "guided.clear" | "knowledge.files" | "knowledge.file" | "knowledge.check" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.beginExtraction" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.analyze": AnalyzeResult;
@@ -316,6 +341,13 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "research.block": ResearchResult;
   "knowledge.summarize": SummarizeResult;
   "knowledge.mergeScenes": MergeScenesResult;
+  "guided.get": GuidedState | null;
+  "guided.start": GuidedState;
+  "guided.go": GuidedState;
+  "guided.interpret": GuidedState;
+  "guided.save": GuidedState;
+  "guided.translate": GuidedState;
+  "guided.clear": null;
   "knowledge.files": KnowledgeFiles;
   "knowledge.file": KnowledgeFile;
   "knowledge.setFile": KnowledgeFile;
@@ -372,6 +404,13 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "research.block",
   "knowledge.summarize",
   "knowledge.mergeScenes",
+  "guided.get",
+  "guided.start",
+  "guided.go",
+  "guided.interpret",
+  "guided.save",
+  "guided.translate",
+  "guided.clear",
   "knowledge.files",
   "knowledge.file",
   "knowledge.setFile",

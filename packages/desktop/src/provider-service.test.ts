@@ -663,3 +663,60 @@ describe("accepting suggestions", () => {
     expect(service.snapshot().knowledge.suggested).toBe(0);
   });
 });
+
+describe("translating step by step", () => {
+  const model = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, temperature: 0.2, sourceLanguage: "Japanese", targetLanguage: "English" };
+  const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
+
+  it("reads a block for the user, translates it with what was confirmed, remembers the names, and gives the next block the end of this one", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    const text = "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n「おはよう」";
+    const started = service.guidedStart({ documentId: docId, text: `${text}\n\n${"あ".repeat(10)}`, blockSize: "small" });
+    expect(started.blocks.length).toBeGreaterThan(0);
+
+    const read = await service.guidedInterpret(0);
+    expect(read.blocks[0]!.status).toBe("interpreted");
+    const interp = structuredClone(read.blocks[0]!.interpretation!);
+    // The user fixes an English name and confirms.
+    for (const n of interp.names) n.english = n.source === "花子" ? "Hanako" : n.source === "太郎" ? "Taro" : n.english;
+    service.guidedSave(0, interp);
+    const done = await service.guidedTranslate({ ...model, index: 0 });
+    expect(done.blocks[0]).toMatchObject({ status: "translated", error: null });
+    expect(done.blocks[0]!.translation).toContain("EN(qwen2.5-7b-instruct)");
+
+    const first = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(first).toContain("=> Hanako");
+    expect(first).toContain("=> Taro");
+    expect(first).not.toContain("CONTEXT"); // nothing before the first block
+    // What was confirmed is now in the glossary.
+    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(expect.arrayContaining(["花子:Hanako:confirmed", "太郎:Taro:confirmed"]));
+  });
+
+  it("gives a later block the end of the block before it, source and translation", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    const long = Array.from({ length: 40 }, (_, i) => `これは${i}番目の文です。`).join("\n\n");
+    const started = service.guidedStart({ documentId: docId, text: long, blockSize: "small" });
+    if (started.blocks.length < 2) return; // the text fits in one block with this size; nothing to overlap
+    await service.guidedTranslate({ ...model, index: 0 });
+    await service.guidedTranslate({ ...model, index: 1 });
+    const second = bodies(lm).at(-1)!.messages[1]!.content;
+    const prev = service.guidedGet()!.blocks[0]!;
+    expect(second).toContain("CONTEXT");
+    expect(second).toContain(prev.text.split("\n").filter(Boolean).at(-1)!);
+  });
+
+  it("is kept in the project and can be started over", async () => {
+    const { service } = setup();
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "短い文。", blockSize: "normal" });
+    expect(service.exportProject().guided?.blocks).toHaveLength(1);
+    service.guidedClear();
+    expect(service.guidedGet()).toBe(null);
+  });
+});

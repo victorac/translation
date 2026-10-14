@@ -1,3 +1,4 @@
+import type { GuidedState } from "./guided.js";
 import type { KnowledgeEntry } from "./entries.js";
 import type { ResearchRecord } from "./research.js";
 import { z } from "zod";
@@ -64,6 +65,8 @@ export interface ProjectFile {
   settings?: ProjectSettings;
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
   knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord>; classes?: string };
+  /** The blocks of the step-by-step translation, with what was confirmed and translated so far. */
+  guided?: GuidedState;
   activeDocumentId: string;
   documents: ProjectDocument[];
 }
@@ -215,6 +218,30 @@ const entrySchema = z.object({
   updatedAt: iso,
 });
 
+const guidedSchema = z.object({
+  documentId: id,
+  current: count,
+  blocks: z
+    .array(
+      z.object({
+        index: count,
+        text: str,
+        translation: str,
+        status: z.enum(["new", "interpreted", "translated"]),
+        error: z.string().max(5000).nullable(),
+        interpretation: z
+          .object({
+            names: z.array(z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), gender: z.enum(["female", "male"]).nullable().optional() })).max(500),
+            narrator: z.string().max(200).nullable(),
+            narratorWord: z.string().max(20).nullable(),
+            lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000),
+          })
+          .nullable(),
+      }),
+    )
+    .max(20_000),
+});
+
 const fileSchema = z.object({
   format: z.literal(PROJECT_FORMAT),
   schemaVersion: z.literal(3),
@@ -222,6 +249,7 @@ const fileSchema = z.object({
   providerLabel: z.string().max(2000).optional(),
   settings: settingsSchema.optional(),
   knowledge: z.object({ entries: z.array(entrySchema).max(50_000), research: z.record(z.string().max(100), z.object({ ids: z.array(id).max(50_000), seen: z.array(id).max(50_000), at: iso })).optional(), classes: z.string().max(200_000).optional() }).optional(),
+  guided: guidedSchema.optional(),
   activeDocumentId: id,
   documents: z.array(documentSchema).min(1).max(200),
 });
@@ -405,6 +433,7 @@ export function buildProjectFile(input: {
   providerLabel?: string;
   settings?: ProjectSettings | null;
   knowledge?: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes?: string | undefined };
+  guided?: GuidedState | null;
   activeDocumentId: string;
   documents: ProjectDocument[];
 }): ProjectFile {
@@ -415,6 +444,7 @@ export function buildProjectFile(input: {
     ...(input.providerLabel !== undefined ? { providerLabel: input.providerLabel } : {}),
     ...(input.settings ? { settings: input.settings } : {}),
     ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(Object.keys(input.knowledge.research).length > 0 ? { research: input.knowledge.research } : {}), ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
+    ...(input.guided ? { guided: input.guided } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,
   };

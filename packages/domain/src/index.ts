@@ -66,3 +66,4 @@ export * from "./extract.js";
 export * from "./check.js";
 export * from "./summary.js";
 export * from "./scenes.js";
+export * from "./guided.js";

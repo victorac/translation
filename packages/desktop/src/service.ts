@@ -1,5 +1,17 @@
 import {
   allPrompts,
+  glossaryFor,
+  interpretPassage,
+  lastLines,
+  notesFor,
+  renderUserMessage,
+  STANDARD_PROMPT,
+  type GuidedState,
+  type GuidedModelInput,
+  type GuidedStartInput,
+  type Interpretation,
+  type KnownName,
+  type NameKind,
   extractBlock,
   type Asker,
   type Question,
@@ -729,7 +741,7 @@ export class WorkspaceService {
   }
 
   /** Everything a project file needs: every document, with all versions and runs (including removed ones) and the shared settings. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes: string } } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; research: Record<string, ResearchRecord>; classes: string }; guided: GuidedState | null } {
     const c = this.coordinator;
     return {
       documents: this.docs.map((d) => ({
@@ -742,11 +754,12 @@ export class WorkspaceService {
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
       knowledge: { entries: this.knowledge.everything(), research: Object.fromEntries(this.research), classes: this.classesText },
+      guided: this.guided ? structuredClone(this.guided) : null,
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined; classes?: string | undefined } | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; research?: Record<string, ResearchRecord> | undefined; classes?: string | undefined } | undefined }): void {
     if (this.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
     if (!this.options.provider && project.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")))) {
       throw new UserError("no_provider", "This project needs a model server connection, which is not set up.");
@@ -765,6 +778,7 @@ export class WorkspaceService {
     });
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
+    this.guided = project.guided ? structuredClone(project.guided) : null;
     this.research = new Map(Object.entries(project.knowledge?.research ?? {}));
     this.classesText = project.knowledge?.classes === undefined || project.knowledge.classes === LEGACY_CLASSES_TEXT ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
@@ -793,6 +807,7 @@ export class WorkspaceService {
     this.docs = [newDoc("Document 1")];
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
+    this.guided = null;
     this.knowledge.load([]);
     this.classesText = DEFAULT_CLASSES_TEXT;
     this.research.clear();
@@ -1210,6 +1225,162 @@ export class WorkspaceService {
     }
     this.refreshOutdated();
     this.notify("state");
+  }
+
+
+  // ---- step by step translation ----
+
+  private guided: GuidedState | null = null;
+
+  guidedGet(): GuidedState | null {
+    return this.guided;
+  }
+
+  private guidedBlock(index: number) {
+    const block = this.guided?.blocks[index];
+    if (!this.guided || !block) throw new UserError("no_block", "That block does not exist. Start again from the text.");
+    return block;
+  }
+
+  private guidedChanged(): void {
+    this.notify("state");
+  }
+
+  /** Splits the text into blocks to go through one at a time. */
+  guidedStart(input: GuidedStartInput): GuidedState {
+    const text = normalizeSource(input.text);
+    if (text.trim() === "") throw new UserError("no_text", "Paste some text first.");
+    const limits = BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
+    const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });
+    this.guided = {
+      documentId: input.documentId,
+      current: 0,
+      blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", status: "new" as const, error: null })),
+    };
+    this.guidedChanged();
+    return this.guided;
+  }
+
+  guidedGo(index: number): GuidedState {
+    this.guidedBlock(index);
+    this.guided!.current = index;
+    this.guidedChanged();
+    return this.guided!;
+  }
+
+  guidedClear(): null {
+    this.guided = null;
+    this.guidedChanged();
+    return null;
+  }
+
+  /** The names in the glossary, in the form the reading of a block starts from. */
+  private knownNames(): KnownName[] {
+    const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
+    return this.knowledge
+      .all()
+      .filter((e) => e.kind === "term" && e.status !== "rejected")
+      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: e.aliases, narrator: (e.attrs["role"] ?? []).some((r) => /narrator/i.test(r)), gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
+  }
+
+  /** Reads one block: who is named, who is telling it, who says each line. */
+  async guidedInterpret(index: number): Promise<GuidedState> {
+    const block = this.guidedBlock(index);
+    const glossary = this.knownNames();
+    const candidates = await findCandidateNames(block.text);
+    const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
+    block.interpretation = interpretPassage({ passage: block.text, candidates, readings, glossary });
+    if (block.status === "new") block.status = "interpreted";
+    this.guided!.current = index;
+    this.guidedChanged();
+    return this.guided!;
+  }
+
+  guidedSave(index: number, interpretation: Interpretation): GuidedState {
+    const block = this.guidedBlock(index);
+    block.interpretation = interpretation;
+    if (block.status === "new") block.status = "interpreted";
+    this.guidedChanged();
+    return this.guided!;
+  }
+
+  /** What the user confirmed becomes part of the glossary, so the next blocks start from it. */
+  private rememberInterpretation(interp: Interpretation): void {
+    const entries = this.knowledge.all().filter((e) => e.kind === "term");
+    for (const n of interp.names) {
+      if (n.english.trim() === "") continue;
+      const found = entries.find((e) => e.source === n.source);
+      const isNarrator = interp.narrator === n.source;
+      const attrs = { ...(found?.attrs ?? {}) };
+      if (isNarrator) attrs["role"] = ["narrator"];
+      if (n.gender) attrs["gender"] = [n.gender];
+      const aliases = [...new Set([...(found?.aliases ?? []), ...n.aliases])].filter((a) => a !== n.source);
+      this.knowledge.save({ ...(found ? { id: found.id } : {}), kind: "term", source: n.source, target: n.english.trim(), hint: found?.hint ?? "", category: n.kind, aliases, attrs, text: "", about: null });
+    }
+    // Only one narrator: anyone else who was marked as one no longer is.
+    if (interp.narrator) {
+      for (const e of this.knowledge.all().filter((x) => x.kind === "term" && x.source !== interp.narrator && (x.attrs["role"] ?? []).some((r) => /narrator/i.test(r)))) {
+        const rest = (e.attrs["role"] ?? []).filter((r) => !/narrator/i.test(r));
+        const attrs = { ...e.attrs };
+        if (rest.length > 0) attrs["role"] = rest;
+        else delete attrs["role"];
+        this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: e.aliases, attrs, text: "", about: null });
+      }
+    }
+    this.knowledgeChanged();
+  }
+
+  /** Translates a block with what the user confirmed, and the end of the block before it. */
+  async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
+    const block = this.guidedBlock(input.index);
+    if (!block.interpretation) await this.guidedInterpret(input.index);
+    const interp = block.interpretation!;
+    const abort = this.beginSideRequest();
+    try {
+      this.rememberInterpretation(interp);
+      const system = renderPrompt(STANDARD_PROMPT, input.sourceLanguage, input.targetLanguage);
+      const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
+      const glossary = glossaryFor(interp);
+      const notes = notesFor(interp);
+      let user = "";
+      // Overlap: the end of the block before, source and translation. Fewer lines if the context is tight.
+      for (const lines of [3, 2, 1, 0]) {
+        const context =
+          previous && previous.status === "translated" && lines > 0
+            ? { source: lastLines(previous.text, lines, 500), translation: lastLines(previous.translation, lines, 500), translationStatus: "available" as const }
+            : { source: null, translation: null, translationStatus: "none" as const };
+        user = renderUserMessage(glossary, context, block.text, notes);
+        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+        if (lines === 0) throw new UserError("context_overflow", `This block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+      }
+      block.error = null;
+      const reply = await this.askModel(
+        {
+          backend: input.backend,
+          modelId: input.modelId,
+          maxOutputTokens: input.maxOutputTokens,
+          temperature: input.temperature,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
+        },
+        abort,
+      );
+      if (reply !== null) {
+        block.translation = reply.trim();
+        block.status = "translated";
+      }
+    } catch (e) {
+      block.error = e instanceof UserError ? e.message : "The translation failed.";
+      this.guidedChanged();
+      throw e;
+    } finally {
+      this.analysisAbort = null;
+    }
+    this.guidedChanged();
+    return this.guided!;
   }
 
   // ---- suggested notes ----

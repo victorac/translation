@@ -22,6 +22,7 @@ export function Toolbar({
   onExtract,
   canExtract,
   extractHint,
+  guided,
 }: {
   snap: WorkspaceSnapshot | null;
   send: Send;
@@ -42,6 +43,8 @@ export function Toolbar({
   onExtract: () => void;
   canExtract: boolean;
   extractHint: string;
+  /** The step-by-step translation: whether its screen is showing. */
+  guided: { open: boolean; onToggle: () => void };
 }) {
   const project = snap?.project;
   const has = !!snap?.revision;
@@ -88,6 +91,9 @@ export function Toolbar({
             <span className="progress-fill" style={{ width: `${pct}%` }} />
           </span>
         )}
+        <button className={guided.open ? "toggle on" : "toggle"} aria-pressed={guided.open} onClick={guided.onToggle} title="Translate one block at a time, checking what is read from each block">
+          Step by step
+        </button>
         <button className={knowledge.open ? "toggle on" : "toggle"} aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
           Knowledge base
           {knowledge.count > 0 && <span className="count">{knowledge.count}</span>}

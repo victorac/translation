@@ -316,6 +316,7 @@ export class ProjectService {
       activeDocumentId: file.activeDocumentId,
       ...(file.settings ? { settings: file.settings } : {}),
       ...(file.knowledge ? { knowledge: file.knowledge } : {}),
+      ...(file.guided ? { guided: file.guided } : {}),
       documents: file.documents.map((d) => ({ ...d, versions: d.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })) })),
     });
     this.meta = { id: file.project.id, createdAt: file.project.createdAt, path, lastSavedAt: file.project.updatedAt };
@@ -349,6 +350,7 @@ export class ProjectService {
       ...(usesServer && this.options.provider ? { providerLabel: this.options.provider.view().baseUrl } : {}),
       settings: state.settings,
       knowledge: state.knowledge,
+      guided: state.guided,
       activeDocumentId: state.activeDocumentId,
       documents: state.documents,
     });
