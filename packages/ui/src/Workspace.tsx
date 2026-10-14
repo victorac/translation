@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { estimateTokens, normalizeSource, occurrencesOf } from "@ltw/domain/pure";
+import { estimateTokens, normalizeSource, occurrencesOf, wholeParagraphs } from "@ltw/domain/pure";
 import type { GuidedName, GuidedState, Located } from "@ltw/domain";
 import { api } from "./api";
 import type { PreviewBlock } from "./blockMarkers";
@@ -298,13 +298,15 @@ export function Workspace({
     }, 250);
   };
 
-  /** Writes the selected part of the translation again and leaves the rest of the text as it is. */
+  /** Writes the paragraph under the cursor (or the paragraphs the selection touches) again; the rest of the text stays as it is. */
   const retranslate = async () => {
-    if (!block || !model || sel.from >= sel.to || translation.slice(sel.from, sel.to).trim() === "") return;
+    const range = wholeParagraphs(translation, sel.from, sel.to);
+    if (!block || !model || !range) return;
     setWorking("translate");
     const found = await locate();
-    const source = found ? placeOf(found, sel.from, sel.to) : null;
-    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: sel.from, to: sel.to, ...(source ? { source } : {}) }));
+    const parts = (found ?? []).filter((p) => p.from >= range.from && p.to <= range.to && p.source).map((p) => p.source!);
+    const source = parts.length > 0 ? { start: Math.min(...parts.map((p) => p.start)), end: Math.max(...parts.map((p) => p.end)) } : null;
+    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: range.from, to: range.to, ...(source ? { source } : {}) }));
     if (s) {
       setState(s);
       places.current.clear();
@@ -647,8 +649,8 @@ export function Workspace({
                   </Text>
                 )}
                 <Flex gap="2" p="3" wrap="wrap" className="guided-foot">
-                  <Button variant="soft" onClick={() => void retranslate()} disabled={working !== null || !model || translation.slice(sel.from, sel.to).trim() === ""} title="Write the selected part again, with the glossary as it is now. The rest of the text stays as it is.">
-                    Retranslate selection
+                  <Button variant="soft" onClick={() => void retranslate()} disabled={working !== null || !model || wholeParagraphs(translation, sel.from, sel.to) === null} title="Write the paragraph under the cursor again, with the glossary as it is now. The rest of the text stays as it is.">
+                    Retranslate paragraph
                   </Button>
                   <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
                     {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}

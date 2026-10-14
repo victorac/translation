@@ -465,12 +465,13 @@ describe("translating step by step", () => {
     const mine = "Hanako laughed. Taro WRONG laughed.\n\nShe said good morning.";
     const from = mine.indexOf("Taro WRONG laughed.");
     const sourceText = service.guidedGet()!.blocks[0]!.text;
-    const at = sourceText.indexOf("太郎も笑った。");
-    const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from, to: from + "Taro WRONG laughed.".length, source: { start: at, end: at + 7 } });
+    const at = sourceText.indexOf("花子は笑った。");
+    // The selection is a few words in the first paragraph: the whole paragraph is written again.
+    const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from, to: from + "Taro WRONG laughed.".length, source: { start: at, end: at + 14 } });
     const sent = bodies(lm).at(-2)!.messages[1]!.content;
-    expect(sent).toContain("Hanako laughed. [[REDO]]Taro WRONG laughed.[[/REDO]]");
-    expect(sent).toContain("SOURCE_PART:\n太郎も笑った。"); // only the text it was made from
-    expect(done.blocks[0]!.translation).toBe("Hanako laughed. Beast King's Fang\n\nShe said good morning.");
+    expect(sent).toContain("[[REDO]]Hanako laughed. Taro WRONG laughed.[[/REDO]]");
+    expect(sent).toContain("SOURCE_PART:\n花子は笑った。太郎も笑った。"); // only the text it was made from
+    expect(done.blocks[0]!.translation).toBe("Beast King's Fang\n\nShe said good morning.");
     // Same number of paragraphs: each comes from the paragraph in the same place, without asking the model.
     const asked = bodies(lm).length;
     const placed = await service.guidedLocate({ ...model, index: 0, text: "A.\n\nB." });

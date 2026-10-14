@@ -62,9 +62,9 @@ export function sentenceUnits(text: string): { text: string; start: number; end:
 export function reviseSystem(style: string, sourceLanguage: string, targetLanguage: string): string {
   return (
     `${style}\n\n` +
-    `Right now you are correcting a ${sourceLanguage} to ${targetLanguage} translation that is already written. The translation is shown with one part marked between ${REDO_OPEN} and ${REDO_CLOSE}; the marked part may be only a few words. ` +
+    `Right now you are correcting a ${sourceLanguage} to ${targetLanguage} translation that is already written. The translation is shown with one part marked between ${REDO_OPEN} and ${REDO_CLOSE}; the marked part is one or more whole paragraphs. ` +
     `Write new words for that marked part, from the source text, so that they fit the text before and after it. Always use the exact ${targetLanguage} names given in GLOSSARY. ` +
-    `Reply with the replacement for the marked part only, about as long as the marked part: no markers, no explanation, and never repeat the text before or after it.`
+    `Reply with the replacement for the marked part only, about as long as the marked part and with the same number of paragraphs: no markers, no explanation, and never repeat the text before or after it.`
   );
 }
 
@@ -105,6 +105,12 @@ export function withoutEcho(reply: string, before: string, after: string): strin
     }
   }
   return t;
+}
+
+/** The selection widened to whole paragraphs: from the start of the first paragraph it touches to the end of the last. Null when it touches none. */
+export function wholeParagraphs(text: string, from: number, to: number): { from: number; to: number } | null {
+  const touched = paragraphsOf(text).filter((p) => p.start <= Math.max(from, to) && p.end >= Math.min(from, to));
+  return touched.length > 0 ? { from: touched[0]!.start, to: touched[touched.length - 1]!.end } : null;
 }
 
 /** Whether a reply is much longer than the part it replaces, which means the model wrote more than it was asked to. */

@@ -73,6 +73,7 @@ import {
   paragraphsOf,
   sentenceUnits,
   withoutEcho,
+  wholeParagraphs,
   tooLong,
   targetVariants,
   type Located,
@@ -1644,8 +1645,11 @@ export class WorkspaceService {
     if (!block.interpretation) await this.guidedInterpret(input.index);
     this.guidedView();
     const interp = block.interpretation!;
-    const { text, from, to } = input;
-    if (!(from < to && to <= text.length) || text.slice(from, to).trim() === "") throw new UserError("no_selection", "Select the part of the translation to write again.");
+    const text = input.text;
+    // A paragraph is written again as a whole: the selection (or the cursor) is widened to the paragraphs it touches.
+    const range = wholeParagraphs(text, input.from, input.to);
+    if (!range) throw new UserError("no_selection", "Put the cursor in the paragraph of the translation to write again.");
+    const { from, to } = range;
     const abort = this.beginSideRequest();
     try {
       this.commitWords(interp);
@@ -1688,7 +1692,7 @@ export class WorkspaceService {
         part = revisedPart(withoutEcho(reply, before, after), original);
         if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the selected part.");
         if (tooLong(part, original)) {
-          complaint = `\n\nYour last answer was too long: it was not accepted. Write only the new words for the marked part, about ${original.trim().length} characters, and nothing before or after it.`;
+          complaint = `\n\nYour last answer was too long: it was not accepted. Write only the new text for the marked paragraph(s), about ${original.trim().length} characters, and nothing before or after it.`;
           part = null;
           continue;
         }
