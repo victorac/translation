@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { guessGender, glossaryFor, withoutLongerNames, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
 
-const readings = { 鈴木花子: ["スズキ", "ハナコ"], 山田太郎: ["ヤマダ", "タロウ"], 山田家: ["ヤマダ", "カ"], 桜台学園: ["ニ", "サクラダイ", "ガクエン"] };
+const readings = { 鈴木花子: ["スズキ", "ハナコ"], 山田太郎: ["ヤマダ", "タロウ"], 山田家: ["ヤマダ", "カ"], 桜台学園: ["サクラダイ", "ガクエン"] };
 
 describe("reading a block for the user to check", () => {
   it("guesses what kind of name it is from how it ends", () => {
@@ -14,16 +14,16 @@ describe("reading a block for the user to check", () => {
   it("makes English names of people and families from the readings, and leaves other kinds for the user with the reading as help", () => {
     const r = interpretPassage({ passage: "鈴木花子は山田家の桜台学園に通う。", candidates: ["鈴木花子", "山田家", "桜台学園"], readings, glossary: [] });
     const by = (s: string) => r.names.find((n) => n.source === s)!;
-    expect(by("鈴木花子")).toMatchObject({ english: "Hanako Suzuki", kind: "character", known: false });
+    expect(by("鈴木花子")).toMatchObject({ english: "Suzuki Hanako", kind: "character", known: false });
     expect(by("山田家")).toMatchObject({ english: "Yamada family", kind: "family" });
     expect(by("桜台学園")).toMatchObject({ english: "", kind: "organization", reading: "sakuradai gakuen" });
   });
 
   it("uses what the glossary already says, and does not offer it as new", () => {
-    const glossary: KnownName[] = [{ source: "山田太郎", english: "Taro Yamada", kind: "character", aliases: ["山田"] }];
+    const glossary: KnownName[] = [{ source: "山田太郎", english: "Yamada Taro", kind: "character", aliases: ["山田"] }];
     const r = interpretPassage({ passage: "ぼくは山田太郎という。", candidates: ["山田太郎"], readings, glossary, narrator: "山田太郎" });
     expect(r.names).toHaveLength(1);
-    expect(r.names[0]).toMatchObject({ english: "Taro Yamada", known: true });
+    expect(r.names[0]).toMatchObject({ english: "Yamada Taro", known: true });
     expect(r.narrator).toBe("山田太郎");
     expect(r.narratorWord).toBe("ぼく");
   });
@@ -99,7 +99,7 @@ describe("gender", () => {
   it("is sent to the model as a note, and kept for known people", () => {
     const r = interpretPassage({ passage: "鈴木花子。彼女は笑った。", candidates: ["鈴木花子"], readings: { 鈴木花子: ["スズキ", "ハナコ"] }, glossary: [] });
     expect(r.names[0]!.gender).toBe("female");
-    expect(notesFor(r)).toContain("Hanako Suzuki is a woman or girl (she/her).");
+    expect(notesFor(r)).toContain("Suzuki Hanako is a woman or girl (she/her).");
     const known = interpretPassage({ passage: "花子は笑った。", candidates: [], readings: {}, glossary: [{ source: "花子", english: "Hanako", kind: "character", aliases: [], gender: "female" }] });
     expect(known.names[0]!.gender).toBe("female");
   });
@@ -144,7 +144,7 @@ describe("a conversation that carries on into the next block", () => {
 });
 
 describe("a short name that is part of a longer one", () => {
-  const taro = { source: "山田太郎", english: "Taro Yamada", kind: "character" as const, aliases: ["山田"], reading: "", known: true };
+  const taro = { source: "山田太郎", english: "Yamada Taro", kind: "character" as const, aliases: ["山田"], reading: "", known: true };
   const tono = { source: "山田", english: "Yamada", kind: "term" as const, aliases: [], reading: "", known: true, hint: "Hanako's name for Taro" };
   const interp = (names: typeof taro[]) => ({ names, narrator: null, narratorWord: null, lines: [] }) as never;
 
@@ -163,24 +163,24 @@ describe("a short name that is part of a longer one", () => {
     const names = [taro, tono] as never;
     const both = glossaryFor(interp(names), "「山田、お待たせ」山田太郎は笑った。");
     expect(both).toEqual([
-      { source: "山田太郎", target: "Taro Yamada" },
+      { source: "山田太郎", target: "Yamada Taro" },
       { source: "山田", target: "Yamada", note: "Hanako's name for Taro; when it stands on its own, not as part of 山田太郎" },
     ]);
     // In a piece where it is only part of the full name, it is not sent at all, and the full name keeps it as an alias.
-    expect(glossaryFor(interp(names), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Taro Yamada" }]);
-    expect(glossaryFor(interp([taro] as never), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Taro Yamada", aliases: ["山田"] }]);
+    expect(glossaryFor(interp(names), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Yamada Taro" }]);
+    expect(glossaryFor(interp([taro] as never), "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Yamada Taro", aliases: ["山田"] }]);
   });
 });
 
 describe("a name that stands for a person", () => {
   const names = [
-    { source: "山田太郎", english: "Taro Yamada", kind: "character" as const, aliases: ["山田"], reading: "", known: true },
+    { source: "山田太郎", english: "Yamada Taro", kind: "character" as const, aliases: ["山田"], reading: "", known: true },
     { source: "山田", english: "Yamada", kind: "term" as const, aliases: [], reading: "", known: true, refersTo: "山田太郎" },
   ];
 
   it("tells the model whom it stands for", () => {
     const sent = glossaryFor({ names, narrator: null, narratorWord: null, lines: [] } as never, "「山田、お待たせ」山田太郎");
-    expect(sent.find((g) => g.source === "山田")).toEqual({ source: "山田", target: "Yamada", note: "a name for Taro Yamada; when it stands on its own, not as part of 山田太郎" });
+    expect(sent.find((g) => g.source === "山田")).toEqual({ source: "山田", target: "Yamada", note: "a name for Yamada Taro; when it stands on its own, not as part of 山田太郎" });
   });
 
   it("is seen as the person for who speaks and who is spoken to", () => {

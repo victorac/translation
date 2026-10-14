@@ -49,13 +49,13 @@ describe("candidate names", () => {
   it("joins neighbouring proper nouns and a following suffix, but not an honorific", () => {
     const tokens = [
       tok("山田", ["名詞", "固有名詞", "地域", "一般"], 0),
-      tok("亘", ["名詞", "固有名詞", "地域", "一般"], 6),
-      tok("という", ["助詞", "格助詞"], 9),
-      tok("山田", ["名詞", "固有名詞", "地域", "一般"], 15),
-      tok("家", ["名詞", "接尾", "一般", "*"], 21),
-      tok("の", ["助詞"], 24),
-      tok("田中", ["名詞", "固有名詞", "人名", "姓"], 27),
-      tok("くん", ["名詞", "接尾", "人名", "*"], 33),
+      tok("太郎", ["名詞", "固有名詞", "地域", "一般"], 6),
+      tok("という", ["助詞", "格助詞"], 12),
+      tok("山田", ["名詞", "固有名詞", "地域", "一般"], 18),
+      tok("家", ["名詞", "接尾", "一般", "*"], 24),
+      tok("の", ["助詞"], 27),
+      tok("田中", ["名詞", "固有名詞", "人名", "姓"], 30),
+      tok("くん", ["名詞", "接尾", "人名", "*"], 36),
     ];
     expect(properNounRuns(tokens)).toEqual(["山田太郎", "山田家", "田中"]);
   });
@@ -123,7 +123,7 @@ describe("questions and answers", () => {
     expect(parseNameList("NONE")).toEqual([]);
     expect(parseShortText('  "Hanako"\nextra', 60)).toBe("Hanako");
     expect(parseShortText("Name: Taro", 60)).toBe("Taro");
-    expect(parseShortText("Taro Yamada.", 60, true)).toBe("Taro Yamada");
+    expect(parseShortText("Yamada Taro.", 60, true)).toBe("Yamada Taro");
     expect(parseShortText("She waits at the gate.", 60)).toBe("She waits at the gate.");
     expect(parseShortText("UNKNOWN", 60)).toBeNull();
     expect(parseShortText("x".repeat(80), 60)).toBeNull();
@@ -141,12 +141,12 @@ describe("names and roles that can be judged without a model", () => {
   });
 
   it("settles what a person does from how the name is written", () => {
-    const s = splitSentences("学園の門の前で、花子は腕を組んで待っていた。「遅かったね、太郎」と彼女は言った。花子の家は古い。佐藤花子がいた。");
+    const s = splitSentences("学園の門の前で、花子は腕を組んで待っていた。「遅かったね、太郎」と彼女は言った。花子の家は古い。");
     expect(roleByForm(s, ["花子"])).toBe(0); // 花子は: the subject
     expect(roleByForm(s, ["太郎"])).toBe(1); // inside a quotation, just before 」: spoken to
     expect(roleByForm(splitSentences("花子の家は古い。"), ["花子"])).toBeNull(); // only a possessive: leave it to the model
     expect(roleByForm(splitSentences("「花子様、お待たせしました」"), ["花子"])).toBe(1);
-    expect(roleByForm(s, ["花子"])).toBeNull(); // 花子 is only part of 佐藤花子
+    expect(roleByForm(splitSentences("佐藤花子がいた。"), ["花子"])).toBeNull(); // 花子 is only part of 佐藤花子
     expect(roleByForm(s, ["誰か"])).toBeNull();
   });
 });
@@ -223,7 +223,7 @@ describe("names from readings", () => {
   });
 
   it("makes a person's name from the readings of its words, and a family's with the 家 left off", () => {
-    expect(nameFromReadings(["ヤマダ", "タロウ"], false)).toBe("Taro Yamada");
+    expect(nameFromReadings(["ヤマダ", "タロウ"], false)).toBe("Yamada Taro");
     expect(nameFromReadings(["ヤマダ", "カ"], true)).toBe("Yamada family");
     expect(nameFromReadings(["ヤマダ", "x"], false)).toBe(null);
   });

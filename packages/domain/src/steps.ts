@@ -441,7 +441,7 @@ export function romanize(kana: string): string | null {
   return out;
 }
 
-/** The English name of a person or family from the readings of its words (["ミヅキ", "ハナコ"] gives "Hanako Suzuki"), or null. */
+/** The English name of a person or family from the readings of its words (["ミヅキ", "ハナコ"] gives "Suzuki Hanako"), or null. */
 export function nameFromReadings(readings: readonly string[], family: boolean): string | null {
   const pieces = family && readings.at(-1) === "カ" ? readings.slice(0, -1) : readings;
   const words = pieces.map(romanize);
