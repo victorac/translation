@@ -2,13 +2,12 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
 import { KnowledgeFiles } from "./KnowledgeFiles";
+import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import type { SetupState } from "./setup";
 
 const WIDTHS_KEY = "ltw.guided.widths.v3";
 const MIN = 0.1;
 const DEFAULT_WIDTHS = [0.2, 0.27, 0.23, 0.3];
-
-const KIND_LABEL: Record<GuidedName["kind"], string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
 
 const loadWidths = (): number[] => {
   try {
@@ -35,6 +34,8 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
   const [newTerm, setNewTerm] = useState("");
   const [widths, setWidths] = useState<number[]>(loadWidths);
   const [topic, setTopic] = useState<{ id: string; n: number } | null>(null);
+  const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const [topics, setTopics] = useState<TopicRef[]>([]);
   const started = useRef(false);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
@@ -81,6 +82,12 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
       return;
     }
     void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+  }, [knowledgeRev]);
+
+  // What the choices on a name are made from: the kinds of topic and their attributes, and the topics a link can point to.
+  useEffect(() => {
+    void api.invoke("knowledge.files").then((r) => r.ok && setClasses(r.value.classes));
+    void api.invoke("knowledge.list", { kind: "term" }).then((r) => r.ok && setTopics(r.value.entries.map((e) => ({ source: e.source, english: e.target, category: e.category }))));
   }, [knowledgeRev]);
 
   useEffect(() => {
@@ -282,29 +289,15 @@ export function Guided({ setup, documentId, knowledgeRev, knowledgeCounts, onClo
                   {base.names.length === 0 && <p className="hint guided-hint">No names found. Add a word from the text below.</p>}
                   <ul className="guided-glossary">
                     {base.names.map((n) => (
-                      <li key={n.source} className="glossary-item">
-                        <button className="glossary-row" onClick={() => n.id && setTopic({ id: n.id, n: Date.now() })} title="Open this topic in the knowledge base">
-                          <span className="name-source">{n.source}</span>
-                          <span className={n.english.trim() === "" ? "name-english missing" : "name-english"}>{n.english.trim() === "" ? "needs an English name" : n.english}</span>
-                          <span className="tag">{KIND_LABEL[n.kind]}</span>
-                          {!n.known && <span className="tag warn-tag">to check</span>}
-                        </button>
-                        {n.kind !== "character" && people.length > 0 && (
-                          <select
-                            aria-label={`Who ${n.source} stands for`}
-                            title="Tie this word to a person, so it is understood as a name for them"
-                            value={n.refersTo ?? ""}
-                            onChange={(e) => void call(() => api.invoke("guided.link", { source: n.source, target: e.target.value === "" ? null : e.target.value })).then((s) => s && setState(s))}
-                          >
-                            <option value="">stands for…</option>
-                            {people.map((p) => (
-                              <option key={p.source} value={p.source}>
-                                {label(p)}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </li>
+                      <NameRow
+                        key={n.source}
+                        name={n}
+                        classes={classes}
+                        topics={topics}
+                        onOpen={() => n.id && setTopic({ id: n.id, n: Date.now() })}
+                        onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
+                        onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
+                      />
                     ))}
                   </ul>
                   <form

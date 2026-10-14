@@ -22,6 +22,8 @@ export interface GuidedName {
   id?: string;
   /** What the topic says about itself, sent with the name. */
   hint?: string;
+  /** The topic's attributes (gender, family...), as the glossary has them now. */
+  attrs?: Record<string, string[]>;
   /** The person this name stands for (the source of their topic), such as 山田 for 山田太郎. */
   refersTo?: string | null;
   /** For a person: how the text refers to them, when it is clear. */

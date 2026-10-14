@@ -654,8 +654,8 @@ describe("translating step by step", () => {
     expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山 => Yamada — a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
 
     // It can be tied to someone else, or untied.
-    expect(service.guidedLink("山", null).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe(null);
-    expect(service.guidedLink("山", "山田太郎").blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe("山田太郎");
+    expect(service.guidedSetAttribute("山", "refers to", []).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe(null);
+    expect(service.guidedSetAttribute("山", "refers to", ["山田太郎"]).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe("山田太郎");
   });
 
   it("makes a word the user adds a term, unless it looks like a name", async () => {
@@ -669,6 +669,43 @@ describe("translating step by step", () => {
     expect(await kind("田")).toBe("term"); // one kanji: not a name
     expect(await kind("魔法使い")).toBe("term");
     expect(await kind("桜台学園")).toBe("organization"); // ends like one
+  });
+
+  it("sets the attributes that have options from a choice, as the classes say, and changes the kind of a topic", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は鈴木家の人だ。花子は笑った。", blockSize: "normal" });
+    const read = await service.guidedInterpret(0);
+    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
+    expect(names().map((n) => n.source)).toEqual(expect.arrayContaining(["花子", "鈴木家"]));
+
+    // The class lists what can be chosen: a gender from its list, a family from the topics that are families.
+    const files = service.knowledgeFiles();
+    expect(files.classes.find((c) => c.name === "character")!.attributes).toEqual(expect.arrayContaining([{ key: "gender", kind: "choice", choices: ["male", "female", "other", "unknown"] }, { key: "family", kind: "link", target: "family" }]));
+    service.guidedSetAttribute("花子", "gender", ["female"]);
+    service.guidedSetAttribute("花子", "family", ["鈴木家"]);
+    expect(names().find((n) => n.source === "花子")).toMatchObject({ gender: "female", attrs: { gender: ["female"], family: ["鈴木家"] } });
+    // What is chosen is no longer flagged to check, and the file says so.
+    const hanako = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "花子")!;
+    expect(hanako.attrFlags).not.toContain("gender");
+    expect(service.knowledgeFile(hanako.id).text).toContain("gender: female\n");
+    expect(service.knowledgeFile(hanako.id).text).toContain("family: [[鈴木家]]");
+
+    // Only what the class allows.
+    expect(() => service.guidedSetAttribute("花子", "gender", ["purple"])).toThrow(/is one of/);
+    expect(() => service.guidedSetAttribute("花子", "family", ["花子"])).toThrow(/must be a topic/);
+    expect(() => service.guidedSetAttribute("花子", "age", ["9"])).toThrow(/not an attribute with options/);
+    expect(() => service.guidedSetAttribute("花子", "gender", ["male", "female"])).toThrow(/takes one value/);
+
+    // Cleared, and the kind changed: attributes the new kind does not have are dropped.
+    service.guidedSetAttribute("花子", "family", []);
+    expect(names().find((n) => n.source === "花子")!.attrs!["family"]).toBeUndefined();
+    service.guidedSetKind("花子", "term");
+    expect(names().find((n) => n.source === "花子")).toMatchObject({ kind: "term", attrs: {} });
+    expect(() => service.guidedSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
+    void read;
   });
 
   it("is kept in the project and can be started over", async () => {

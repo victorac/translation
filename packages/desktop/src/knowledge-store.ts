@@ -160,6 +160,18 @@ export class KnowledgeStore {
     return entry;
   }
 
+  /** Changes one entry in place, as the user's edit: it keeps its place in the list, and the attributes the user set are no longer flagged to check. */
+  patch(id: string, change: (e: KnowledgeEntry) => KnowledgeEntry, setKeys: readonly string[] = []): KnowledgeEntry | null {
+    const before = this.get(id);
+    if (!before) return null;
+    const next = change({ ...before, attrs: { ...before.attrs }, attrFlags: [...before.attrFlags] });
+    const entry: KnowledgeEntry = { ...next, id: before.id, attrFlags: next.attrFlags.filter((k) => !setKeys.includes(k)), origin: before.origin.by === "model" ? { ...before.origin, by: "user" } : before.origin, updatedAt: this.deps.now() };
+    const place = (this.db.prepare("SELECT seq FROM entries WHERE id = ?").get(before.id) as { seq: number }).seq;
+    this.insert(entry, place);
+    this.rev++;
+    return entry;
+  }
+
   /** Removes entries. Facts about a removed term go with it, and scenes stop listing it as present. */
   remove(ids: readonly string[]): number {
     const gone = new Set(ids);

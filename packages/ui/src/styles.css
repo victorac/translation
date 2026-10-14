@@ -452,6 +452,15 @@ button.toggle .tag { margin-left: 0.35rem; }
 .guided-kb { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .guided-kb .kbf { flex: 1; min-height: 0; }
 
-.glossary-item { display: flex; align-items: center; gap: 0.35rem; }
-.glossary-item .glossary-row { flex: 1; min-width: 0; width: auto; }
-.glossary-item select { max-width: 9rem; }
+
+.name-item { display: flex; flex-direction: column; }
+.glossary-head { display: flex; align-items: center; gap: 0.25rem; }
+.glossary-head .glossary-row { flex: 1; min-width: 0; width: auto; }
+.chev { width: 1.5rem; padding: 0.2rem 0; background: transparent; border-color: transparent; color: var(--muted); }
+.name-attrs { margin: 0.2rem 0 0.4rem 1.75rem; padding: 0.4rem 0.6rem; border-left: 2px solid var(--border); display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.35rem 0.75rem; align-items: center; font-size: 0.92em; }
+.name-attrs label, .name-attr-links { display: contents; color: var(--muted); }
+.name-attrs select { min-width: 0; width: 100%; }
+.name-attrs .link-button { grid-column: 1 / -1; justify-self: start; }
+.name-attr-links .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0 0.35rem; border: 1px solid var(--border); border-radius: 1rem; color: var(--text); }
+.chip button { padding: 0 0.15rem; background: transparent; border: none; color: var(--muted); }

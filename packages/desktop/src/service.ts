@@ -1082,7 +1082,7 @@ export class WorkspaceService {
   /** The files of the knowledge base: topics, scenes, summaries, the notes and the classes. */
   knowledgeFiles(): KnowledgeFiles {
     const ctx = this.fileContext();
-    return { files: listFiles(ctx), classes: ctx.classes.map((c) => ({ name: c.name, label: classLabel(c.name) })), rev: this.knowledge.rev };
+    return { files: listFiles(ctx), classes: ctx.classes.map((c) => ({ name: c.name, label: classLabel(c.name), attributes: c.attributes })), rev: this.knowledge.rev };
   }
 
   knowledgeFile(id: string, problems: { line: number; message: string }[] = []): KnowledgeFile {
@@ -1219,8 +1219,10 @@ export class WorkspaceService {
         const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
         const gender = (e.attrs["gender"] ?? [])[0];
         const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
-        return [{ ...n, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        return [{ ...n, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
       });
+      const narratorEntry = b.interpretation.narrator ? terms.find((t) => t.source === b.interpretation!.narrator) : undefined;
+      if (narratorEntry && narratorEntry.category !== "character") b.interpretation.narrator = null;
       if (b.interpretation.narrator && !b.interpretation.names.some((n) => n.source === b.interpretation!.narrator) && b.interpretation.narratorWord) {
         const e = terms.find((t) => t.source === b.interpretation!.narrator);
         if (!e) b.interpretation.narrator = null;
@@ -1356,15 +1358,45 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
-  /** Ties a topic to the person it stands for (山田 to 山田太郎), or unties it. */
-  guidedLink(source: string, target: string | null): GuidedState {
+  private termBySource(source: string): KnowledgeEntry {
     const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === source);
     if (!e) throw new UserError("no_entry", "That name is not in the glossary any more.");
-    if (target !== null && !this.knowledge.all().some((t) => t.kind === "term" && t.source === target)) throw new UserError("no_entry", "That person is not in the glossary.");
-    const attrs = { ...e.attrs };
-    if (target === null) delete attrs["refers to"];
-    else attrs["refers to"] = [target];
-    this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target || "", hint: e.hint, category: e.category, aliases: e.aliases, attrs, text: "", about: null });
+    return e;
+  }
+
+  /**
+   * Sets one attribute of a name's topic from a choice the user made: a value from the list for a choice, a topic of the right class
+   * for a link. An empty list clears it. What the user sets here is no longer flagged to check.
+   */
+  guidedSetAttribute(source: string, key: string, values: string[]): GuidedState {
+    const e = this.termBySource(source);
+    const def = parseClasses(this.classesText).classes.find((c) => c.name === e.category)?.attributes.find((a) => a.key === key);
+    if (!def || def.kind === "text") throw new UserError("bad_attribute", `${key} is not an attribute with options for this kind of topic.`);
+    if (def.kind === "choice" && values.some((v) => !(def.choices ?? []).includes(v))) throw new UserError("bad_attribute", `${key} is one of: ${(def.choices ?? []).join(", ")}.`);
+    if ((def.kind === "link" || def.kind === "links") && values.some((v) => !this.knowledge.all().some((t) => t.kind === "term" && t.source === v && (!def.target || t.category === def.target)))) throw new UserError("bad_attribute", `${key} must be a topic of the kind ${def.target ?? "any"}.`);
+    if (values.length > 1 && def.kind !== "links") throw new UserError("bad_attribute", `${key} takes one value.`);
+    this.knowledge.patch(e.id, (x) => {
+      if (values.length === 0) delete x.attrs[key];
+      else x.attrs[key] = values;
+      return x;
+    }, [key]);
+    this.knowledgeChanged();
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
+  /** Changes what kind of topic a name is. Attributes the new kind does not have are dropped. */
+  guidedSetKind(source: string, kind: string): GuidedState {
+    const e = this.termBySource(source);
+    const classes = parseClasses(this.classesText).classes;
+    const target = classes.find((c) => c.name === kind);
+    if (!target) throw new UserError("bad_kind", `There is no kind of topic called ${kind}.`);
+    this.knowledge.patch(e.id, (x) => {
+      x.category = kind;
+      for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
+      x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
+      return x;
+    });
     this.knowledgeChanged();
     this.guidedChanged();
     return this.guidedView();
