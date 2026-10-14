@@ -1,4 +1,4 @@
-import { glossaryLine } from "./glossary.js";
+import { glossaryLine, targetVariants } from "./glossary.js";
 import { splitSentences } from "./steps.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -217,4 +217,24 @@ export function rewriteRange(located: readonly Located[], from: number, to: numb
     else break;
   }
   return { from: located[lo]!.from, to: located[hi]!.to, source: span() };
+}
+
+/**
+ * A check on the model's answer with the glossary: when a paragraph of the translation has the English name of a word that is in the
+ * source text, the source text it was mapped to must have that word. A paragraph for which that is not so is marked as not known,
+ * since a wrong place is worse than none.
+ */
+export function dropContradicted(located: readonly Located[], translation: string, source: string, names: readonly { source: string; aliases: string[]; english: string }[]): Located[] {
+  return located.map((p) => {
+    if (!p.source) return p;
+    const text = translation.slice(p.from, p.to).toLocaleLowerCase();
+    const there = source.slice(p.source.start, p.source.end);
+    const contradicted = names.some((n) => {
+      const words = [n.source, ...n.aliases];
+      if (!words.some((w) => source.includes(w))) return false; // not in the source at all: nothing to compare
+      const named = targetVariants(n.english).some((v) => text.includes(v.toLocaleLowerCase()));
+      return named && !words.some((w) => there.includes(w));
+    });
+    return contradicted ? { ...p, source: null } : p;
+  });
 }

@@ -74,3 +74,16 @@ describe("paragraphs that are split or joined", () => {
     expect(rewriteRange(located, 30, 30)).toEqual({ from: 22, to: 40, source: { start: 22, end: 60 } });
   });
 });
+
+describe("dropContradicted", () => {
+  it("marks a paragraph as not known when its name is not in the place it was mapped to", async () => {
+    const { dropContradicted } = await import("./revise.js");
+    const source = "花子は笑った。\n太郎は泣いた。";
+    const translation = "Hanako laughed.\nTaro cried.";
+    const names = [{ source: "花子", aliases: [], english: "Hanako" }, { source: "太郎", aliases: [], english: "Taro" }];
+    const right = placeLocation(source, translation, [{ first: 1, last: 1 }, { first: 2, last: 2 }]);
+    expect(dropContradicted(right, translation, source, names).map((p) => p.source !== null)).toEqual([true, true]);
+    const wrong = placeLocation(source, translation, [{ first: 2, last: 2 }, { first: 2, last: 2 }]);
+    expect(dropContradicted(wrong, translation, source, names).map((p) => p.source !== null)).toEqual([false, true]);
+  });
+});

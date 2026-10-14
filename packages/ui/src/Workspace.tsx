@@ -12,6 +12,7 @@ import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
+const FROM_TRANSLATION = "From the translation";
 const LOCATING = "Finding where the translation comes from";
 const WIDTHS_KEY = "ltw.workspace.widths.v2";
 const MIN = 0.1;
@@ -182,7 +183,7 @@ export function Workspace({
   const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
   const hits = mapped ? [mapped] : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = mapped ? "From the translation" : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
+  const looking = mapped ? FROM_TRANSLATION : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   useEffect(() => {
     setFocus(null);
     setLineFocus(null);
@@ -285,10 +286,16 @@ export function Workspace({
     targetLanguage: setup.targetLanguage,
   });
 
-  /** Where the paragraphs of the translation text come from: asked once for each text (the app answers by itself when the paragraphs match, the model is asked when they do not). */
+  /**
+   * What an answer about where a translation comes from was made for: the document, the block and its source text, the translation text
+   * and the model that answered. An answer is kept only while all of these are the same.
+   */
+  const placeKey = (): string | null => (block && model ? [documentId, model.name, block.index, block.text, translation].join("\u0000") : null);
+
+  /** Where the paragraphs of the translation text come from: the model is asked once for each text, and the answer is kept. */
   const locate = async (): Promise<Located[] | null> => {
-    if (!block || !model) return null;
-    const key = `${block.index}:${translation}`;
+    const key = placeKey();
+    if (!block || !model || key === null) return null;
     const known = places.current.get(key);
     if (known) return known;
     if (asking.current === key) return null;
@@ -305,6 +312,13 @@ export function Workspace({
     }
   };
   const placeOf = (found: Located[], from: number, to: number) => found.find((p) => from <= p.to && to >= p.from)?.source ?? null;
+
+  /** The model is asked again where the paragraph comes from (its last answer was wrong). */
+  const findAgain = () => {
+    const key = placeKey();
+    if (key !== null) places.current.delete(key);
+    follow();
+  };
 
   /** Moving the cursor in the translation shows in the source what it was made from. */
   const follow = () => {
@@ -495,6 +509,11 @@ export function Workspace({
                 <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
                   <ArrowDownIcon />
                 </IconButton>
+                {looking === FROM_TRANSLATION && (
+                  <Button variant="ghost" size="1" color="gray" onClick={findAgain} title="Ask the model again where this paragraph comes from">
+                    Find again
+                  </Button>
+                )}
                 <IconButton variant="ghost" size="1" color="gray" onClick={stopLooking} aria-label="Stop looking">
                   <Cross2Icon />
                 </IconButton>

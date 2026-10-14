@@ -69,6 +69,7 @@ import {
   locateMessage,
   parseLocation,
   placeLocation,
+  dropContradicted,
   paragraphsOf,
   sentenceUnits,
   withoutEcho,
@@ -1762,7 +1763,9 @@ export class WorkspaceService {
         abort,
       );
       if (reply === null) return [];
-      return placeLocation(block.text, input.text, parseLocation(reply, paragraphs, sentences));
+      const placed = placeLocation(block.text, input.text, parseLocation(reply, paragraphs, sentences));
+      const names = (block.interpretation?.names ?? []).filter((n) => n.use !== false && n.english.trim() !== "").map((n) => ({ source: n.source, aliases: n.aliases, english: n.english }));
+      return dropContradicted(placed, input.text, block.text, names);
     } finally {
       this.analysisAbort = null;
     }
