@@ -11,9 +11,9 @@ import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
-const WIDTHS_KEY = "ltw.workspace.widths.v1";
+const WIDTHS_KEY = "ltw.workspace.widths.v2";
 const MIN = 0.1;
-const DEFAULT_WIDTHS = [0.3, 0.27, 0.23, 0.2];
+const DEFAULT_WIDTHS = [0.28, 0.26, 0.22, 0.24];
 
 const loadWidths = (): number[] => {
   try {
@@ -277,7 +277,7 @@ export function Workspace({
   // ---- the panes and the handles between them ----
   const shown = kb.open ? [0, 1, 2, 3] : [0, 1, 2];
   const total = shown.reduce((sum, i) => sum + widths[i]!, 0);
-  const columns = shown.map((i, n) => `${widths[i]! / total}fr${n < shown.length - 1 ? " 6px" : ""}`).join(" ");
+  const columns = shown.map((i, n) => `${i === 3 ? `minmax(18rem, ${widths[i]! / total}fr)` : `minmax(0, ${widths[i]! / total}fr)`}${n < shown.length - 1 ? " 8px" : ""}`).join(" ");
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<{ left: number; right: number; start: number; widths: number[] } | null>(null);
   const beginDrag = (left: number, right: number) => (e: ReactPointerEvent) => {
