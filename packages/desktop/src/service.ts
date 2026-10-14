@@ -64,18 +64,16 @@ import {
   stripThinking,
   reviseSystem,
   reviseMessage,
+  surroundings,
   revisedPart,
   locateSystem,
   locateMessage,
   parseLocation,
   placeLocation,
   dropContradicted,
-  dropImplausible,
   paragraphsOf,
   sentenceUnits,
-  withoutEcho,
   wholeParagraphs,
-  tooLong,
   targetVariants,
   type Located,
   validatePrompt,
@@ -1644,17 +1642,21 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
-  /** The style the model's settings name, as the instruction every request to translate starts with. */
-  private styleSystem(input: GuidedModelInput): string {
+  /** The style the model's settings name, filled in with the languages. */
+  private styleOf(input: GuidedModelInput): { id: string; text: string } {
     const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
-    return renderPrompt(style, input.sourceLanguage, input.targetLanguage);
+    return { id: style.id, text: renderPrompt(style, input.sourceLanguage, input.targetLanguage) };
+  }
+
+  private styleSystem(input: GuidedModelInput): string {
+    return this.styleOf(input).text;
   }
 
   /**
-   * Writes the selected part of a block's translation again, with the glossary as it is now, and leaves the rest of the text as
-   * the user has it. When the place the text comes from is known, only that source text and its glossary words are sent.
-   * The answer is checked: words repeated from around the part are dropped, an answer much longer than the part is asked for
-   * again, and so is one that leaves out a glossary name of that source text.
+   * Writes whole paragraphs of a block's translation again, with the glossary as it is now, and leaves the rest of the text as the
+   * user has it. When the place the paragraphs come from is known, only that source text and its glossary words are sent; the
+   * place is the user's to fix when it is wrong. The model is asked to answer between markers, and if it leaves out a glossary name
+   * of that source text it is asked once more.
    */
   async guidedRetranslate(input: GuidedModelInput & { index: number; text: string; from: number; to: number; source?: { start: number; end: number } | undefined }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
@@ -1670,29 +1672,25 @@ export class WorkspaceService {
     try {
       this.commitWords(interp);
       this.guidedView();
-      const system = reviseSystem(this.styleSystem(input), input.sourceLanguage, input.targetLanguage);
+      // The standard style is about translating a whole block, which is another task; other styles are added for their tone.
+      const style = this.styleOf(input);
+      const system = reviseSystem(style.id === STANDARD_PROMPT.id ? null : style.text, input.sourceLanguage, input.targetLanguage);
       const known = input.source && input.source.start < input.source.end && input.source.end <= block.text.length;
-      // Where the paragraph comes from may be wrong (it is the answer of a model). When what the model writes for that place is far too
-      // long for the paragraph, the place is dropped and the whole block is sent instead.
-      let usePart = !!known;
-      let source = usePart ? block.text.slice(input.source!.start, input.source!.end) : block.text;
-      let glossary = glossaryFor(interp, source);
-      let notes = notesFor(interp, source);
+      const source = known ? block.text.slice(input.source!.start, input.source!.end) : block.text;
+      const glossary = glossaryFor(interp, source);
+      const notes = notesFor(interp, source);
       const original = text.slice(from, to);
-      const before = text.slice(0, from);
-      const after = text.slice(to);
       const names = glossary.map((g) => ({ source: g.source, aliases: g.aliases ?? [], wanted: targetVariants(g.target) })).filter((g) => g.wanted.length > 0);
       let complaint = "";
       let part: string | null = null;
       let missing: string[] = [];
-      for (let attempt = 0; attempt < 3; attempt++) {
-        // The text around the part is cut shorter until the request and the reply fit the context.
-        let user = "";
-        for (const window of [800, 400, 150, 0]) {
-          user = reviseMessage(glossary, notes, source, text, from, to, window, usePart) + complaint;
-          if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-          if (window === 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Select less, raise the context size, or use smaller blocks.`);
-        }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        // As many whole paragraphs around the part as the context has room for.
+        const fixed = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, before: "", selected: original, after: "" }) + complaint;
+        const room = input.contextLimit - estimateTokens(system) - estimateTokens(fixed) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
+        if (room < 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(fixed)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+        const around = surroundings(text, from, to, room, estimateTokens);
+        const user = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, ...around, selected: original }) + complaint;
         const reply = await this.askModel(
           {
             backend: input.backend,
@@ -1708,28 +1706,15 @@ export class WorkspaceService {
           abort,
         );
         if (reply === null) return this.guidedView(); // stopped
-        part = revisedPart(withoutEcho(reply, before, after), original);
-        if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the selected part.");
-        if (tooLong(part, original)) {
-          complaint = `\n\nYour last answer was too long: it was not accepted. Write only the new text for the marked paragraph(s), about ${original.trim().length} characters, and nothing before or after it.`;
-          part = null;
-          if (usePart) {
-            usePart = false;
-            source = block.text;
-            glossary = glossaryFor(interp, source);
-            notes = notesFor(interp, source);
-          }
-          continue;
-        }
-        // The names of the glossary that belong to this source text must be in what was written for it: the whole part, which may be
-        // several paragraphs (paragraphs that share source text are written again together).
+        part = revisedPart(reply, original);
+        if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the paragraph.");
+        // The names of the glossary that belong to this source text must be in what was written for it.
         const hay = part.toLocaleLowerCase();
         missing = names.filter((g) => [g.source, ...g.aliases].some((n) => source.includes(n)) && !g.wanted.some((w) => hay.includes(w.toLocaleLowerCase()))).map((g) => `${g.source} => ${g.wanted[0]}`);
         if (missing.length === 0) break;
-        complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Use them exactly as written.`;
+        complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Write the marked part again and use them exactly as written.`;
       }
-      if (part === null) throw new UserError("invalid_response", "The model keeps writing far more than the paragraph. Try again, or use a different model.");
-      block.translation = text.slice(0, from) + part + text.slice(to);
+      block.translation = text.slice(0, from) + part! + text.slice(to);
       block.status = "translated";
       block.error = null;
       block.warning = missing.length > 0 ? `The new text does not use the glossary names: ${missing.join("; ")}. Fix it by hand or try again.` : null;
@@ -1775,7 +1760,7 @@ export class WorkspaceService {
       if (reply === null) return [];
       const placed = placeLocation(block.text, input.text, parseLocation(reply, paragraphs, sentences));
       const names = (block.interpretation?.names ?? []).filter((n) => n.use !== false && n.english.trim() !== "").map((n) => ({ source: n.source, aliases: n.aliases, english: n.english }));
-      return dropImplausible(dropContradicted(placed, input.text, block.text, names), input.text, block.text);
+      return dropContradicted(placed, input.text, block.text, names);
     } finally {
       this.analysisAbort = null;
     }

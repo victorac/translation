@@ -76,10 +76,10 @@ export function configHash(run: ModelRun): string {
 }
 
 const SOURCE_LABEL = "SOURCE_BLOCK:";
-const GLOSSARY_LABEL = "GLOSSARY:";
+export const GLOSSARY_LABEL = "GLOSSARY:";
 const SUMMARY_LABEL = "STORY SO FAR (a summary of the whole chapter; reference only, do not translate):";
 const SCENE_LABEL = "SCENE (what is happening around this block; reference only, do not translate):";
-const NOTES_LABEL = "NOTES (background about the story and its people; use it to work out who is speaking and who is addressed; do not translate):";
+export const NOTES_LABEL = "NOTES (background about the story and its people; use it to work out who is speaking and who is addressed; do not translate):";
 const CONTEXT_LABEL = "CONTEXT (reference only, do not translate):";
 const UNAVAILABLE = "(not available)";
 

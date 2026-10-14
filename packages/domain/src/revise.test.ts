@@ -1,20 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { locateMessage, parseLocation, placeLocation, paragraphsOf, reviseMessage, revisedPart } from "./revise.js";
+import { locateMessage, parseLocation, placeLocation, paragraphsOf, reviseMessage, reviseSystem, revisedPart, sentenceUnits, surroundings } from "./revise.js";
 
 describe("reviseMessage", () => {
-  it("marks the part and cuts the text around it", () => {
-    const translation = `${"Before. ".repeat(100)}WRONG PART${" After.".repeat(100)}`;
-    const from = translation.indexOf("WRONG");
-    const m = reviseMessage([{ source: "太郎", target: "Taro" }], ["note"], "原文", translation, from, from + 10, 60);
-    expect(m).toContain("[[REDO]]WRONG PART[[/REDO]]");
-    expect(m).toContain("SOURCE_BLOCK:\n原文");
-    expect(m.length).toBeLessThan(500);
+  it("puts the background first, the marked translation next and the task last", () => {
+    const m = reviseMessage({ glossary: [{ source: "太郎", target: "Taro" }], notes: ["note"], source: "原文", sourceIsPart: true, sourceLanguage: "Japanese", before: "Before. ", selected: "WRONG", after: " After." });
+    expect(m).toContain("- 太郎 => Taro");
+    expect(m).toContain("JAPANESE TEXT THE MARKED PART WAS MADE FROM:\n原文");
+    expect(m).toContain("TRANSLATION:\nBefore. [[REDO]]WRONG[[/REDO]] After.");
+    expect(m.trimEnd().endsWith("between [[REDO]] and [[/REDO]].")).toBe(true);
+  });
+  it("does not use the translation style when it is the standard one", () => {
+    expect(reviseSystem(null, "Japanese", "English")).not.toContain("Return only its translation");
+    expect(reviseSystem("Be literary.", "Japanese", "English")).toContain("Be literary.");
+  });
+});
+
+describe("surroundings", () => {
+  const text = "One.\n\nTwo.\n\nThree.\n\nFour.\n\nFive.";
+  const size = (s: string) => s.length;
+  it("takes whole paragraphs next to the part, as many as fit", () => {
+    const from = text.indexOf("Three.");
+    const around = surroundings(text, from, from + 6, 9, size);
+    expect(around.before).toBe("…\nTwo.\n\n");
+    expect(around.after).toBe("\n\nFour.\n…");
+  });
+  it("takes everything when there is room", () => {
+    const from = text.indexOf("Three.");
+    const around = surroundings(text, from, from + 6, 1000, size);
+    expect(around.before + "Three." + around.after).toBe(text);
   });
 });
 
 describe("revisedPart", () => {
-  it("drops markers and keeps the space around the part", () => {
-    expect(revisedPart("[[REDO]]New text.[[/REDO]]", "\nOld text. ")).toBe("\nNew text. ");
+  it("takes what is between the markers and keeps the space around the part", () => {
+    expect(revisedPart("Sure! [[REDO]]New text.[[/REDO]] Done.", "\nOld text. ")).toBe("\nNew text. ");
+  });
+  it("takes the whole reply when it has no markers", () => {
+    expect(revisedPart("New text.", "Old.")).toBe("New text.");
   });
   it("is null for an empty reply", () => {
     expect(revisedPart("  ", "x")).toBeNull();
@@ -43,17 +65,6 @@ describe("locating", () => {
   });
   it("finds paragraphs with their place in the text", () => {
     expect(paragraphsOf("a\n\n  b ")).toEqual([{ start: 0, end: 1, text: "a" }, { start: 5, end: 6, text: "b" }]);
-  });
-});
-
-describe("checking a rewritten part", () => {
-  it("drops words repeated from around the part", async () => {
-    const { withoutEcho, tooLong, sentenceUnits } = await import("./revise.js");
-    expect(withoutEcho("had been enchanted by me. The Beast King's Fang, and then", "weapons used by adventurers in this guild, had been enchanted by me. ", ", and then more")).toBe("The Beast King's Fang");
-    expect(tooLong("x".repeat(120), "The Fang of the Beast King")).toBe(true);
-    expect(tooLong("The Beast King's Fang", "The Fang of the Beast King")).toBe(false);
-    // two sentences inside one quote are one piece
-    expect(sentenceUnits("「一つ？　二つ。」\n三つ。").map((u) => u.text)).toEqual(["「一つ？　二つ。」", "三つ。"]);
   });
 });
 
@@ -88,14 +99,9 @@ describe("dropContradicted", () => {
   });
 });
 
-describe("dropImplausible", () => {
-  it("marks a paragraph mapped to far too much source text as not known", async () => {
-    const { dropImplausible } = await import("./revise.js");
-    const located = [
-      { from: 0, to: 60, source: { start: 0, end: 30 } },
-      { from: 62, to: 100, source: { start: 30, end: 140 } }, // 38 characters mapped to 110
-      { from: 102, to: 160, source: { start: 140, end: 170 } },
-    ];
-    expect(dropImplausible(located, "", "").map((p) => p.source !== null)).toEqual([true, false, true]);
+
+describe("sentenceUnits", () => {
+  it("keeps the sentences inside one quotation together", () => {
+    expect(sentenceUnits("「一つ？　二つ。」\n三つ。").map((u) => u.text)).toEqual(["「一つ？　二つ。」", "三つ。"]);
   });
 });

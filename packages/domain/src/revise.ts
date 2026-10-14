@@ -1,4 +1,5 @@
 import { glossaryLine, targetVariants } from "./glossary.js";
+import { GLOSSARY_LABEL, NOTES_LABEL } from "./prompt.js";
 import { splitSentences } from "./steps.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -58,69 +59,90 @@ export function sentenceUnits(text: string): { text: string; start: number; end:
   return out;
 }
 
-/** The system instruction for rewriting a marked part of a translation. */
-export function reviseSystem(style: string, sourceLanguage: string, targetLanguage: string): string {
-  return (
-    `${style}\n\n` +
-    `Right now you are correcting a ${sourceLanguage} to ${targetLanguage} translation that is already written. The translation is shown with one part marked between ${REDO_OPEN} and ${REDO_CLOSE}; the marked part is one or more whole paragraphs. ` +
-    `Write new words for that marked part, from the source text, so that they fit the text before and after it. Always use the exact ${targetLanguage} names given in GLOSSARY. ` +
-    `Reply with the replacement for the marked part only, about as long as the marked part: no markers, no explanation, and never repeat the text before or after it.`
-  );
+/**
+ * The instruction for writing paragraphs of a translation again. It is its own instruction, not the translation style: the style says
+ * "translate SOURCE_BLOCK and return only its translation", which is a different task and makes a model translate the whole source.
+ * A style that is not the standard one is added as guidance for tone only.
+ */
+export function reviseSystem(styleGuidance: string | null, sourceLanguage: string, targetLanguage: string): string {
+  return [
+    `You are correcting part of a translation from ${sourceLanguage} into ${targetLanguage} that is already written. The user message has labelled sections: GLOSSARY (names and terms that must be written as given), NOTES (background; do not translate it), the ${sourceLanguage} text the translation was made from, and TRANSLATION, which is the translation with the part to write again between ${REDO_OPEN} and ${REDO_CLOSE}.`,
+    styleGuidance ? `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}` : "",
+    `Your task: write the part between ${REDO_OPEN} and ${REDO_CLOSE} again, translated from the ${sourceLanguage} text, so that it fits the translation before and after it. Use the names from GLOSSARY exactly as written. Do not translate or repeat anything outside the markers.`,
+    `Reply with the new text for the marked part between ${REDO_OPEN} and ${REDO_CLOSE}, and nothing else: no explanation and no labels.`,
+  ]
+    .filter((x) => x !== "")
+    .join("\n\n");
 }
 
 /**
- * The request to write a selected part of a translation again. It has the glossary and notes, the whole source block, and the
- * translation with the part marked; the text around the part is cut to `window` characters on each side so the request stays small.
+ * The whole paragraphs of `text` next to the part from..to, nearest first, as many as fit in `room` tokens. They keep their line
+ * breaks, and a side that does not reach the end of the text starts or ends with "…".
  */
-export function reviseMessage(glossary: readonly { source: string; target: string; note?: string; aliases?: string[] | undefined }[], notes: readonly string[], source: string, translation: string, from: number, to: number, window: number, partOfSource = false): string {
-  const before = tail(translation.slice(0, from), window);
-  const after = head(translation.slice(to), window);
-  const parts: string[] = [];
-  if (notes.length > 0) parts.push(`NOTES:\n${notes.map((n) => `- ${n}`).join("\n")}`);
-  if (glossary.length > 0) {
-    const lines = glossary.map(glossaryLine);
-    parts.push(`GLOSSARY:\n${lines.join("\n")}`);
+export function surroundings(text: string, from: number, to: number, room: number, estimate: (s: string) => number): { before: string; after: string } {
+  const paragraphs = paragraphsOf(text);
+  const earlier = paragraphs.filter((p) => p.end <= from).reverse();
+  const later = paragraphs.filter((p) => p.start >= to);
+  let left = room;
+  let b = 0;
+  let a = 0;
+  for (;;) {
+    const nb = earlier[b];
+    const na = later[a];
+    // Take the nearer paragraph first, alternating, until the next one does not fit.
+    const useBefore = nb !== undefined && (na === undefined || b <= a);
+    const next = useBefore ? nb : na;
+    if (next === undefined) break;
+    const cost = estimate(next.text);
+    if (cost > left) break;
+    left -= cost;
+    if (useBefore) b++;
+    else a++;
   }
-  parts.push(`${partOfSource ? "SOURCE_PART" : "SOURCE_BLOCK"}:\n${source}`);
-  parts.push(`TRANSLATION:\n${before}${REDO_OPEN}${translation.slice(from, to)}${REDO_CLOSE}${after}`);
+  const start = b > 0 ? earlier[b - 1]!.start : from;
+  const end = a > 0 ? later[a - 1]!.end : to;
+  const before = text.slice(start, from);
+  const after = text.slice(to, end);
+  return { before: `${start > 0 && b < earlier.length ? "…\n" : ""}${before}`, after: `${after}${end < text.length && a < later.length ? "\n…" : ""}` };
+}
+
+/** The request to write a part of a translation again: the background, the source text, the translation with the part marked, and the task. */
+export function reviseMessage(input: {
+  glossary: readonly { source: string; target: string; note?: string; aliases?: string[] | undefined }[];
+  notes: readonly string[];
+  /** The source text the part was made from, or the whole block when that is not known. */
+  source: string;
+  sourceIsPart: boolean;
+  sourceLanguage: string;
+  before: string;
+  selected: string;
+  after: string;
+}): string {
+  const parts: string[] = [];
+  if (input.notes.length > 0) parts.push(`${NOTES_LABEL}\n${input.notes.map((n) => `- ${n}`).join("\n")}`);
+  if (input.glossary.length > 0) parts.push(`${GLOSSARY_LABEL}\n${input.glossary.map(glossaryLine).join("\n")}`);
+  parts.push(`${input.sourceLanguage.toUpperCase()} TEXT ${input.sourceIsPart ? "THE MARKED PART WAS MADE FROM" : "(the whole block; the marked part is made from some of it)"}:\n${input.source}`);
+  parts.push(`TRANSLATION:\n${input.before}${REDO_OPEN}${input.selected}${REDO_CLOSE}${input.after}`);
+  parts.push(`Write the marked part again, between ${REDO_OPEN} and ${REDO_CLOSE}.`);
   return parts.join("\n\n");
 }
 
-/** The reply without the words it repeated from the text just before and just after the marked part. */
-export function withoutEcho(reply: string, before: string, after: string): string {
-  let t = reply;
-  for (let n = Math.min(before.length, t.length); n >= 8; n--) {
-    if (t.startsWith(before.slice(before.length - n))) {
-      t = t.slice(n);
-      break;
-    }
-  }
-  for (let n = Math.min(after.length, t.length); n >= 8; n--) {
-    if (t.endsWith(after.slice(0, n))) {
-      t = t.slice(0, t.length - n);
-      break;
-    }
-  }
-  return t;
+/** What the model wrote for the marked part: what is between the markers when it wrote them, else its whole reply; the space around the part is kept as it was. */
+export function revisedPart(reply: string, original: string): string | null {
+  const open = reply.indexOf(REDO_OPEN);
+  const close = reply.lastIndexOf(REDO_CLOSE);
+  let t = open >= 0 && close > open ? reply.slice(open + REDO_OPEN.length, close) : reply.split(REDO_OPEN).join("").split(REDO_CLOSE).join("");
+  t = t.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
+  if (t === "") return null;
+  const lead = /^\s*/.exec(original)![0];
+  const trail = /\s*$/.exec(original)![0];
+  return `${lead}${t}${original.trim() === "" ? "" : trail}`;
 }
 
 /** The selection widened to whole paragraphs: from the start of the first paragraph it touches to the end of the last. Null when it touches none. */
 export function wholeParagraphs(text: string, from: number, to: number): { from: number; to: number } | null {
   const touched = paragraphsOf(text).filter((p) => p.start <= Math.max(from, to) && p.end >= Math.min(from, to));
   return touched.length > 0 ? { from: touched[0]!.start, to: touched[touched.length - 1]!.end } : null;
-}
-
-/** Whether a reply is much longer than the part it replaces, which means the model wrote more than it was asked to. */
-export const tooLong = (reply: string, selected: string): boolean => reply.trim().length > Math.max(selected.trim().length * 2.5, selected.trim().length + 30);
-
-/** What the model wrote for the marked part: without markers or stray quotes, and with the space around the part kept as it was. */
-export function revisedPart(reply: string, original: string): string | null {
-  let t = reply.split(REDO_OPEN).join("").split(REDO_CLOSE).join("").trim();
-  t = t.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
-  if (t === "") return null;
-  const lead = /^\s*/.exec(original)![0];
-  const trail = /\s*$/.exec(original)![0];
-  return `${lead}${t}${original.trim() === "" ? "" : trail}`;
 }
 
 // ---- where a part of the translation comes from ----
@@ -136,9 +158,8 @@ export interface Located {
 
 export function locateSystem(sourceLanguage: string, targetLanguage: string): string {
   return (
-    `You compare a ${sourceLanguage} text with its ${targetLanguage} translation. The source is cut into numbered sentences (S1, S2, ...) and the translation into numbered paragraphs (P1, P2, ...). ` +
-    `For every paragraph of the translation, say which sentences of the source it was made from: the range runs from the first sentence it covers to the last. Reply with one line per paragraph in exactly this form, and nothing else:\n` +
-    `P1: S1-S3\nP2: S4\nP3: S5-S6`
+    `You compare a ${sourceLanguage} text with its ${targetLanguage} translation. The ${sourceLanguage} text is cut into numbered sentences (S1, S2, ...) and the translation into numbered paragraphs (P1, P2, ...). A paragraph of the translation may be made from one sentence or several, and a sentence may be spread over two paragraphs.\n` +
+    `For every paragraph of the translation, say which sentences it was made from: the first and the last sentence it covers. Reply with one line per paragraph, written P<number>: S<first>-S<last>, or P<number>: S<number> when it is made from one sentence, and nothing else.`
   );
 }
 
@@ -236,25 +257,5 @@ export function dropContradicted(located: readonly Located[], translation: strin
       return named && !words.some((w) => there.includes(w));
     });
     return contradicted ? { ...p, source: null } : p;
-  });
-}
-
-/**
- * A check on the length of a mapped place: a paragraph and the source text it was mapped to have about the same length as the block's
- * paragraphs have to its source (the same ratio, within a wide band). A place that is far off, such as a paragraph mapped to two
- * paragraphs, is marked as not known. Short paragraphs are left alone: their lengths say little.
- */
-export function dropImplausible(located: readonly Located[], translation: string, source: string): Located[] {
-  const total = located.reduce((n, p) => n + (p.to - p.from), 0);
-  const covered = located.reduce((n, p) => n + (p.source ? p.source.end - p.source.start : 0), 0);
-  if (total === 0 || covered === 0) return [...located];
-  const overall = total / covered;
-  return located.map((p) => {
-    if (!p.source) return p;
-    const t = p.to - p.from;
-    const s = p.source.end - p.source.start;
-    if (t < 20 && s < 20) return p;
-    const ratio = t / Math.max(1, s) / overall;
-    return ratio < 0.4 || ratio > 2.5 ? { ...p, source: null } : p;
   });
 }
