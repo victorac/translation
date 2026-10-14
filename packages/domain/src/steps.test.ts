@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  addressedIn,
+  findQuotes,
+  speakerByForm,
+  takeTurns,
+  speakerQuestion,
   attribute,
   plausibleName,
   roleByForm,
@@ -144,3 +149,57 @@ describe("names and roles that can be judged without a model", () => {
   });
 });
 
+
+describe("speakers of quotations", () => {
+  const hanako = { id: "k", label: "Hanako", names: ["花子", "山田"] };
+  const taro = { id: "w", label: "Taro", names: ["山田太郎", "ぼく"] };
+  const people = [hanako, taro];
+  const pick = (passage: string, n: number) => {
+    const quotes = findQuotes(passage);
+    return speakerByForm(passage, quotes[n]!, people, quotes);
+  };
+
+  it("finds the quotations in order", () => {
+    expect(findQuotes("a「一」b「二」").map((q) => q.text)).toEqual(["「一」", "「二」"]);
+  });
+
+  it("reads the speaker off the narration beside a quotation, after it first and then before it", () => {
+    expect(pick("「遅いですよ」と花子は言った。", 0)).toBe("k");
+    expect(pick("ぼくは頭をかいて「ごめん」と言った。", 0)).toBe("w");
+    expect(pick("花子は笑った。\n「そうですか」", 0)).toBe(null); // the sentence before it is another one
+  });
+
+  it("leaves it to the model when nobody or two people are named beside the line", () => {
+    expect(pick("「遅いですよ」\n「ごめん」", 1)).toBe(null);
+    expect(pick("「うん」花子は、ぼくは見た。", 0)).toBe(null);
+  });
+
+  it("knows who is spoken to inside a line, who then is not the speaker", () => {
+    expect(addressedIn("「ああ、山田」", people)).toEqual(new Set(["k"]));
+    expect(addressedIn("「花子は来たよ」", people)).toEqual(new Set());
+  });
+
+  it("asks who says a marked line, with the people and a way out", () => {
+    const q = speakerQuestion("「ああ」", ["Hanako", "Taro"], "text");
+    expect(q.options).toEqual(["Hanako", "Taro", "It cannot be told"]);
+    expect(q.user).toContain("「ああ」");
+  });
+});
+
+describe("taking turns", () => {
+  const hanako = { id: "k", label: "Hanako", names: ["花子"] };
+  const taro = { id: "w", label: "Taro", names: ["山田太郎", "山田"] };
+  const run = (passage: string, who: (string | null)[]) => takeTurns(passage, findQuotes(passage), who, [hanako, taro]);
+
+  it("fills in the lines between and around a known one, in turns, whatever narration lies between", () => {
+    const p = "「一」\n\n「二」\n\n歩いた。\n\n「三」\n\n「四」";
+    expect(run(p, [null, "w", null, null])).toEqual(["k", "w", "k", "w"]);
+  });
+
+  it("does not guess for lines inside a paragraph, for more than two people, or when it would name the one spoken to", () => {
+    expect(run("彼は「一」と言い、「二」と続けた。", [null, "w"])).toEqual([null, "w"]);
+    const p = "「一」\n「二」";
+    expect(takeTurns(p, findQuotes(p), ["w", null], [hanako, taro, { id: "x", label: "X", names: [] }])).toEqual(["w", null]);
+    expect(run("「一」\n「ああ、山田」", ["k", null])).toEqual(["k", null]); // the line speaks to 山田, so it is not given to Taro
+  });
+});

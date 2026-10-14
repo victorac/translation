@@ -22,6 +22,12 @@ import {
   sceneText,
   narratorQuestion,
   firstPersonInNarration,
+  findQuotes,
+  addressedIn,
+  speakerByForm,
+  takeTurns,
+  speakerQuestion,
+  type Speaker,
   splitSentences,
   supported,
   windowAround,
@@ -328,12 +334,55 @@ export async function extractBlock(input: ExtractInput): Promise<ExtractResult> 
           }
         }
       }
+      // Who says each line. Bare quotations are where the model loses track of who is talking to whom.
+      let spoken = passage;
+      let labelled = false;
+      const speakers: Speaker[] = present.map((p) => ({ id: p.id, label: p.target, names: [p.source, ...p.aliases] }));
+      if (narrator && !speakers.some((s) => s.id === narrator!.id)) speakers.push({ id: narrator.id, label: narrator.name, names: [] });
+      if (narrator) speakers.find((s) => s.id === narrator!.id)!.names.push(narrator.word);
+      const quotes = findQuotes(passage);
+      if (speakers.length >= 2 && quotes.length > 0) {
+        let who: (string | null)[] = quotes.map((q) => speakerByForm(passage, q, speakers, quotes));
+        // A line that names one of two people as spoken to is said by the other.
+        quotes.forEach((q, i) => {
+          if (who[i] !== null) return;
+          const left = speakers.filter((s) => !addressedIn(q.text, speakers).has(s.id));
+          if (speakers.length === 2 && left.length === 1) who[i] = left[0]!.id;
+        });
+        who = takeTurns(passage, quotes, who, speakers);
+        const render = (from: number, to: number, mark: number): string => {
+          let out = "";
+          let at = from;
+          quotes.forEach((q, i) => {
+            if (q.end <= from || q.start >= to) return;
+            const label = speakers.find((s) => s.id === who[i])?.label;
+            out += passage.slice(at, q.start) + (i === mark ? ">>" : "") + (label ? `[${label}] ` : "") + q.text + (i === mark ? "<<" : "");
+            at = q.end;
+          });
+          return out + passage.slice(at, to);
+        };
+        let budget = 14;
+        for (let i = 0; i < quotes.length && budget > 0 && !stop(); i++) {
+          if (who[i] !== null) continue;
+          budget--;
+          const addressed = addressedIn(quotes[i]!.text, speakers);
+          const options = speakers.filter((s) => !addressed.has(s.id));
+          if (options.length === 0) continue;
+          const lo = Math.max(0, (quotes[Math.max(0, i - 2)]?.start ?? 0) - 40);
+          const chosen = await pickAgreed(speakerQuestion(quotes[i]!.text, options.map((s) => s.label), render(lo, Math.min(passage.length, quotes[i]!.end + 120), i)));
+          if (chosen !== null && chosen < options.length) who[i] = options[chosen]!.id;
+        }
+        if (who.some((w) => w !== null)) {
+          spoken = render(0, passage.length, -1);
+          labelled = true;
+        }
+      }
       // The names of everyone in the passage, so that the description does not fall back on the original script.
       const names = terms()
         .filter((t) => mentioned.has(t.id) || t.id === narrator?.id)
         .map((t) => ({ source: t.source, target: t.target }));
       const describeScene = async (strict: boolean): Promise<string | null> => {
-        const reply = await ask(sceneText(passage, input.targetLanguage, names, narrator ? { word: narrator.word, name: narrator.name } : null, strict));
+        const reply = await ask(sceneText(spoken, input.targetLanguage, names, narrator ? { word: narrator.word, name: narrator.name } : null, strict, labelled));
         const text = reply === null ? null : parseShortText(reply, 400);
         if (!text) return null;
         // The description is made from the passage and the names given, and the program checks its language. It is not

@@ -259,6 +259,20 @@ describe("scenes and stopping", () => {
     expect(unclear.asked.find((q) => q.id === "scene-text")!.user).not.toContain("The narrator");
   });
 
+  it("writes who says each line before describing the scene, from the narration, from who is spoken to, and from taking turns", async () => {
+    const passage = "ぼくは花子を待っていた。\n\n「遅いな、花子」\n\n「すみません、山田」\n\n「いいよ」";
+    const narrator = entry("t", { source: "山田太郎", target: "Taro", aliases: ["山田"], attrs: { role: ["narrator"] } });
+    const k = entry("k", { source: "花子", target: "Hanako" });
+    const { asker, asked } = scripted(answers({ "scene-text": () => "Taro and Hanako talk." }));
+    await extractBlock(base(asker, { entries: [narrator, k], passage, candidates: [], listNames: false }));
+    const user = asked.find((q) => q.id === "scene-text")!.user;
+    expect(user).toContain("[Taro] 「遅いな、花子」");
+    expect(user).toContain("[Hanako] 「すみません、山田」");
+    expect(user).toContain("[Taro] 「いいよ」");
+    expect(user).toContain("said by that person");
+    expect(asked.some((q) => q.id === "speaker")).toBe(false); // all settled by code
+  });
+
   it("tries once more with the English names when the first scene description is in the wrong language", async () => {
     let scenes = 0;
     const { asker, asked } = scripted(sensible({ "scene-text": () => (++scenes === 1 ? "花子が学園の門で待っている。" : "Hanako waits at the school gate.") }));

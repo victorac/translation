@@ -268,6 +268,88 @@ export function firstPersonInNarration(text: string): string | null {
 export const narratorQuestion = (word: string, people: string[], context: string): Question =>
   choice("narrator", "You read fiction closely.", `This passage is told in the first person: the narrator calls himself or herself 「${word}」. Which of these people is the narrator?\n\nPASSAGE:\n${context}`, [...people, "None of them, or it cannot be told"]);
 
+export interface Speaker {
+  id: string;
+  /** The English name shown to the model. */
+  label: string;
+  /** Every way the passage may write it: names, aliases, and for the narrator the word for "I". */
+  names: string[];
+}
+
+export interface Quote {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** The 「…」 lines of a passage, in order. */
+export function findQuotes(passage: string): Quote[] {
+  return [...passage.matchAll(/「[^」]*」/g)].map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
+}
+
+/** Where `name` is written in `text` followed by one of `after`, and not as part of a longer name. */
+function writtenWith(text: string, name: string, after: RegExp): boolean {
+  for (let i = text.indexOf(name); i >= 0; i = text.indexOf(name, i + 1)) {
+    const before = text[i - 1] ?? "";
+    if (before !== "" && KANJI_OR_KATAKANA.test(before) && KANJI_OR_KATAKANA.test(name[0]!)) continue;
+    if (after.test(text.slice(i + name.length, i + name.length + 2))) return true;
+  }
+  return false;
+}
+
+/** Who is named in a quotation as being spoken to: the name before an honorific, a comma or the end of the line. They are not the one speaking it. */
+export function addressedIn(quote: string, speakers: readonly Speaker[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of speakers) if (s.names.some((n) => writtenWith(quote, n, /^(?:」|、|，|さん|くん|ちゃん|様|君)/))) out.add(s.id);
+  return out;
+}
+
+/**
+ * The speaker of a quotation when the text beside it says so ("…」と花子は言った", "花子は笑って「…」"): exactly one person
+ * written with は, が or も in the narration just after the quotation, else just before it. Otherwise null.
+ */
+export function speakerByForm(passage: string, quote: Quote, speakers: readonly Speaker[], quotes: readonly Quote[]): string | null {
+  const next = quotes.find((q) => q.start >= quote.end);
+  const after = passage.slice(quote.end, Math.min(next?.start ?? passage.length, quote.end + 40)).split(/[\r\n。]/)[0]!;
+  const prior = [...quotes].reverse().find((q) => q.end <= quote.start);
+  const before = passage.slice(Math.max(prior?.end ?? 0, quote.start - 40), quote.start).split(/[\r\n。]/).at(-1)!;
+  for (const part of [after, before]) {
+    const found = speakers.filter((s) => s.names.some((n) => writtenWith(part, n, /^(?:は|が|も)/)));
+    if (found.length === 1) return found[0]!.id;
+  }
+  return null;
+}
+
+/**
+ * With two people talking, lines that each stand on a line of their own are said by the two in turn. From the lines whose speaker
+ * is known, the neighbours that are not known are filled in, unless the person it would give is the one named as spoken to in that line.
+ * Narration between two lines does not change whose turn it is. Returns the speakers with the new ones filled in.
+ */
+export function takeTurns(passage: string, quotes: readonly Quote[], who: readonly (string | null)[], speakers: readonly Speaker[]): (string | null)[] {
+  const out = [...who];
+  if (speakers.length !== 2) return out;
+  const alone = (q: Quote) => (q.start === 0 || passage[q.start - 1] === "\n") && (q.end === passage.length || passage[q.end] === "\n");
+  const other = (id: string) => speakers.find((s) => s.id !== id)!.id;
+  const spokenTo = quotes.map((q) => addressedIn(q.text, speakers));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let i = 0; i < quotes.length; i++) {
+      if (out[i] !== null || !alone(quotes[i]!)) continue;
+      const via = [i - 1, i + 1].find((j) => out[j] != null && j >= 0 && j < quotes.length && alone(quotes[j]!));
+      if (via === undefined) continue;
+      const id = other(out[via]!);
+      if (spokenTo[i]!.has(id)) continue;
+      out[i] = id;
+      changed = true;
+    }
+  }
+  return out;
+}
+
+/** Who says this line? `context` shows the passage with the line marked and the speakers settled so far written before their lines. */
+export const speakerQuestion = (line: string, people: string[], context: string): Question =>
+  choice("speaker", "You read fiction closely.", `Who says the line marked >> << in this passage: ${line}\n\nThe people who may be speaking are listed below. Lines are often said by the two people taking turns, and a person named inside a line is usually the one spoken to, not the one speaking.\n\nPASSAGE:\n${context}`, [...people, "It cannot be told"]);
+
 /** Do two descriptions of passages that follow each other belong to one scene? */
 export const sameSceneByDescription = (first: string, second: string): Question =>
   choice(
@@ -292,11 +374,12 @@ export const sceneText = (
   names: { source: string; target: string }[] = [],
   narrator: { word: string; name: string } | null = null,
   strict = false,
+  labelled = false,
 ): Question => ({
   id: "scene-text",
   kind: "text",
   system: `You describe what happens in a passage of a story, in ${targetLanguage}. ${RULE}`,
-  user: `In at most 35 words, say what happens in this passage: who does what, and to whom. Be careful about who is waiting for whom, who arrives and who is speaking. Do not quote the passage and do not use any Japanese characters.${names.length > 0 ? `\n\nWrite names like this: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${narrator ? ` The narrator, the one who says ${narrator.word} about himself or herself, is ${narrator.name}.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
+  user: `In at most 35 words, say what happens in this passage: who does what, and to whom. Be careful about who is waiting for whom, who arrives and who is speaking. Do not quote the passage and do not use any Japanese characters.${names.length > 0 ? `\n\nWrite names like this: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${narrator ? ` The narrator, the one who says ${narrator.word} about himself or herself, is ${narrator.name}.` : ""}${labelled ? ` Lines written as [Name] 「…」 are said by that person.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
   maxTokens: 120,
 });
 
