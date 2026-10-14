@@ -238,3 +238,23 @@ export function dropContradicted(located: readonly Located[], translation: strin
     return contradicted ? { ...p, source: null } : p;
   });
 }
+
+/**
+ * A check on the length of a mapped place: a paragraph and the source text it was mapped to have about the same length as the block's
+ * paragraphs have to its source (the same ratio, within a wide band). A place that is far off, such as a paragraph mapped to two
+ * paragraphs, is marked as not known. Short paragraphs are left alone: their lengths say little.
+ */
+export function dropImplausible(located: readonly Located[], translation: string, source: string): Located[] {
+  const total = located.reduce((n, p) => n + (p.to - p.from), 0);
+  const covered = located.reduce((n, p) => n + (p.source ? p.source.end - p.source.start : 0), 0);
+  if (total === 0 || covered === 0) return [...located];
+  const overall = total / covered;
+  return located.map((p) => {
+    if (!p.source) return p;
+    const t = p.to - p.from;
+    const s = p.source.end - p.source.start;
+    if (t < 20 && s < 20) return p;
+    const ratio = t / Math.max(1, s) / overall;
+    return ratio < 0.4 || ratio > 2.5 ? { ...p, source: null } : p;
+  });
+}

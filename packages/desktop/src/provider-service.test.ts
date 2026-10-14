@@ -455,8 +455,7 @@ describe("translating step by step", () => {
   });
 
   it("writes a selected part of a translation again and keeps the rest, and finds where a paragraph comes from", async () => {
-    // The model first writes far more than the selected part; the second time it writes just the part.
-    const lm = await fakeLmStudio({ answer: (_system, user) => (user.includes("was too long") ? "Beast King's Fang" : "x".repeat(200)) });
+    const lm = await fakeLmStudio({ answer: () => "Beast King's Fang" });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
@@ -468,7 +467,7 @@ describe("translating step by step", () => {
     const at = sourceText.indexOf("花子は笑った。");
     // The selection is a few words in the first paragraph: the whole paragraph is written again.
     const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from, to: from + "Taro WRONG laughed.".length, source: { start: at, end: at + 14 } });
-    const sent = bodies(lm).at(-2)!.messages[1]!.content;
+    const sent = bodies(lm).at(-1)!.messages[1]!.content;
     expect(sent).toContain("[[REDO]]Hanako laughed. Taro WRONG laughed.[[/REDO]]");
     expect(sent).toContain("SOURCE_PART:\n花子は笑った。太郎も笑った。"); // only the text it was made from
     expect(done.blocks[0]!.translation).toBe("Beast King's Fang\n\nShe said good morning.");
@@ -477,6 +476,21 @@ describe("translating step by step", () => {
     provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
     const placed = await service.guidedLocate({ ...model, index: 0, text: "A.\n\nB." });
     expect(placed.map((p) => sourceText.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。", "太郎も笑った。"]);
+  });
+
+  it("drops the place a paragraph was mapped to when the answer for it is far too long", async () => {
+    // The first answer is far too long for the paragraph (the place was probably wrong), so the whole block is sent the next time.
+    const lm = await fakeLmStudio({ answer: () => "x".repeat(300) });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。\n\n太郎は泣いた。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    const mine = "Hanako laughed.\n\nTaro cried.";
+    await expect(service.guidedRetranslate({ ...model, index: 0, text: mine, from: 0, to: 15, source: { start: 0, end: 14 } })).rejects.toThrow(/far more than the paragraph/);
+    const sent = bodies(lm).map((b) => b.messages[1]!.content);
+    expect(sent[0]).toContain("SOURCE_PART:");
+    expect(sent[1]).toContain("SOURCE_BLOCK:");
   });
 
   it("accepts a rewrite whose glossary name is in a later paragraph of the part", async () => {

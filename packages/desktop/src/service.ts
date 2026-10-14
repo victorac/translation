@@ -70,6 +70,7 @@ import {
   parseLocation,
   placeLocation,
   dropContradicted,
+  dropImplausible,
   paragraphsOf,
   sentenceUnits,
   withoutEcho,
@@ -1671,9 +1672,12 @@ export class WorkspaceService {
       this.guidedView();
       const system = reviseSystem(this.styleSystem(input), input.sourceLanguage, input.targetLanguage);
       const known = input.source && input.source.start < input.source.end && input.source.end <= block.text.length;
-      const source = known ? block.text.slice(input.source!.start, input.source!.end) : block.text;
-      const glossary = glossaryFor(interp, source);
-      const notes = notesFor(interp, source);
+      // Where the paragraph comes from may be wrong (it is the answer of a model). When what the model writes for that place is far too
+      // long for the paragraph, the place is dropped and the whole block is sent instead.
+      let usePart = !!known;
+      let source = usePart ? block.text.slice(input.source!.start, input.source!.end) : block.text;
+      let glossary = glossaryFor(interp, source);
+      let notes = notesFor(interp, source);
       const original = text.slice(from, to);
       const before = text.slice(0, from);
       const after = text.slice(to);
@@ -1681,11 +1685,11 @@ export class WorkspaceService {
       let complaint = "";
       let part: string | null = null;
       let missing: string[] = [];
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         // The text around the part is cut shorter until the request and the reply fit the context.
         let user = "";
         for (const window of [800, 400, 150, 0]) {
-          user = reviseMessage(glossary, notes, source, text, from, to, window, !!known) + complaint;
+          user = reviseMessage(glossary, notes, source, text, from, to, window, usePart) + complaint;
           if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
           if (window === 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Select less, raise the context size, or use smaller blocks.`);
         }
@@ -1709,6 +1713,12 @@ export class WorkspaceService {
         if (tooLong(part, original)) {
           complaint = `\n\nYour last answer was too long: it was not accepted. Write only the new text for the marked paragraph(s), about ${original.trim().length} characters, and nothing before or after it.`;
           part = null;
+          if (usePart) {
+            usePart = false;
+            source = block.text;
+            glossary = glossaryFor(interp, source);
+            notes = notesFor(interp, source);
+          }
           continue;
         }
         // The names of the glossary that belong to this source text must be in what was written for it: the whole part, which may be
@@ -1718,7 +1728,7 @@ export class WorkspaceService {
         if (missing.length === 0) break;
         complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Use them exactly as written.`;
       }
-      if (part === null) throw new UserError("invalid_response", "The model wrote more than the selected part. Try again, or select a larger part.");
+      if (part === null) throw new UserError("invalid_response", "The model keeps writing far more than the paragraph. Try again, or use a different model.");
       block.translation = text.slice(0, from) + part + text.slice(to);
       block.status = "translated";
       block.error = null;
@@ -1765,7 +1775,7 @@ export class WorkspaceService {
       if (reply === null) return [];
       const placed = placeLocation(block.text, input.text, parseLocation(reply, paragraphs, sentences));
       const names = (block.interpretation?.names ?? []).filter((n) => n.use !== false && n.english.trim() !== "").map((n) => ({ source: n.source, aliases: n.aliases, english: n.english }));
-      return dropContradicted(placed, input.text, block.text, names);
+      return dropImplausible(dropContradicted(placed, input.text, block.text, names), input.text, block.text);
     } finally {
       this.analysisAbort = null;
     }

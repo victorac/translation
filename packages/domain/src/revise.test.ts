@@ -87,3 +87,15 @@ describe("dropContradicted", () => {
     expect(dropContradicted(wrong, translation, source, names).map((p) => p.source !== null)).toEqual([false, true]);
   });
 });
+
+describe("dropImplausible", () => {
+  it("marks a paragraph mapped to far too much source text as not known", async () => {
+    const { dropImplausible } = await import("./revise.js");
+    const located = [
+      { from: 0, to: 60, source: { start: 0, end: 30 } },
+      { from: 62, to: 100, source: { start: 30, end: 140 } }, // 38 characters mapped to 110
+      { from: 102, to: 160, source: { start: 140, end: 170 } },
+    ];
+    expect(dropImplausible(located, "", "").map((p) => p.source !== null)).toEqual([true, false, true]);
+  });
+});
