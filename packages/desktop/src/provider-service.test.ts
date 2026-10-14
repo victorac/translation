@@ -479,6 +479,20 @@ describe("translating step by step", () => {
     expect(placed.map((p) => sourceText.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。", "太郎も笑った。"]);
   });
 
+  it("accepts a rewrite whose glossary name is in a later paragraph of the part", async () => {
+    const lm = await fakeLmStudio({ answer: () => "First.\n\nHanako cried." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。\n\n花子は泣いた。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    service.guidedSetEnglish("花子", "Hanako");
+    const mine = "A.\n\nB.";
+    const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from: 0, to: mine.length, source: { start: 0, end: 14 } });
+    expect(done.blocks[0]!.translation).toBe("First.\n\nHanako cried.");
+    expect(done.blocks[0]!.warning ?? null).toBeNull();
+  });
+
   it("gives a later block the end of the block before it, source and translation", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

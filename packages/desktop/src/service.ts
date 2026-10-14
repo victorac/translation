@@ -1695,10 +1695,9 @@ export class WorkspaceService {
           part = null;
           continue;
         }
-        // The names of the glossary that belong to this source text must be in the paragraph that now stands there.
-        const result = text.slice(0, from) + part + text.slice(to);
-        const paragraph = paragraphsOf(result).find((p) => from <= p.end && from + part!.length >= p.start);
-        const hay = (paragraph?.text ?? part).toLocaleLowerCase();
+        // The names of the glossary that belong to this source text must be in what was written for it: the whole part, which may be
+        // several paragraphs (paragraphs that share source text are written again together).
+        const hay = part.toLocaleLowerCase();
         missing = names.filter((g) => [g.source, ...g.aliases].some((n) => source.includes(n)) && !g.wanted.some((w) => hay.includes(w.toLocaleLowerCase()))).map((g) => `${g.source} => ${g.wanted[0]}`);
         if (missing.length === 0) break;
         complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Use them exactly as written.`;
