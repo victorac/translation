@@ -581,6 +581,7 @@ export function Workspace({
                             onUse={(use) => void call(() => api.invoke("guided.setUse", { source: n.source, use })).then((s) => s && setState(s))}
                             onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                             onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
+                            onHint={(hint) => void call(() => api.invoke("guided.setHint", { source: n.source, hint })).then((s) => s && setState(s))}
                             onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
                             onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
                           />

@@ -311,7 +311,7 @@ export function glossaryHits<T extends { source: string; aliases: readonly strin
 export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
   const sources = interp.names.map((n) => n.source);
   return interp.names
-    .filter((n) => n.english.trim() !== "" && n.use !== false)
+    .filter((n) => (n.english.trim() !== "" || (n.hint ?? "").trim() !== "") && n.use !== false)
     .flatMap((n) => {
       const longer = sources.filter((s) => s.length > n.source.length && s.includes(n.source));
       const aliases = n.aliases.filter((a) => !sources.includes(a));

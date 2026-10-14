@@ -55,6 +55,7 @@ export function NameRow({
   onUse,
   onOpen,
   onEnglish,
+  onHint,
   onKind,
   onAttribute,
 }: {
@@ -68,6 +69,7 @@ export function NameRow({
   onUse: (use: boolean) => void;
   onOpen: () => void;
   onEnglish: (english: string) => void;
+  onHint: (hint: string) => void;
   onKind: (kind: string) => void;
   onAttribute: (key: string, values: string[]) => void;
 }) {
@@ -88,8 +90,8 @@ export function NameRow({
             {name.source}
           </Text>
         </Button>
-        <Text size="2" color={name.english.trim() === "" ? "amber" : undefined} className="name-english">
-          {name.english.trim() === "" ? "no English name" : name.english}
+        <Text size="2" color={name.english.trim() === "" && !name.hint ? "amber" : undefined} className="name-english" title={name.hint ? `Note to the model: ${name.hint}` : undefined}>
+          {name.english.trim() !== "" ? name.english : name.hint ? `note: ${name.hint}` : "no English name"}
         </Text>
         <Text as="label" size="1" color={used ? "green" : "gray"} weight={used ? "medium" : "regular"} title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
           <Flex align="center" gap="1">
@@ -103,6 +105,10 @@ export function NameRow({
           <li>
             <Text size="1" color="gray">english</Text>
             <TextBox value={name.english} label={`English name of ${name.source}`} placeholder="English name" onSave={onEnglish} />
+          </li>
+          <li>
+            <Text size="1" color="gray">note</Text>
+            <TextBox value={name.hint ?? ""} label={`Note to the model about ${name.source}`} placeholder="A hint for the model (the English name can stay empty)" onSave={onHint} />
           </li>
           <li>
             <Text size="1" color="gray">type</Text>

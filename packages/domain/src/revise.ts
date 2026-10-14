@@ -1,4 +1,4 @@
-import { targetVariants } from "./glossary.js";
+import { glossaryLine } from "./glossary.js";
 import { splitSentences } from "./steps.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -78,10 +78,7 @@ export function reviseMessage(glossary: readonly { source: string; target: strin
   const parts: string[] = [];
   if (notes.length > 0) parts.push(`NOTES:\n${notes.map((n) => `- ${n}`).join("\n")}`);
   if (glossary.length > 0) {
-    const lines = glossary.map((g) => {
-      const [first, ...others] = targetVariants(g.target);
-      return `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => ${first ?? g.target}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
-    });
+    const lines = glossary.map(glossaryLine);
     parts.push(`GLOSSARY:\n${lines.join("\n")}`);
   }
   parts.push(`${partOfSource ? "SOURCE_PART" : "SOURCE_BLOCK"}:\n${source}`);

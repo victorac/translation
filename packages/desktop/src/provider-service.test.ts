@@ -493,6 +493,22 @@ describe("translating step by step", () => {
     expect(done.blocks[0]!.warning ?? null).toBeNull();
   });
 
+  it("sends a note to the model for a word with no English name, and keeps it in the knowledge base", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    service.guidedSetEnglish("花子", ""); // no literal name, only a note
+    service.guidedSetHint("花子", "  a verb here:\n use the past tense ");
+    await service.guidedTranslate({ ...model, index: 0 });
+    const sent = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(sent).toContain("- 花子 — a verb here: use the past tense");
+    expect(sent).not.toContain("花子 =>");
+    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}|${e.target}|${e.hint}`)).toEqual(["花子||a verb here: use the past tense"]);
+  });
+
   it("gives a later block the end of the block before it, source and translation", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

@@ -67,6 +67,14 @@ export const targetVariants = (target: string): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
+/** One line of the glossary as the model reads it. A word with no English name, only a hint, has the hint alone. */
+export function glossaryLine(g: { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined }): string {
+  const names = [g.source, ...(g.aliases ?? [])].join(" / ");
+  const [first, ...others] = targetVariants(g.target);
+  if (first === undefined) return `- ${names}${g.note ? ` — ${g.note}` : ""}`;
+  return `- ${names} => ${first}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
+}
+
 const lower = (s: string): string => s.toLocaleLowerCase();
 
 /** Only the entries whose source term appears in the given texts, so each request carries what it needs. */

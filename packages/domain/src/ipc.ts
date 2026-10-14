@@ -235,6 +235,7 @@ export interface CommandMap {
   "guided.setAttribute": { source: string; key: string; values: string[] };
   "guided.setKind": { source: string; kind: string };
   "guided.setEnglish": { source: string; english: string };
+  "guided.setHint": { source: string; hint: string };
   "guided.setUse": { source: string; use: boolean };
   "guided.translate": GuidedModelInput & { index: number };
   "guided.setTranslation": { index: number; text: string };
@@ -260,7 +261,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setUse" | "guided.translate" | "guided.setTranslation" | "guided.retranslate" | "guided.locate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setTranslation" | "guided.retranslate" | "guided.locate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.cancel": { canceled: boolean };
@@ -274,6 +275,7 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "guided.setAttribute": GuidedState;
   "guided.setKind": GuidedState;
   "guided.setEnglish": GuidedState;
+  "guided.setHint": GuidedState;
   "guided.setUse": GuidedState;
   "guided.translate": GuidedState;
   "guided.setTranslation": GuidedState;
@@ -340,6 +342,7 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "guided.setAttribute",
   "guided.setKind",
   "guided.setEnglish",
+  "guided.setHint",
   "guided.setUse",
   "guided.translate",
   "guided.setTranslation",

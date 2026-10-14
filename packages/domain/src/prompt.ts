@@ -1,6 +1,6 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
-import { relevantEntries, targetVariants } from "./glossary.js";
+import { glossaryLine, relevantEntries, targetVariants } from "./glossary.js";
 import { backupMaterial, fitMaterial, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
@@ -94,10 +94,7 @@ export function renderUserMessage(glossary: { source: string; target: string; no
   if (extras.scene) parts.push(`${SCENE_LABEL}\n${extras.scene}`);
   if (notes.length > 0) parts.push(`${NOTES_LABEL}\n${notes.map((n) => `- ${n}`).join("\n")}`);
   if (glossary.length > 0) {
-    const lines = glossary.map((g) => {
-      const [first, ...others] = targetVariants(g.target);
-      return `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => ${first ?? g.target}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
-    });
+    const lines = glossary.map(glossaryLine);
     parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
   }
   if (context.translationStatus === "available" || context.translationStatus === "unavailable") {

@@ -1466,6 +1466,21 @@ export class WorkspaceService {
     return this.guidedView();
   }
 
+  /** The note to the model about a word: said next to the glossary line, with or without an English name. */
+  guidedSetHint(source: string, hint: string): GuidedState {
+    const { name, entry } = this.wordOf(source);
+    const text = hint.replace(/\s+/g, " ").trim();
+    if (entry) {
+      this.knowledge.patch(entry.id, (x) => {
+        x.hint = text;
+        return x;
+      });
+      this.knowledgeChanged();
+    } else name.hint = text;
+    this.guidedChanged();
+    return this.guidedView();
+  }
+
   /** Changes what kind of topic a word is. Attributes the new kind does not have are dropped. */
   guidedSetKind(source: string, kind: string): GuidedState {
     const { name, entry } = this.wordOf(source);
@@ -1542,7 +1557,7 @@ export class WorkspaceService {
         continue;
       }
       this.knowledge.addMany([
-        { id: newId(), kind: "term", source: n.source, target: n.english.trim(), hint: "", category: n.kind, aliases: n.aliases, attrs: n.attrs ?? {}, attrFlags: [], text: "", about: null, related: [], scope: null, origin: { by: "user" }, status: "confirmed", updatedAt: at },
+        { id: newId(), kind: "term", source: n.source, target: n.english.trim(), hint: n.hint ?? "", category: n.kind, aliases: n.aliases, attrs: n.attrs ?? {}, attrFlags: [], text: "", about: null, related: [], scope: null, origin: { by: "user" }, status: "confirmed", updatedAt: at },
       ]);
       n.draft = false;
     }
