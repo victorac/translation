@@ -161,80 +161,6 @@ export function related(a: string, b: string): boolean {
   return common.length >= 2 && common.length >= Math.min(sa.size, [...new Set([...b])].length) * 0.6;
 }
 
-// ---- questions ----
-
-export type QuestionKind = "choice" | "text" | "list";
-
-export interface Question {
-  /** What is being asked, for tests and the log. */
-  id: string;
-  kind: QuestionKind;
-  system: string;
-  user: string;
-  /** For a choice: the options, in order. */
-  options?: string[];
-  /** The most the model should write. */
-  maxTokens: number;
-  /** For a choice: the parts it was written from, so it can be written again with the options in another order. */
-  parts?: { intro: string; body: string; extra: string };
-}
-
-const LETTERS = "ABCDEFGHIJ";
-const RULE = "Answer with exactly what is asked and nothing else.";
-const optionLines = (options: readonly string[]) => options.map((o, i) => `${LETTERS[i]}) ${o}`).join("\n");
-
-const choice = (id: string, intro: string, body: string, options: string[], extra = ""): Question => ({
-  id,
-  kind: "choice",
-  system: `${intro} ${RULE}`,
-  user: `${body}\n\n${optionLines(options)}\n\nReply with the letter only${extra}.`,
-  options,
-  maxTokens: extra ? 80 : 8,
-  parts: { intro, body, extra },
-});
-
-/**
- * The same question with the options in the opposite order. A model that really read the passage gives the same
- * answer both ways; one that is guessing tends to favour a position. `back[i]` is where option i of the reversed
- * question was in the original.
- */
-export function reversed(q: Question): { question: Question; back: number[] } {
-  const n = q.options!.length;
-  const back = Array.from({ length: n }, (_, i) => n - 1 - i);
-  const options = back.map((i) => q.options![i]!);
-  const { intro, body, extra } = q.parts!;
-  return { question: choice(q.id, intro, body, options, extra), back };
-}
-
-/** Is a statement supported by the passage? Used to throw away descriptions the model made up. */
-export const supported = (statement: string, subject: string, passage: string): Question =>
-  choice("supported", "You check statements against a text.", `Statement about 「${subject}」: ${statement}\n\nIs the statement supported by this passage?\n\nPASSAGE:\n${passage}`, ["Yes, the passage says or clearly implies it", "No, the passage does not say it"]);
-
-export const classify = (name: string, context: string, options: string[]): Question =>
-  choice("classify", "You classify words in fiction.", `In this passage, what is 「${name}」?\n\nPASSAGE:\n${context}`, options);
-
-export const describe = (name: string, kind: string, context: string, targetLanguage: string, strict = false): Question => ({
-  id: "describe",
-  kind: "text",
-  system: `You write very short descriptions from a passage. ${RULE}`,
-  user: `In at most 15 words, written in ${targetLanguage}, say what 「${name}」 (${kind}) is in the story (for a person, their role or how they relate to others; for a place or organization, what kind it is), using only what the passage says. Do not mention the passage or the text itself. If it does not say, reply UNKNOWN.${strict ? ` Your first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and write no names in the original script.` : ""}\n\nPASSAGE:\n${context}`,
-  maxTokens: 50,
-});
-
-export const role = (name: string, context: string): Question =>
-  choice("role", "You read fiction closely.", `In this passage, what does 「${name}」 do?\n\nPASSAGE:\n${context}`, [
-    "speaks or acts",
-    "is spoken to",
-    "is only mentioned or talked about",
-    "does not appear as a person here",
-  ]);
-
-export const attribute = (name: string, key: string, options: string[], context: string): Question =>
-  choice("attribute", "You read fiction closely and only report what the text says.", `According to this passage, what is the ${key} of 「${name}」?\n\nPASSAGE:\n${context}`, [...options, "Not stated in the passage"], ", then | and a short quote from the passage that shows it");
-
-export const relation = (name: string, key: string, other: string, context: string): Question =>
-  choice("relation", "You read fiction closely and only report what the text says.", `According to this passage, does 「${name}」 have this relation to 「${other}」: "${key}"?\n\nPASSAGE:\n${context}`, ["Yes", "No, or not stated"], ", then | and a short quote from the passage that shows it");
-
 /** Is a passage told in the first person? The word the narrator uses for "I" outside of quotations, or null. */
 export function firstPersonInNarration(text: string): string | null {
   const narration = text.replace(/「[^」]*」/g, "").replace(/『[^』]*』/g, "");
@@ -330,15 +256,6 @@ export function takeTurns(passage: string, quotes: readonly Quote[], who: readon
   }
   return out;
 }
-
-/** Shortens scene descriptions, without adding anything to them. */
-export const condense = (title: string, scenes: readonly string[], maxWords: number, targetLanguage: string): Question => ({
-  id: "condense",
-  kind: "text",
-  system: `You shorten scene descriptions of a chapter into one summary written in ${targetLanguage}. Use only what the descriptions say. Do not add any detail, name, reason or ending that is not in them. ${RULE}`,
-  user: `Shorten these scene descriptions of the chapter 「${title}」 into one summary of at most ${maxWords} words, keeping every event. Reply with the summary only.\n\nSCENES:\n${scenes.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
-  maxTokens: Math.min(500, Math.round(maxWords * 2.5) + 40),
-});
 
 const KANA: Record<string, string> = {
   ア: "a", イ: "i", ウ: "u", エ: "e", オ: "o", カ: "ka", キ: "ki", ク: "ku", ケ: "ke", コ: "ko", サ: "sa", シ: "shi", ス: "su", セ: "se", ソ: "so",

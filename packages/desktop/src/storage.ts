@@ -1,6 +1,15 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { z } from "zod";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import {
+  dirname,
+} from "node:path";
+import {
+  z,
+} from "zod";
 
 /** Settings kept between runs of the app. No source text, no secrets. */
 export interface Settings {

@@ -1,10 +1,36 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CLASSES_TEXT, LEGACY_CLASSES_TEXT, type ModelSetting } from "@ltw/domain";
-import { createHandler } from "./handlers.js";
-import { ProjectService, type FileDialogs } from "./project-service.js";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import {
+  tmpdir,
+} from "node:os";
+import {
+  join,
+} from "node:path";
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  DEFAULT_CLASSES_TEXT,
+  LEGACY_CLASSES_TEXT,
+  type ModelSetting,
+} from "@ltw/domain";
+import {
+  createHandler,
+} from "./handlers.js";
+import {
+  ProjectService,
+  type FileDialogs,
+} from "./project-service.js";
 
 const made: ProjectService[] = [];
 afterEach(() => {
@@ -23,7 +49,7 @@ function env(opts: { recoveryPath?: string } = {}) {
   };
   const recoveryPath = opts.recoveryPath ?? join(dir, "recovery", "unsaved.ltw.json");
   const make = (over: { recoveryPath?: string } = {}) => {
-    const p = new ProjectService({ dialogs, recoveryPath: over.recoveryPath ?? recoveryPath, workspace: { speedMs: 0 }, autosaveMs: 10, draftAutosaveMs: 30 });
+    const p = new ProjectService({ dialogs, recoveryPath: over.recoveryPath ?? recoveryPath, workspace: { speedMs: 0 }, autosaveMs: 10 });
     made.push(p);
     return p;
   };
@@ -83,6 +109,27 @@ describe("saving and reopening", () => {
     expect(partsOf(b)).toEqual(["Translation 1", "Translation 2", "Translation 3"]);
     expect(b.workspace.guidedGet()!.blocks[0]).toMatchObject({ status: "translated", translation: "Translation 1\n\nTranslation 2\n\nTranslation 3" });
     expect(b.view()).toMatchObject({ dirty: false, title: "My novel" });
+  });
+
+  it("opens a block saved as one piece of translation, matching it to the paragraphs when their number is the same and keeping all of it otherwise", async () => {
+    const { dir, answers, make } = env();
+    const a = make();
+    await writeSomething(a);
+    answers.save = join(dir, "old.ltw.json");
+    await a.save(false);
+    const file = JSON.parse(readFileSync(join(dir, "old.ltw.json"), "utf8"));
+    const open = async (translation: string) => {
+      const old = structuredClone(file);
+      old.guided[0].blocks[0].translation = translation;
+      delete old.guided[0].blocks[0].parts;
+      writeFileSync(join(dir, "single.ltw.json"), JSON.stringify(old));
+      const b = make({ recoveryPath: join(dir, `r${Math.random()}.json`) });
+      answers.open = join(dir, "single.ltw.json");
+      await b.open(false);
+      return partsOf(b);
+    };
+    expect(await open("One.\n\nTwo.\n\nThree.")).toEqual(["One.", "Two.", "Three."]);
+    expect(await open("The whole translation, as it was written.")).toEqual(["The whole translation, as it was written.", "", ""]);
   });
 
   it("adds the extension, reuses the path on the next save, and keeps the previous version as .bak", async () => {

@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { glossaryLines, targetVariants, wordNoteLines } from "./glossary.js";
-import { BUILTIN_PROMPTS, renderPrompt, validatePrompt } from "./prompts.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  glossaryLines,
+  targetVariants,
+  wordNoteLines,
+} from "./glossary.js";
+import {
+  BUILTIN_PROMPTS,
+  renderPrompt,
+  validatePrompt,
+} from "./prompts.js";
 
 describe("glossary lines", () => {
   it("lists accepted alternatives", () => {

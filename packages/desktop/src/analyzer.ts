@@ -1,6 +1,15 @@
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { mergeCandidates, patternCandidates, properNounRuns, type WordToken } from "@ltw/domain";
+import {
+  readFile,
+} from "node:fs/promises";
+import {
+  createRequire,
+} from "node:module";
+import {
+  mergeCandidates,
+  patternCandidates,
+  properNounRuns,
+  type WordToken,
+} from "@ltw/domain";
 
 interface Tokenizer {
   tokenize(text: string): { surface: string; details: string[]; byteStart: number; byteEnd: number }[];

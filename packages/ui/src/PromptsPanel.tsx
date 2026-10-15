@@ -1,7 +1,23 @@
-import { useState } from "react";
-import { Button, Callout, Card, Checkbox, Code, Flex, Text, TextArea, TextField } from "@radix-ui/themes";
-import type { PromptPreset } from "@ltw/domain";
-import { BUILTIN_PROMPTS, validatePrompt } from "@ltw/domain/pure";
+import {
+  useState,
+} from "react";
+import {
+  Button,
+  Callout,
+  Card,
+  Code,
+  Flex,
+  Text,
+  TextArea,
+  TextField,
+} from "@radix-ui/themes";
+import type {
+  PromptPreset,
+} from "@ltw/domain";
+import {
+  BUILTIN_PROMPTS,
+  validatePrompt,
+} from "@ltw/domain/pure";
 
 const newId = (): string => `custom-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())}`;
 

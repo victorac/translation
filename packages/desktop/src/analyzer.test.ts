@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { findCandidateNames } from "./analyzer.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  findCandidateNames,
+} from "./analyzer.js";
 
 describe("finding candidate names without a model", () => {
   it("finds people, places and families a Japanese word analyzer knows, and ones that are written like names", async () => {

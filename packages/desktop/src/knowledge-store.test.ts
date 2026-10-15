@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { KnowledgeStore } from "./knowledge-store.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  KnowledgeStore,
+} from "./knowledge-store.js";
 
 let n = 0;
 const make = () => new KnowledgeStore({ newId: () => `e${++n}`, now: () => "2026-01-01T00:00:00.000Z" });

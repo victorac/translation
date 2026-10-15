@@ -1,4 +1,4 @@
-/** Provider contract from spec 04. Adapters own HTTP; the coordinator and editor never see payloads. */
+/** Provider contract from spec 04. Adapters own HTTP; nothing else sees payloads. */
 export type ProviderConfig = {
   id: string;
   kind: string;

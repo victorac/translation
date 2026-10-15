@@ -43,6 +43,7 @@ import {
   missingNames,
   joinParts,
   paragraphsOf,
+  targetVariants,
   validatePrompt,
   type Backend,
   type DocumentView,
@@ -68,7 +69,9 @@ import {
 import {
   KnowledgeStore,
 } from "./knowledge-store.js";
-import type { ProviderService } from "./provider-service.js";
+import type {
+  ProviderService,
+} from "./provider-service.js";
 
 export { UserError };
 
@@ -77,14 +80,12 @@ export interface ServiceOptions {
   speedMs?: number;
   /** The saved connection to a real model server. Without it only the practice translator is available. */
   provider?: ProviderService;
-  /** Called after every finished request, before the next is sent. If it throws, translating stops. */
-  checkpoint?: () => Promise<void>;
   /** Describes the open project for the window. */
   projectView?: () => ProjectView;
 }
 
 /** `view`: only how things are shown changed (nothing to save). */
-export type ChangeKind = "state" | "delta" | "view";
+export type ChangeKind = "state" | "view";
 
 const NO_PROJECT: ProjectView = { title: "Untitled", path: null, dirty: false, lastSavedAt: null, recovery: null, openProblem: null, notice: null };
 
@@ -101,9 +102,9 @@ const newDoc = (title: string): Doc => ({ id: newId(), title, createdAt: new Dat
 
 
 /**
- * The background side of the app for one open project. It holds every version of the source text,
- * the model runs made from each, and the single job runner that translates one block at a time.
- * Every window action ends up in one of these methods.
+ * The background side of the app for one open project: its documents, the knowledge base, the settings, and for each document the
+ * blocks of its text with what was read from each and the translation of each paragraph. Every window action ends up in one of
+ * these methods.
  */
 export class WorkspaceService {
   private docs: Doc[] = [newDoc("Document 1")];
@@ -862,7 +863,7 @@ export class WorkspaceService {
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          practiceReply: () => `Practice translation of paragraph ${k + 1} of block ${input.index + 1}.`,
+          practiceReply: () => [`Practice translation of paragraph ${k + 1} of block ${input.index + 1}.`, ...glossary.map((g) => targetVariants(g.target)[0]).filter((t): t is string => !!t)].join(" "),
         },
         abort,
       );

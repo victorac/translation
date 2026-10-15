@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { buildProjectFile, parseProject, serializeProject, type ProjectFile } from "./project.js";
-import type { GuidedState } from "./guided.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  buildProjectFile,
+  parseProject,
+  serializeProject,
+  type ProjectFile,
+} from "./project.js";
+import type {
+  GuidedState,
+} from "./guided.js";
 
 const guided: GuidedState = {
   documentId: "d1",

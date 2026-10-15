@@ -1,4 +1,8 @@
-import type { ConnectionTestResult, ProviderView, SaveProviderInput } from "@ltw/domain";
+import type {
+  ConnectionTestResult,
+  ProviderView,
+  SaveProviderInput,
+} from "@ltw/domain";
 import {
   checkEndpointAllowed,
   OPENAI_COMPATIBLE_KIND,
@@ -9,8 +13,13 @@ import {
   type ProviderConfig,
   type ProviderError,
 } from "@ltw/providers";
-import { UserError } from "./errors.js";
-import type { CredentialStore, SettingsStore } from "./storage.js";
+import {
+  UserError,
+} from "./errors.js";
+import type {
+  CredentialStore,
+  SettingsStore,
+} from "./storage.js";
 
 const CREDENTIAL_REF = "local-provider";
 

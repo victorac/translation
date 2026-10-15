@@ -2,9 +2,21 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { collectStream } from "./contract.js";
 import { OpenAICompatibleProvider } from "./openai.js";
-import type { GenerateRequest, ProviderConfig } from "./types.js";
+import type { GenerateEvent, GenerateRequest, ProviderConfig } from "./types.js";
+
+/** Reads a whole reply: the events, the text from the deltas, and the one that ended it. */
+async function collectStream(stream: AsyncIterable<GenerateEvent>) {
+  const events: GenerateEvent[] = [];
+  let text = "";
+  let terminal: Exclude<GenerateEvent, { type: "delta" }> | undefined;
+  for await (const ev of stream) {
+    events.push(ev);
+    if (ev.type === "delta") text += ev.text;
+    else terminal ??= ev;
+  }
+  return terminal ? { events, text, terminal } : { events, text };
+}
 
 const servers: Server[] = [];
 afterEach(async () => {

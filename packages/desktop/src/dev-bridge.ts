@@ -2,13 +2,31 @@
  * Development only: lets the app's window run in a normal browser tab (so it can be tried and checked
  * without Electron). It serves the same commands as the real app, on this computer only.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
-import { createHandler } from "./handlers.js";
-import { createThrottle } from "./notifier.js";
-import { ProviderService } from "./provider-service.js";
-import { ProjectService } from "./project-service.js";
-import { FileSettingsStore, MemoryCredentialStore } from "./storage.js";
+import {
+  existsSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
+import {
+  createServer,
+  type ServerResponse,
+} from "node:http";
+import {
+  createHandler,
+} from "./handlers.js";
+import {
+  createThrottle,
+} from "./notifier.js";
+import {
+  ProviderService,
+} from "./provider-service.js";
+import {
+  ProjectService,
+} from "./project-service.js";
+import {
+  FileSettingsStore,
+  MemoryCredentialStore,
+} from "./storage.js";
 
 const PORT = Number(process.env["LTW_BRIDGE_PORT"] ?? 5174);
 // Dev mode keeps the address in a local file but API keys only in memory (they are forgotten when this stops).

@@ -10,7 +10,6 @@ import {
   findQuotes,
   speakerByForm,
   takeTurns,
-  attribute,
   mergeCandidates,
   patternCandidates,
   properNounRuns,
@@ -76,15 +75,6 @@ describe("candidate names", () => {
     expect(related("山田太郎", "山田家")).toBe(true);
   });
 });
-
-describe("questions and answers", () => {
-    it("asks for a quote when the answer is a fact, and a way out when it is not stated", () => {
-    const q = attribute("花子", "gender", ["male", "female"], "ctx");
-    expect(q.options).toEqual(["male", "female", "Not stated in the passage"]);
-    expect(q.user).toContain("a short quote");
-  });
-
-      });
 
 describe("speakers of quotations", () => {
   const hanako = { id: "k", label: "Hanako", names: ["花子", "山田"] };

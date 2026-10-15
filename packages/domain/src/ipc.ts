@@ -30,7 +30,7 @@ import type {
 export type IpcError = { code: string; message: string };
 export type IpcResult<T> = { requestId: string; ok: true; value: T } | { requestId: string; ok: false; error: IpcError };
 
-/** How one model run is configured. Each model can have its own limits. */
+/** How one model is set up: its own limits, temperature and translation style. */
 export interface ModelSetting {
   /** The exact model identifier the server knows (for LM Studio, as shown in its model list). */
   name: string;

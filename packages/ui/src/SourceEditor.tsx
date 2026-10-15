@@ -135,8 +135,6 @@ export interface SourceEditorProps {
   current?: { from: number; to: number } | null;
   /** The cursor was put somewhere in the text by the user (a click or the arrow keys). */
   onCursor?: (position: number) => void;
-  /** What the user has selected in the text (from and to are equal when nothing is). */
-  onSelection?: (from: number, to: number) => void;
   /** Take the editor to this place (the start of a block chosen elsewhere). `n` changes each time. */
   reveal?: { at: number; n: number } | null;
 }
@@ -145,15 +143,13 @@ export interface SourceEditorProps {
  * The source text as an editor that shows where it will be split into blocks, live as you type.
  * The labels are decorations only: they are never part of the text, so copying and saving ignore them.
  */
-export function SourceEditor({ value, onChange, blocks, placeholder, hits, current, onCursor, onSelection, reveal }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, blocks, placeholder, hits, current, onCursor, reveal }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onCursorRef = useRef(onCursor);
   onCursorRef.current = onCursor;
-  const onSelectionRef = useRef(onSelection);
-  onSelectionRef.current = onSelection;
   const latest = useRef({ value, blocks });
   latest.current = { value, blocks };
 
@@ -174,10 +170,7 @@ export function SourceEditor({ value, onChange, blocks, placeholder, hits, curre
       EditorView.updateListener.of((u) => {
         if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         // Where the user put the cursor (not where typing moved it).
-        else if (u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) {
-          onCursorRef.current?.(u.state.selection.main.head);
-          onSelectionRef.current?.(u.state.selection.main.from, u.state.selection.main.to);
-        }
+        else if (u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
       }),
     ];
     const v = new EditorView({ state: EditorState.create({ doc: normalizeSource(latest.current.value), extensions }), parent: host.current });

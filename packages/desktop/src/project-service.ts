@@ -28,7 +28,9 @@ import {
 import {
   UserError,
 } from "./errors.js";
-import type { ProviderService } from "./provider-service.js";
+import type {
+  ProviderService,
+} from "./provider-service.js";
 import {
   WorkspaceService,
   type ChangeKind,
@@ -51,8 +53,6 @@ export interface ProjectServiceOptions {
   newId?: () => string;
   /** Delay before saving a recovery copy after a change (default 500 ms). */
   autosaveMs?: number;
-  /** Longest wait before the recovery copy is refreshed while text is streaming (default 2000 ms). */
-  draftAutosaveMs?: number;
 }
 
 interface Meta {
@@ -114,7 +114,6 @@ export class ProjectService {
     this.workspace = new WorkspaceService({
       ...(options.workspace ?? {}),
       ...(options.provider ? { provider: options.provider } : {}),
-      checkpoint: () => this.writeRecovery(),
       projectView: () => this.view(),
     });
     this.workspace.onChange((kind) => this.onWorkspaceChange(kind));
@@ -229,7 +228,7 @@ export class ProjectService {
     const clean = title.trim().slice(0, 120);
     this.meta.title = clean === "" ? null : clean;
     this.changes++;
-    this.scheduleAutosave("state");
+    this.scheduleAutosave();
     this.emit();
   }
 
@@ -356,13 +355,13 @@ export class ProjectService {
       return;
     }
     if (kind === "state") this.changes++; // "view" changes only how things are shown, not what is saved
-    this.scheduleAutosave(kind);
+    this.scheduleAutosave();
     this.emit();
   }
 
-  private scheduleAutosave(kind: ChangeKind): void {
+  private scheduleAutosave(): void {
     if (!this.isDirty()) return;
-    const delay = kind === "delta" ? (this.options.draftAutosaveMs ?? 2000) : (this.options.autosaveMs ?? 500);
+    const delay = this.options.autosaveMs ?? 500;
     const due = Date.now() + delay;
     if (this.timer && this.timerDue <= due) return;
     this.cancelTimer();

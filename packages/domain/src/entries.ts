@@ -123,14 +123,6 @@ export function entryProblems(e: EntryInput): string[] {
   return out;
 }
 
-/** What a term tells the translator about itself: its attributes (gender, speech style...) followed by its summary. */
-export function termNote(e: Pick<KnowledgeEntry, "attrs" | "hint">): string {
-  const attrs = Object.entries(e.attrs)
-    .filter(([, v]) => v.length > 0)
-    .map(([k, v]) => `${k}: ${v.join(", ")}`);
-  return [...attrs, e.hint.trim()].filter(Boolean).join("; ");
-}
-
 export interface EntryDeps {
   newId: () => string;
   now: () => string;

@@ -68,6 +68,5 @@ export function parseKnowledge(text: string): ParsedKnowledge {
 }
 
 export const serializeNote = (n: KnowledgeNote): string => `> ${n.text}`;
-export const serializeNotes = (notes: readonly KnowledgeNote[]): string => notes.map(serializeNote).join("\n");
 export const serializeTerm = (g: GlossaryEntry): string => `${[g.source, ...(g.aliases ?? [])].join(" / ")} = ${g.target}${g.note ? ` # ${g.note}` : ""}`;
 
