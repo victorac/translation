@@ -391,14 +391,17 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
 }
 
 /**
- * The words of a paragraph that have no confirmed English name but a dictionary reading. It is told to the model as how the name sounds,
- * not as a spelling. What the model itself wrote in an earlier translation is not sent back: it would keep a mistake in place.
+ * The words of a paragraph that have no confirmed English name but a dictionary reading (for a name in kanji) or a suggestion the user
+ * wrote. It is told to the model as how the name sounds, not as a spelling. What the model itself wrote in an earlier translation is not sent back: it would keep a mistake in place.
  */
 export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
   const sources = words.map((n) => n.source);
   return words.flatMap((n) => {
     const suggestion = n.suggestions?.["english"]?.[0]?.trim();
     if (!suggestion || n.fromReading !== true || n.english.trim() !== "" || n.use === false) return [];
+    // A dictionary reading helps with a name written in kanji, which the model cannot read. For a name in katakana it only spells out the
+    // sounds (Sumisu for Smith) and the model would copy that: it is sent only when the user wrote it.
+    if (n.written !== true && !/\p{Script=Han}/u.test(n.source)) return [];
     const aliases = n.aliases.filter((a) => !sources.includes(a));
     const alone = withoutLongerNames(only, n.source, sources);
     if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];

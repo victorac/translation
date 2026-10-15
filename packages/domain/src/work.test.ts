@@ -234,4 +234,13 @@ describe("suggested names", () => {
     expect(suggestionsFor(words, "花子は桜台学園で山田太郎に会った。魔王が来た。")).toEqual([{ source: "魔王", suggestion: "Maou" }]); // only a dictionary reading is sent: what the model wrote before is not
     expect(suggestionsFor(words, "何もない。")).toEqual([]);
   });
+
+  it("send a dictionary reading only for a name with kanji, since for katakana it only spells out sounds; a suggestion the user wrote is always sent", () => {
+    const words: Word[] = [
+      word("山田太郎", "", { suggestions: { english: ["Yamada Taro"] }, fromReading: true }),
+      word("ジョン・スミス", "", { suggestions: { english: ["Jon Sumisu"] }, fromReading: true }),
+      word("ジェーン・ドウ", "", { suggestions: { english: ["Jane Doe"] }, fromReading: true, written: true }),
+    ];
+    expect(suggestionsFor(words, "山田太郎とジョン・スミスとジェーン・ドウ。").map((s) => s.source)).toEqual(["山田太郎", "ジェーン・ドウ"]);
+  });
 });
