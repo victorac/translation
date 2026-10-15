@@ -5,6 +5,7 @@ import type { KnowledgeEntry, KnowledgeFiles as FileList } from "@ltw/domain";
 import { api } from "./api";
 import { Details, TextBox, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
+import { useLog } from "./Log";
 import { useToast } from "./Toast";
 import { TopicEditor, type Problem } from "./TopicEditor";
 
@@ -45,6 +46,11 @@ export function KnowledgeDrawer({
   onClose: () => void;
 }) {
   const toast = useToast();
+  const { log } = useLog();
+  const fail = (text: string) => {
+    log("error", text);
+    setMessage(text);
+  };
   const widest = () => Math.max(MIN_WIDTH, window.innerWidth - EDGE_GAP);
   const keepWidth = (w: number) => {
     const next = Math.round(Math.min(Math.max(w, MIN_WIDTH), widest()));
@@ -164,31 +170,32 @@ export function KnowledgeDrawer({
     if (r.ok && r.value.id) return show(r.value.id);
     const made = await api.invoke("knowledge.create", { type: "term", name });
     if (made.ok) show(made.value.id);
-    else setMessage(made.error.message);
+    else fail(made.error.message);
   };
 
   const create = async () => {
     if (!creating || creating.name.trim() === "") return;
     const r = await api.invoke("knowledge.create", { type: creating.type, name: creating.name.trim(), english: creating.english, hint: creating.hint });
-    if (!r.ok) return setMessage(r.error.message);
+    if (!r.ok) return fail(r.error.message);
     setMessage(null);
     show(r.value.id);
   };
 
   const edit = async (id: string, change: { target?: string; hint?: string; kind?: string; attribute?: { key: string; values: string[] } }) => {
     const r = await api.invoke("knowledge.edit", { id, ...change });
-    setMessage(r.ok ? null : r.error.message);
+    if (r.ok) setMessage(null);
+    else fail(r.error.message);
   };
 
   const remove = async (ids: string[]) => {
     const names = ids.map((id) => byId.get(id)?.title ?? "").filter((t) => t !== "");
     const r = await api.invoke("knowledge.deleteMany", { ids });
-    if (!r.ok) return setMessage(r.error.message);
+    if (!r.ok) return fail(r.error.message);
     setChecked(new Set());
     if (active && ids.includes(active)) setActive(null);
     toast({
       text: names.length === 1 ? `Deleted ${names[0]}.` : `Deleted ${r.value.removed} topics.`,
-      action: { label: "Undo", run: () => void api.invoke("work.undoRemove").then((u) => !u.ok && toast({ text: u.error.message })) },
+      action: { label: "Undo", run: () => void api.invoke("work.undoRemove").then((u) => !u.ok && toast({ level: "error", text: u.error.message })) },
     });
   };
 

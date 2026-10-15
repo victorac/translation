@@ -8,6 +8,7 @@ import type { Activity } from "./Toolbar";
 import { SourceEditor, type Hit } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
+import { useLog } from "./Log";
 import { useToast } from "./Toast";
 import type { SetupState } from "./setup";
 
@@ -73,6 +74,7 @@ export function Workspace({
   /** Words selected in the source: the button to add them to the glossary shows beside them. */
   const [selected, setSelected] = useState<{ text: string; left: number; bottom: number } | null>(null);
   const toast = useToast();
+  const { log } = useLog();
   const [filter, setFilter] = useState("");
   const [topics, setTopics] = useState<TopicRef[]>([]);
   const boxes = useRef<(HTMLDivElement | null)[]>([]);
@@ -85,6 +87,7 @@ export function Workspace({
     const r = await run();
     if (!r.ok) {
       setError(r.error.message);
+      log("error", r.error.message);
       return null;
     }
     return r.value;
@@ -140,6 +143,16 @@ export function Workspace({
   }, [knowledgeRev]);
 
   const paragraphs = work?.paragraphs ?? [];
+  // What the translation says is wrong with a paragraph, and an error of the work itself, go to the log once each.
+  const logged = useRef(new Set<string>());
+  useEffect(() => {
+    const found = [...(work?.paragraphs ?? []).flatMap((p, k) => (p.issue ? [`${k}:${p.issue}`] : [])), ...(work?.error ? [`error:${work.error}`] : [])];
+    for (const key of found) {
+      if (logged.current.has(key)) continue;
+      logged.current.add(key);
+      log(key.startsWith("error:") ? "error" : "warning", key.replace(/^(error|\d+):/, ""));
+    }
+  }, [work?.paragraphs, work?.error]); // eslint-disable-line react-hooks/exhaustive-deps
   const translations = paragraphs.map((p) => p.translation).join("\u0000");
   useEffect(() => {
     setDrafts(paragraphs.map((p) => p.translation));
@@ -325,7 +338,7 @@ export function Workspace({
     // What the model could not suggest, and why: said, so that a row left as it was is explained.
     if (w && (w.misses ?? []).length > 0) {
       const shown = w.misses!.slice(0, 3).join("; ");
-      toast({ text: `No suggestion from the translation. ${shown}${w.misses!.length > 3 ? `; and ${w.misses!.length - 3} more` : ""}.` });
+      toast({ level: "warning", text: `No suggestion from the translation. ${shown}${w.misses!.length > 3 ? `; and ${w.misses!.length - 3} more` : ""}.` });
     }
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));

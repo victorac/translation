@@ -248,3 +248,10 @@ details > summary { cursor: pointer; }
 /* A row that is too narrow puts the English name (with its state) on a line of its own instead of squeezing it. */
 .glossary-head { flex-wrap: wrap; row-gap: 0.15rem; }
 .glossary-head .name-english { flex: 1 1 9rem; min-width: 9rem; }
+
+/* The log: one line for each message, with its time and kind. */
+.log-list { max-height: 60vh; overflow-y: auto; }
+.log-row { padding: 0.35rem 0; border-bottom: 1px solid var(--gray-5); }
+.log-time { flex: none; font-variant-numeric: tabular-nums; }
+.log-level { flex: none; }
+.log-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

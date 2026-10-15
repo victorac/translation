@@ -11,6 +11,8 @@ A desktop app for translating long fiction (Japanese to English first, other pai
 5. **Review and run again.** You confirm or change what was read, then Translate again with the confirmed glossary and notes, or translate one paragraph again.
 6. **Knowledge base.** Topics (characters, places, organizations, terms) have attributes and links. They open in a drawer over the workspace: a searchable list (with checkboxes to confirm or delete several at once) and, for the chosen topic, a form, or its file as text. The kinds of topic and their attributes are defined in a classes file, opened from the drawer's header. A word is added to the glossary by selecting it in the source, and removed from its menu; removing and deleting can be undone for a few seconds.
 
+The **Log** button in the toolbar lists the errors, warnings (such as a paragraph that left out a glossary name) and notices of the session, newest first, with a count of new problems on the button; it can be copied or cleared. It is kept for the session only.
+
 Checks that can be made in code are made in code: a glossary name that a paragraph should use and does not is asked for again, an answer of several paragraphs is asked for again, and a translation that comes back unchanged is asked for again with the rejected version shown.
 
 ## Layout

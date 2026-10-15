@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Flex, Text } from "@radix-ui/themes";
+import { useLog, type LogLevel } from "./Log";
 
 export interface ToastInput {
   text: string;
+  /** What kind of notice it is, for the log (default: info). */
+  level?: LogLevel;
   /** A button that takes the change back (or does the follow-up the message offers). */
   action?: { label: string; run: () => void };
 }
@@ -15,6 +18,7 @@ const ToastContext = createContext<(toast: ToastInput) => void>(() => undefined)
 export const useToast = () => useContext(ToastContext);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const { log } = useLog();
   const [toast, setToast] = useState<ToastInput | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const close = useCallback(() => {
@@ -22,10 +26,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToast(null);
   }, []);
   const show = useCallback((t: ToastInput) => {
+    log(t.level ?? "info", t.text);
     if (timer.current) clearTimeout(timer.current);
     setToast(t);
     timer.current = setTimeout(() => setToast(null), SHOWN_MS);
-  }, []);
+  }, [log]);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   return (
     <ToastContext.Provider value={show}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Callout, Flex, Text } from "@radix-ui/themes";
 import { ExportDialog } from "./ExportDialog";
+import { useLog } from "./Log";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar, type Activity } from "./Toolbar";
@@ -26,6 +27,11 @@ function Banner({ color, children, actions }: { color: "amber" | "red" | "blue";
 /** One screen: the left panel, the workspace (source, what was read, translation), and the settings beside it when open. */
 export function App() {
   const { snapshot: snap, error, clearError, send } = useWorkspace();
+  const log = useLog();
+  // What the background process answered with an error is written to the log as well as shown.
+  useEffect(() => {
+    if (error) log.log("error", error);
+  }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
   const provider = useProvider();
   const [setup, setSetup] = useState<SetupState>(loadSetup);
   const [tab, setTab] = useState<SettingsTab | null>(null);
@@ -112,6 +118,7 @@ export function App() {
         onExport={() => setExporting(true)}
         confirmDiscard={confirmDiscard}
         activity={activity}
+        log={{ unseen: log.unseen, onOpen: log.open }}
         knowledge={{ open: kb.open, count: known, suggested: snap?.knowledge.suggested ?? 0, onToggle: () => setKb((k) => ({ open: !k.open, request: null })) }}
       />
 
