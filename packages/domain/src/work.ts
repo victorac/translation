@@ -42,6 +42,8 @@ export interface Word {
    * becomes the value when the user accepts it or writes the field themselves.
    */
   suggestions?: Record<string, string[]>;
+  /** The suggested English name is only how the dictionary reads the name (the sound), not a spelling: told to the model that way. */
+  fromReading?: boolean;
   /** False when the user chose to ignore this word: it is not sent and not added to the knowledge base. */
   use?: boolean;
   /** The glossary topic this is, when it has been made one. */
@@ -176,6 +178,7 @@ export interface KnownWord {
   hint?: string;
   use?: boolean;
   suggestions?: Record<string, string[]>;
+  fromReading?: boolean;
 }
 
 export interface ReadInput {
@@ -270,6 +273,7 @@ export function readWords(input: ReadInput): Word[] {
     ...(k.hint ? { hint: k.hint } : {}),
     ...(k.use === false ? { use: false } : {}),
     ...(k.suggestions && Object.keys(k.suggestions).length > 0 ? { suggestions: k.suggestions } : {}),
+    ...(k.fromReading ? { fromReading: true } : {}),
     gender: k.gender ?? null,
   });
 
@@ -287,7 +291,7 @@ export function readWords(input: ReadInput): Word[] {
     const reading = input.readings[c];
     // What the dictionary reads it as is a suggestion, not the name.
     const guess = englishFor(kind, reading, c);
-    names.push({ source: c, english: "", kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, gender: null, attrs: {}, ...(guess !== "" ? { suggestions: { english: [guess] } } : {}) });
+    names.push({ source: c, english: "", kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, gender: null, attrs: {}, ...(guess !== "" ? { suggestions: { english: [guess] }, fromReading: true } : {}) });
   }
   // A name with a middle dot is written by one of its parts alone as well (ジョン for ジョン・スミス): that is the same person.
   for (const p of names.filter((n) => n.kind === "character" && n.source.includes("・"))) {
@@ -384,7 +388,7 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
  * The words of a paragraph that have no confirmed English name but a suggested one (the dictionary's reading, or what the model used in an
  * earlier translation). They are told to the model as suggestions: it may write the name differently when that is clearly better.
  */
-export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
+export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; sound: boolean; aliases?: string[] }[] {
   const sources = words.map((n) => n.source);
   return words.flatMap((n) => {
     const suggestion = n.suggestions?.["english"]?.[0]?.trim();
@@ -392,7 +396,7 @@ export function suggestionsFor(words: readonly Word[], only: string): { source: 
     const aliases = n.aliases.filter((a) => !sources.includes(a));
     const alone = withoutLongerNames(only, n.source, sources);
     if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];
-    return [{ source: n.source, suggestion, ...(aliases.length > 0 ? { aliases } : {}) }];
+    return [{ source: n.source, suggestion, sound: n.fromReading === true, ...(aliases.length > 0 ? { aliases } : {}) }];
   });
 }
 

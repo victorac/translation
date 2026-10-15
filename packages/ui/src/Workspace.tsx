@@ -527,7 +527,7 @@ export function Workspace({
                           onChange={(v) => update(() => api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }))}
                         />
                         {l.speaker === null && l.suggested && (
-                          <IconButton variant="ghost" size="1" onClick={() => update(() => api.invoke("work.acceptSpeaker", { line: i }))} aria-label={`Use the suggested speaker of line ${i + 1}`} title="Use the suggested speaker">
+                          <IconButton variant="ghost" size="1" onClick={() => update(() => api.invoke("work.acceptSpeaker", { line: i }))} aria-label={`Confirm the suggested speaker of line ${i + 1}`} title="Confirm the suggested speaker">
                             <CheckIcon />
                           </IconButton>
                         )}
@@ -537,8 +537,8 @@ export function Workspace({
                 </ul>
               </div>
               <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
-                <Button variant="soft" onClick={() => update(() => api.invoke("work.acceptAll"))} disabled={working !== null || !anySuggested} title="Use every suggested value: English names, attributes and speakers">
-                  Use all suggestions
+                <Button variant="soft" onClick={() => update(() => api.invoke("work.acceptAll"))} disabled={working !== null || !anySuggested} title="Confirm every suggested value: English names, attributes and speakers">
+                  Confirm all suggestions
                 </Button>
                 <Button variant="soft" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions">
                   Suggest from the translation

@@ -51,8 +51,8 @@ function Suggested({ text, onUse, onDismiss }: { text: string; onUse: () => void
       <Text size="1" color="gray" truncate>
         {text}
       </Text>
-      <Button variant="ghost" size="1" onClick={onUse} title="Use this value">
-        <CheckIcon /> Use
+      <Button variant="ghost" size="1" onClick={onUse} title="Confirm this value: it becomes the value, as if you had written it">
+        <CheckIcon /> Confirm
       </Button>
       <IconButton variant="ghost" size="1" color="gray" onClick={onDismiss} aria-label="Drop this suggestion" title="Drop this suggestion">
         <Cross2Icon />
@@ -121,7 +121,7 @@ export function NameRow({
             <Text size="2" color="gray" style={{ fontStyle: "italic" }} truncate title="Only suggested: not confirmed yet">
               {suggestedEnglish}
             </Text>
-            <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Use ${suggestedEnglish} as the English name of ${name.source}`} title="Use this name">
+            <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="Confirm this name">
               <CheckIcon />
             </IconButton>
           </Flex>
