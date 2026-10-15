@@ -758,6 +758,28 @@ describe("translating a document", () => {
     await expect(service.workLookup("ポーション")).rejects.toThrow(/no kanji/);
   });
 
+  it("keeps a speaker the user suggested apart from one that is fixed: only a fixed one is told to the model", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。");
+    service.workSetEnglish("花子", "Hanako");
+    service.workSetEnglish("太郎", "Taro");
+    service.workSetSpeakerSuggestion(0, "太郎");
+    expect(service.workGet()!.lines[0]).toMatchObject({ speaker: null, suggested: "太郎" });
+    await service.workTranslate({ ...model });
+    expect(bodies(lm).map((b) => b.messages[1]!.content).join("\n")).not.toContain("is said by");
+    // Fixed, it is told; made a suggestion again, it is not (as the window does it: unset the speaker, then suggest it).
+    service.workAcceptSpeaker(0);
+    expect(service.workGet()!.lines[0]).toMatchObject({ speaker: "太郎", suggested: null });
+    service.workSetSpeaker(0, null);
+    service.workSetSpeakerSuggestion(0, "太郎");
+    expect(service.workGet()!.lines[0]).toMatchObject({ speaker: null, suggested: "太郎" });
+    service.workSetSpeakerSuggestion(0, null);
+    expect(service.workGet()!.lines[0]).toMatchObject({ speaker: null, suggested: null });
+    expect(() => service.workSetSpeakerSuggestion(9, "太郎")).toThrow(/does not exist/);
+  });
+
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
     const { provider, service } = setup();

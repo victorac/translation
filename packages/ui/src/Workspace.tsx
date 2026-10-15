@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
@@ -242,6 +242,13 @@ export function Workspace({
     const first = await call(() => api.invoke("work.setEnglish", { source: word.source, english: "" }));
     if (!first) return;
     update(() => api.invoke("work.setSuggestion", { source: word.source, key: "english", value: word.english }));
+  };
+
+  /** A fixed speaker becomes a suggestion again: still chosen in the list, no longer told to the model. */
+  const loosenSpeaker = async (line: number, speaker: string) => {
+    const first = await api.invoke("work.setSpeaker", { line, speaker: null });
+    if (!first.ok) return first;
+    return api.invoke("work.setSpeakerSuggestion", { line, speaker });
   };
 
   /** Takes a word out of the glossary (and says so, with a way back): it is not found again in this text. */
@@ -635,18 +642,27 @@ export function Workspace({
                           {l.text}
                         </Text>
                       </Button>
-                      <Flex align="center" gap="1" className={l.speaker === null && l.suggested ? "speaker suggested-speaker" : "speaker"}>
+                      <Flex align="center" gap="1" className="speaker">
                         <Pick
                           size="1"
                           label={`Speaker of line ${i + 1}`}
                           value={l.speaker ?? l.suggested ?? ""}
-                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: l.speaker === null && l.suggested === p.source ? `${label(p)} · suggested` : label(p) }))]}
-                          onChange={(v) => update(() => api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }))}
+                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
+                          // A speaker that is fixed stays fixed when it is changed; otherwise what is chosen is a suggestion until it is fixed.
+                          onChange={(v) => update(() => (l.speaker !== null ? api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }) : api.invoke("work.setSpeakerSuggestion", { line: i, speaker: v === "" ? null : v })))}
                         />
-                        {l.speaker === null && l.suggested && (
-                          <IconButton variant="ghost" size="1" onClick={() => update(() => api.invoke("work.acceptSpeaker", { line: i }))} aria-label={`Confirm the suggested speaker of line ${i + 1}`} title="Confirm the suggested speaker">
-                            <CheckIcon />
-                          </IconButton>
+                        {(l.speaker !== null || l.suggested) && (
+                          <Button
+                            size="1"
+                            variant="soft"
+                            color={l.speaker !== null ? "green" : "amber"}
+                            className="english-state"
+                            onClick={() => update(() => (l.speaker === null ? api.invoke("work.acceptSpeaker", { line: i }) : loosenSpeaker(i, l.speaker!)))}
+                            aria-label={l.speaker === null ? `Make the speaker of line ${i + 1} fixed` : `Make the speaker of line ${i + 1} a suggestion again`}
+                            title={l.speaker === null ? "Suggested: shown here, not told to the model. Click to fix it: the model is told who says the line." : "Fixed: the model is told who says the line. Click to make it a suggestion again."}
+                          >
+                            {l.speaker === null ? "suggested" : "fixed"}
+                          </Button>
                         )}
                       </Flex>
                     </li>

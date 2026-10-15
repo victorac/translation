@@ -153,6 +153,7 @@ export interface CommandMap {
   /** Brings the work on a document up to date with its text: the paragraphs, the words and who says each line. */
   "work.sync": { documentId: string; text: string };
   "work.setSpeaker": { line: number; speaker: string | null };
+  "work.setSpeakerSuggestion": { line: number; speaker: string | null };
   "work.addWord": { source: string };
   "work.removeWord": { source: string };
   "work.undoRemove": undefined;
@@ -193,12 +194,13 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.setSuggestion" | "work.lookup" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.setSpeakerSuggestion" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.setSuggestion" | "work.lookup" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "notes.cancel": { canceled: boolean };
   "work.get": Work | null;
   "work.sync": Work | null;
   "work.setSpeaker": Work;
+  "work.setSpeakerSuggestion": Work;
   "work.addWord": Work;
   "work.removeWord": Work;
   "work.undoRemove": Work | null;

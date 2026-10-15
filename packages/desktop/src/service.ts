@@ -621,18 +621,33 @@ export class WorkspaceService {
     return this.work;
   }
 
-  /** Says who says a line. A person picked from the knowledge base who is not written in the text joins its words, so the model gets their name and details. */
+  /** A person picked from the knowledge base who is not written in the text joins its words, so the model gets their name and details. */
+  private ensureSpeakerWord(w: Work, speaker: string): void {
+    if (w.words.some((n) => n.source === speaker)) return;
+    const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === speaker);
+    if (!entry) throw new UserError("no_entry", "That person is not in the glossary.");
+    w.words.push({ source: speaker, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
+  }
+
+  /** Says who says a line: confirmed, so the model is told. */
   workSetSpeaker(line: number, speaker: string | null): Work {
     const w = this.need();
     this.workView();
     if (!w.lines[line]) throw new UserError("no_line", "That line does not exist.");
-    if (speaker && !w.words.some((n) => n.source === speaker)) {
-      const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === speaker);
-      if (!entry) throw new UserError("no_entry", "That person is not in the glossary.");
-      w.words.push({ source: speaker, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
-    }
+    if (speaker) this.ensureSpeakerWord(w, speaker);
     w.lines[line]!.speaker = speaker;
     if (speaker !== null) w.lines[line]!.suggested = null;
+    this.workChanged();
+    return this.workView();
+  }
+
+  /** Writes who probably says a line, as a suggestion: shown, not told to the model until it is confirmed. Null drops it. */
+  workSetSpeakerSuggestion(line: number, speaker: string | null): Work {
+    const w = this.need();
+    this.workView();
+    if (!w.lines[line]) throw new UserError("no_line", "That line does not exist.");
+    if (speaker) this.ensureSpeakerWord(w, speaker);
+    w.lines[line]!.suggested = speaker;
     this.workChanged();
     return this.workView();
   }
