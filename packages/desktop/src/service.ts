@@ -833,23 +833,24 @@ export class WorkspaceService {
       ...(previous ? [previous] : []),
       ...sources.slice(0, k).flatMap((source, j) => (block.parts[j]?.trim() ? [{ source, translation: block.parts[j]!.trim() }] : [])),
     ];
-    const following = sources[k + 1] !== undefined ? { source: sources[k + 1]!, translation: block.parts[k + 1]?.trim() || null } : null;
+    const following = sources.slice(k + 1).map((source, i) => ({ source, translation: block.parts[k + 1 + i]?.trim() || null }));
     let reject: string | undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      // As much context as fits: the paragraph after this one and all the paragraphs before it, then fewer of them.
+      // As much context as fits: the paragraphs before (their translations) and after (so the model knows where the story goes). When it
+      // does not all fit, the farthest ones are dropped, from the longer side first.
+      let p = pairs.length;
+      let q = following.length;
       let user = "";
-      let fits = false;
-      for (const next of following ? [following, null] : [null]) {
-        for (let n = pairs.length; n >= 0 && !fits; n--) {
-          user = paragraphMessage({ glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, before: pairs.slice(pairs.length - n), paragraph, next, rejected: reject }) + complaint;
-          fits = estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit;
-        }
-        if (fits) break;
+      for (;;) {
+        user = paragraphMessage({ glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, before: pairs.slice(pairs.length - p), paragraph, next: following.slice(0, q), rejected: reject }) + complaint;
+        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+        if (p === 0 && q === 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+        if (q > 0 && q >= p) q--;
+        else p--;
       }
-      if (!fits) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
       const reply = await this.askModel(
         {
           backend: input.backend,

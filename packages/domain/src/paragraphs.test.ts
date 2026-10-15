@@ -19,7 +19,7 @@ const request = {
   targetLanguage: "English",
   before: [{ source: "前。", translation: "Before." }],
   paragraph: "本文。",
-  next: { source: "後。", translation: null },
+  next: [{ source: "後。", translation: null }],
 };
 
 describe("paragraphMessage", () => {
@@ -28,18 +28,18 @@ describe("paragraphMessage", () => {
     expect(m).toContain("GLOSSARY:\n- 太郎 => Taro\n");
     expect(m).toContain("WORD NOTES (instructions about how to translate particular words; follow them):\n- 太郎: a boy\n- 食べる: use the past tense");
     expect(m).toContain("CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 前。\nENGLISH: Before.");
-    expect(m).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 後。");
+    expect(m).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 後。");
     expect(m).toContain("JAPANESE PARAGRAPH TO TRANSLATE:\n本文。");
     expect(m.trimEnd().endsWith("Translate that paragraph into English. Reply with its translation only, as one paragraph.")).toBe(true);
     expect(m).not.toContain("REJECTED");
   });
   it("shows the translation of the next paragraph when it has one, and a rejected version only when given", () => {
-    const m = paragraphMessage({ ...request, next: { source: "後。", translation: "After." }, rejected: "Old words." });
-    expect(m).toContain("JAPANESE: 後。\nENGLISH: After.");
+    const m = paragraphMessage({ ...request, next: [{ source: "後。", translation: "After." }, { source: "更に。", translation: null }], rejected: "Old words." });
+    expect(m).toContain("JAPANESE: 後。\nENGLISH: After.\n\nJAPANESE: 更に。");
     expect(m).toContain("REJECTED VERSION");
   });
   it("leaves out the sections that have nothing in them", () => {
-    const m = paragraphMessage({ ...request, before: [], next: null, notes: [], glossary: [] });
+    const m = paragraphMessage({ ...request, before: [], next: [], notes: [], glossary: [] });
     expect(m).not.toMatch(/CONTEXT|NEXT|GLOSSARY|NOTES/);
   });
   it("has the style as guidance for tone, not as the task", () => {

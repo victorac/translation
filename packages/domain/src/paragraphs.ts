@@ -10,7 +10,7 @@ import {
 } from "./labels.js";
 
 const CONTEXT_LABEL = "CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):";
-const NEXT_LABEL = "NEXT (the paragraph after this one; reference only, do not translate):";
+const NEXT_LABEL = "NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
 export interface Paragraph {
@@ -61,8 +61,8 @@ export interface ParagraphRequest {
   /** The paragraphs before this one with their translations, oldest first (for the first paragraph of a block: the end of the block before). */
   before: readonly Pair[];
   paragraph: string;
-  /** The paragraph after this one, with its translation when it has one. */
-  next: { source: string; translation: string | null } | null;
+  /** The paragraphs after this one, with their translations when they have one. */
+  next: readonly { source: string; translation: string | null }[];
   /** A version the user did not accept, shown only when the model gave it back unchanged. */
   rejected?: string | undefined;
 }
@@ -78,7 +78,7 @@ export function paragraphMessage(r: ParagraphRequest): string {
   const wordNotes = wordNoteLines(r.glossary);
   if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
   if (r.before.length > 0) parts.push(`${CONTEXT_LABEL}\n${r.before.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
-  if (r.next) parts.push(`${NEXT_LABEL}\n${pair(r.next.source, r.next.translation)}`);
+  if (r.next.length > 0) parts.push(`${NEXT_LABEL}\n${r.next.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);
   parts.push(`${from} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
   parts.push(`Translate that paragraph into ${r.targetLanguage}. Reply with its translation only, as one paragraph.`);

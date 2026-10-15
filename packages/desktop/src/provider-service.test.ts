@@ -353,7 +353,7 @@ describe("translating step by step", () => {
     expect(asked[1]).toContain("- 太郎: a boy");
     // A request has the paragraphs before with their translations, and the one after; never the whole block.
     expect(asked[0]).not.toContain("CONTEXT");
-    expect(asked[0]).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 「おはよう」と太郎は言った。");
+    expect(asked[0]).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 「おはよう」と太郎は言った。\n\nJAPANESE: 二人は歩いた。");
     expect(asked[1]).toContain(`CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 花子は笑った。\nENGLISH: ${block.parts[0]}`);
     expect(asked[2]).not.toContain("NEXT");
     expect(block.parts).toHaveLength(3);
@@ -370,7 +370,7 @@ describe("translating step by step", () => {
     // Writing the second paragraph again: the others stay, the old text is not shown, and the paragraph after it is given with its translation.
     const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 1 });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(sent).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 二人は歩いた。\nENGLISH: My own version.");
+    expect(sent).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 二人は歩いた。\nENGLISH: My own version.");
     expect(sent).not.toContain(block.parts[1]!);
     expect(sent).not.toContain("REJECTED");
     expect(again.blocks[0]!.parts[0]).toBe(block.parts[0]);
