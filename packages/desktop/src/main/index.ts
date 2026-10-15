@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session } from "electron";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHandler } from "../handlers.js";
@@ -164,6 +164,16 @@ app.whenReady().then(() => {
     return handle(requestId, command, payload);
   });
 
+  // The file commands (open, save, export) are in the window's own File menu, so the system menu has none: it keeps only what the system
+  // provides (app, copy and paste, window). A second File menu with only "close" in it would be confusing.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+      { role: "editMenu" as const },
+      { role: "viewMenu" as const },
+      { role: "windowMenu" as const },
+    ]),
+  );
   createWindow();
 });
 

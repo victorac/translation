@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Callout, Flex, Text } from "@radix-ui/themes";
 import { ExportDialog } from "./ExportDialog";
-import { useLog } from "./Log";
+import { LogDock, useLog } from "./Log";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar, type Activity } from "./Toolbar";
@@ -118,7 +118,6 @@ export function App() {
         onExport={() => setExporting(true)}
         confirmDiscard={confirmDiscard}
         activity={activity}
-        log={{ unseen: log.unseen, onOpen: log.open }}
         knowledge={{ open: kb.open, count: known, suggested: snap?.knowledge.suggested ?? 0, onToggle: () => setKb((k) => ({ open: !k.open, request: null })) }}
       />
 
@@ -226,6 +225,8 @@ export function App() {
 
         {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} />}
       </div>
+
+      <LogDock />
 
       <KnowledgeDrawer open={kb.open} request={kb.request} rev={snap?.knowledge.rev ?? 0} counts={snap?.knowledge ?? { terms: 0, notes: 0, suggested: 0 }} onClose={() => setKb({ open: false, request: null })} />
 

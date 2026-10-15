@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { Badge, Button, Dialog, Flex, Text } from "@radix-ui/themes";
+import { Badge, Button, Flex, Text } from "@radix-ui/themes";
 
 export type LogLevel = "error" | "warning" | "info";
 
@@ -16,12 +16,15 @@ const KEPT = 300;
 interface LogApi {
   /** Writes down something the user was told (or should know about). */
   log: (level: LogLevel, text: string) => void;
+  entries: LogEntry[];
   /** How many errors and warnings came since the log was last opened. */
   unseen: number;
-  open: () => void;
+  shown: boolean;
+  toggle: () => void;
+  clear: () => void;
 }
 
-const LogContext = createContext<LogApi>({ log: () => undefined, unseen: 0, open: () => undefined });
+const LogContext = createContext<LogApi>({ log: () => undefined, entries: [], unseen: 0, shown: false, toggle: () => undefined, clear: () => undefined });
 
 /** The log of the messages of this session: errors, warnings and notices, with when they came. */
 export const useLog = () => useContext(LogContext);
@@ -39,51 +42,54 @@ export function LogProvider({ children }: { children: ReactNode }) {
   const log = useCallback((level: LogLevel, text: string) => {
     setEntries((list) => [...list, { id: next.current++, time: Date.now(), level, text }].slice(-KEPT));
   }, []);
-  const unseen = entries.filter((e) => e.id > seenUpTo && e.level !== "info").length;
-  const open = useCallback(() => {
-    setShown(true);
+  const toggle = useCallback(() => {
+    setShown((s) => !s);
     setSeenUpTo(next.current - 1);
   }, []);
-  const api = useMemo(() => ({ log, unseen, open }), [log, unseen, open]);
+  const clear = useCallback(() => setEntries([]), []);
+  // While the log is showing, what comes is seen.
+  const unseen = shown ? 0 : entries.filter((e) => e.id > seenUpTo && e.level !== "info").length;
+  const api = useMemo(() => ({ log, entries, unseen, shown, toggle, clear }), [log, entries, unseen, shown, toggle, clear]);
+  return <LogContext.Provider value={api}>{children}</LogContext.Provider>;
+}
 
+/** The strip at the bottom of the window: how many problems there are (quietly), and a click opens the list above it. */
+export function LogDock() {
+  const { entries, unseen, shown, toggle, clear } = useLog();
+  const errors = entries.filter((e) => e.level === "error").length;
+  const warnings = entries.filter((e) => e.level === "warning").length;
   const copy = () => {
     const text = entries.map((e) => `${new Date(e.time).toISOString()} ${e.level.toUpperCase()} ${e.text}`).join("\n");
     void navigator.clipboard?.writeText(text).catch(() => undefined);
   };
-
   return (
-    <LogContext.Provider value={api}>
-      {children}
-      <Dialog.Root
-        open={shown}
-        onOpenChange={(o) => {
-          setShown(o);
-          if (o) setSeenUpTo(next.current - 1);
-        }}
-      >
-        <Dialog.Content maxWidth="44rem" aria-describedby={undefined}>
-          <Flex align="center" justify="between" gap="3" mb="3">
-            <Dialog.Title mb="0">Log</Dialog.Title>
+    <div className="log-dock">
+      {shown && (
+        <div className="log-panel">
+          <Flex align="center" justify="between" gap="3" px="3" py="1" className="log-panel-head">
+            <Text size="1" weight="bold">
+              Log
+            </Text>
             <Flex gap="2">
-              <Button size="1" variant="soft" color="gray" onClick={copy} disabled={entries.length === 0}>
+              <Button size="1" variant="ghost" color="gray" onClick={copy} disabled={entries.length === 0}>
                 Copy all
               </Button>
-              <Button size="1" variant="soft" color="gray" onClick={() => setEntries([])} disabled={entries.length === 0}>
+              <Button size="1" variant="ghost" color="gray" onClick={clear} disabled={entries.length === 0}>
                 Clear
               </Button>
-              <Dialog.Close>
-                <Button size="1">Close</Button>
-              </Dialog.Close>
+              <Button size="1" variant="ghost" color="gray" onClick={toggle} aria-label="Hide the log">
+                Hide
+              </Button>
             </Flex>
           </Flex>
           <div className="log-list">
             {entries.length === 0 ? (
-              <Text as="p" size="2" color="gray">
+              <Text as="p" size="2" color="gray" m="3">
                 Nothing yet. Errors, warnings and notices from this session are listed here, newest first.
               </Text>
             ) : (
               [...entries].reverse().map((e) => (
-                <Flex key={e.id} gap="2" align="baseline" className="log-row">
+                <Flex key={e.id} gap="2" align="baseline" px="3" className="log-row">
                   <Text size="1" color="gray" className="log-time">
                     {clock(e.time)}
                   </Text>
@@ -97,8 +103,14 @@ export function LogProvider({ children }: { children: ReactNode }) {
               ))
             )}
           </div>
-        </Dialog.Content>
-      </Dialog.Root>
-    </LogContext.Provider>
+        </div>
+      )}
+      <button type="button" className="log-bar" aria-expanded={shown} onClick={toggle} title="The errors, warnings and notices of this session">
+        <span>Log</span>
+        <span className={errors > 0 ? "log-count log-count-error" : "log-count"}>{errors} {errors === 1 ? "error" : "errors"}</span>
+        <span className={warnings > 0 ? "log-count log-count-warn" : "log-count"}>{warnings} {warnings === 1 ? "warning" : "warnings"}</span>
+        {unseen > 0 && <span className="log-new">{unseen} new</span>}
+      </button>
+    </div>
   );
 }

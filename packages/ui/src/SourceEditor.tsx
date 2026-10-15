@@ -128,7 +128,7 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
           onSelectRef.current?.(at ? { text: text.trim(), left: at.left, bottom: at.bottom } : null);
         }
         // Where the user put the cursor (not where typing moved it).
-        else if (u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
+        if (!u.docChanged && u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
       }),
     ];
     const v = new EditorView({ state: EditorState.create({ doc: normalizeSource(latest.current.value), extensions }), parent: host.current });

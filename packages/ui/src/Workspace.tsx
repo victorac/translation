@@ -493,7 +493,9 @@ export function Workspace({
           )}
           {selected && !words.some((n) => n.source === selected.text) && (
             <Button className="select-add" size="1" style={{ left: Math.max(4, selected.left), top: selected.bottom + 6 }} onMouseDown={(e) => e.preventDefault()} onClick={() => void addSelected()}>
-              Add {selected.text} to the glossary
+              <span>Add</span>
+              <span className="select-add-word">{selected.text}</span>
+              <span>to the glossary</span>
             </Button>
           )}
           <div className="source-pane-editor">

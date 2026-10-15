@@ -81,7 +81,6 @@ export function Toolbar({
   confirmDiscard,
   activity,
   knowledge,
-  log,
 }: {
   snap: WorkspaceSnapshot | null;
   send: Send;
@@ -92,8 +91,6 @@ export function Toolbar({
   activity: Activity | null;
   /** The knowledge base pane: whether it is showing, how many entries there are, and how many are waiting to be checked. */
   knowledge: { open: boolean; count: number; suggested: number; onToggle: () => void };
-  /** The log of messages: how many errors and warnings are new, and a way to open it. */
-  log: { unseen: number; onOpen: () => void };
 }) {
   const project = snap?.project;
   const hasContent = !!snap && (snap.documents.some((d) => d.hasText || d.total > 0) || snap.knowledge.terms > 0);
@@ -118,14 +115,6 @@ export function Toolbar({
             {knowledge.suggested > 0 && (
               <Badge color="amber" variant="soft">
                 {knowledge.suggested} to check
-              </Badge>
-            )}
-          </Button>
-          <Button variant="soft" color={log.unseen > 0 ? "red" : "gray"} onClick={log.onOpen} title="The errors, warnings and notices of this session">
-            Log
-            {log.unseen > 0 && (
-              <Badge color="red" variant="solid">
-                {log.unseen}
               </Badge>
             )}
           </Button>

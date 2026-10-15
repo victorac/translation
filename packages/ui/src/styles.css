@@ -223,7 +223,11 @@ details > summary { cursor: pointer; }
 .english-suggested input::placeholder { font-style: italic; }
 .english-missing { box-shadow: inset 0 0 0 1px var(--amber-8); }
 .toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }
-.select-add { position: fixed; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); max-width: 22rem; }
+.select-add { position: fixed; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); max-width: 22rem; white-space: nowrap; }
+.select-add-word { min-width: 0; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
+.model-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; align-items: end; }
+.model-numbers > * { min-width: 0; }
+.model-numbers label, .model-numbers .rt-Text { white-space: nowrap; }
 
 /* The knowledge base drawer: a list on the left, the chosen topic on the right, over the workspace. */
 .drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.28); display: flex; justify-content: flex-end; }
@@ -250,7 +254,15 @@ details > summary { cursor: pointer; }
 .glossary-head .name-english { flex: 1 1 9rem; min-width: 9rem; }
 
 /* The log: one line for each message, with its time and kind. */
-.log-list { max-height: 60vh; overflow-y: auto; }
+.log-dock { flex: none; border-top: 1px solid var(--border); background: var(--panel); }
+.log-panel { border-bottom: 1px solid var(--border); }
+.log-panel-head { border-bottom: 1px solid var(--gray-5); }
+.log-bar { display: flex; gap: 1rem; align-items: center; width: 100%; padding: 0.2rem 0.75rem; font-size: 0.75rem; color: var(--muted); background: none; border: 0; cursor: pointer; text-align: left; }
+.log-bar:hover { background: var(--gray-3); }
+.log-count-error { color: var(--red-11); }
+.log-count-warn { color: var(--amber-11); }
+.log-new { margin-left: auto; }
+.log-list { max-height: 14rem; overflow-y: auto; }
 .log-row { padding: 0.35rem 0; border-bottom: 1px solid var(--gray-5); }
 .log-time { flex: none; font-variant-numeric: tabular-nums; }
 .log-level { flex: none; }

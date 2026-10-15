@@ -73,7 +73,7 @@ export function ModelEditor({
         <Field label="Style">
           <Pick label="Translation style" value={m.promptId} options={styles.map((p) => ({ value: p.id, label: p.name }))} onChange={(promptId) => set({ promptId })} />
         </Field>
-        <Flex gap="2">
+        <div className="model-numbers">
           <Field label="Context" hint="The context size this model is loaded with in LM Studio. It is not reported, so enter it yourself.">
             {number(m.contextLimit, (n) => set({ contextLimit: Math.floor(n) }), { min: 512, step: 256 })}
           </Field>
@@ -81,7 +81,7 @@ export function ModelEditor({
             {number(m.maxOutputTokens, (n) => set({ maxOutputTokens: Math.floor(n) }), { min: 128, step: 128 })}
           </Field>
           <Field label="Temperature">{number(m.temperature, (n) => set({ temperature: n }), { min: 0, max: 2, step: 0.1 })}</Field>
-        </Flex>
+        </div>
         {live ? (
           problem && (
             <Text size="1" color="amber">
