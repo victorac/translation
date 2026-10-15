@@ -356,7 +356,6 @@ export function Workspace({
   };
 
   const lines = work?.lines ?? [];
-  const anySuggested = words.some((n) => Object.keys(n.suggestions ?? {}).length > 0) || lines.some((l) => l.speaker === null && l.suggested);
 
   return (
     <div className="guided">
@@ -537,9 +536,6 @@ export function Workspace({
                 </ul>
               </div>
               <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
-                <Button variant="soft" onClick={() => update(() => api.invoke("work.acceptAll"))} disabled={working !== null || !anySuggested} title="Confirm every suggested value: English names, attributes and speakers">
-                  Confirm all suggestions
-                </Button>
                 <Button variant="soft" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions">
                   Suggest from the translation
                 </Button>

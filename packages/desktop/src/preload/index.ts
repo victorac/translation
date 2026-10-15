@@ -46,7 +46,6 @@ const COMMANDS = new Set([
   "work.acceptSuggestion",
   "work.dismissSuggestion",
   "work.acceptSpeaker",
-  "work.acceptAll",
   "work.addWord",
   "work.setAttribute",
   "work.setKind",

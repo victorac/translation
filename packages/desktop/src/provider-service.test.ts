@@ -625,8 +625,6 @@ describe("translating a document", () => {
     await service.workTranslate({ ...model, redo: true });
     expect(bodies(lm).at(-4)!.messages[1]!.content).toContain("The line 「遅いですよ」 is said by Hanako.");
     expect(bodies(lm).at(-3)!.messages[1]!.content).not.toContain("is said by");
-    // Everything that is still suggested is confirmed at once.
-    expect(service.workAcceptAll().lines.map((l) => l.speaker)).toEqual(["花子", "太郎", "太郎", "佐藤"].map((s, i) => (i === 1 ? "太郎" : s)));
   });
 
   it("tells the model the dictionary's names as suggestions, and the names the user confirmed as the names to use", async () => {

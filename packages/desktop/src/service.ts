@@ -604,26 +604,6 @@ export class WorkspaceService {
     if (Object.keys(name.suggestions).length === 0) delete name.suggestions;
   }
 
-  /** Confirms every suggestion: of the words (English names and attributes) and of the lines. */
-  workAcceptAll(): Work {
-    const w = this.need();
-    this.workView();
-    for (const n of [...w.words]) {
-      for (const key of Object.keys(n.suggestions ?? {})) {
-        try {
-          this.workAcceptSuggestion(n.source, key);
-        } catch {
-          this.dropSuggestion(n, key); // not something the classes allow
-        }
-      }
-    }
-    w.lines.forEach((l, i) => {
-      if (l.speaker === null && l.suggested) this.workSetSpeaker(i, l.suggested);
-    });
-    this.workChanged();
-    return this.workView();
-  }
-
   /** A word of the work: its topic when it has one, and the word as listed. */
   private wordOf(source: string): { name: Word; entry: KnowledgeEntry | undefined } {
     const w = this.need();
