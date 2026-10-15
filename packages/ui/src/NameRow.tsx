@@ -211,6 +211,7 @@ export function NameRow({
   onRemove,
   canSuggest,
   onSuggest,
+  onLookup,
   onEnglish,
   onSuggestEnglish,
   onLoosen,
@@ -235,6 +236,8 @@ export function NameRow({
   /** Whether the model can be asked about this word (a paragraph that has it is translated), and the ask. */
   canSuggest: boolean;
   onSuggest: () => void;
+  /** Asks the dictionary how the word is read. */
+  onLookup: () => void;
   /** The English name was written: confirmed, as the name the model must use. */
   onEnglish: (english: string) => void;
   /** The English name was written as a suggestion: told to the model the way the dictionary's reading is, not forced. */
@@ -303,6 +306,7 @@ export function NameRow({
             <DropdownMenu.Item disabled={!canSuggest} onSelect={onSuggest}>
               {canSuggest ? "Suggest from the translation" : "Suggest from the translation (translate a paragraph with it first)"}
             </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={onLookup}>Look up the dictionary spelling</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
             {!name.draft && <DropdownMenu.Item onSelect={onOpen}>Open in the knowledge base</DropdownMenu.Item>}
             <DropdownMenu.Separator />

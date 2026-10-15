@@ -102,8 +102,8 @@ export function patternCandidates(text: string): string[] {
   for (const m of text.matchAll(kinds)) out.push(m[0]);
   // A name from another language written in katakana, its parts set apart by a middle dot (ジョン・スミス).
   for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{2,}(?:・[\u30A1-\u30FA\u30FC]{2,})+/g)) out.push(m[0]);
-  // What is set in 『…』 is a name or a term of the story: it is named or called so.
-  for (const m of text.matchAll(/『([^』\n]{2,12})』/g)) out.push(m[1]!);
+  // What is set in 『…』 inside a sentence is a name or a term of the story: it is named or called so. A 『…』 that is a line of its own is speech.
+  for (const m of text.matchAll(/『([^』\n]{2,12})』/g)) if (!isLineOfSpeech(text, m.index!, m[0].length)) out.push(m[1]!);
   // A katakana word that comes back is a term of the story.
   const counts = new Map<string, number>();
   for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{3,}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
@@ -175,12 +175,20 @@ export interface Quote {
   text: string;
 }
 
-/** The 「…」 lines of a passage, in order. */
+/** A 『…』 at this place is a line of speech of its own: it starts a paragraph, and nothing follows it but the end of the paragraph or と (not という, which names something). */
+function isLineOfSpeech(text: string, at: number, length: number): boolean {
+  return (at === 0 || text[at - 1] === "\n") && /^(?:$|\n|と(?!いう))/.test(text.slice(at + length));
+}
+
+/**
+ * The lines of speech of a passage, in order: the 「…」 quotations, and the 『…』 ones that are a line of their own (a thought, a voice on
+ * the phone), which start a paragraph and are followed by nothing, or by と. A 『…』 inside a sentence is a title or a term (the guild 『…』).
+ */
 export function findQuotes(passage: string): Quote[] {
   // A word set in quotation marks and then named or called so (「山田」と呼んで) is not something said.
-  return [...passage.matchAll(/「[^」]*」/g)]
-    .filter((m) => !/^と(?:呼|称|名乗|名付)/.test(passage.slice(m.index! + m[0].length, m.index! + m[0].length + 3)))
-    .map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
+  const said = [...passage.matchAll(/「[^」]*」/g)].filter((m) => !/^と(?:呼|称|名乗|名付)/.test(passage.slice(m.index! + m[0].length, m.index! + m[0].length + 3)));
+  const alone = [...passage.matchAll(/『[^』]*』/g)].filter((m) => isLineOfSpeech(passage, m.index!, m[0].length));
+  return [...said, ...alone].sort((a, b) => a.index! - b.index!).map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
 }
 
 /** Where `name` is written in `text` followed by one of `after`, and not as part of a longer name. */
@@ -230,7 +238,7 @@ export function takeTurns(passage: string, quotes: readonly Quote[], who: readon
   const alone = (q: Quote) => {
     if (q.start !== 0 && passage[q.start - 1] !== "\n") return false;
     const rest = passage.slice(q.end).split("\n")[0]!;
-    return !rest.includes("「") && rest.length <= 25;
+    return !/[「『]/.test(rest) && rest.length <= 25;
   };
   const other = (id: string) => pair.find((p) => p !== id)!;
   const spokenTo = quotes.map((q) => addressedIn(q.text, speakers));

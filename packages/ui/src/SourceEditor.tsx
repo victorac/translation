@@ -147,15 +147,22 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
     if (next !== v.state.doc.toString()) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: next } });
   }, [value]);
 
-  // Points in the text to show, and the paragraph being worked on. The current place is brought into view.
+  // Points in the text to show, and the paragraph being worked on. The current place is brought into view once, when it is chosen: the
+  // page draws again for other reasons (a selection being made), and scrolling back to the place each time would take the selection away.
+  const hitsKey = JSON.stringify(hits ?? []);
+  const scrolledTo = useRef<string | null>(null);
   useEffect(() => {
     const v = view.current;
     if (!v) return;
     const list = (hits ?? []).filter((h) => h.to <= v.state.doc.length);
     v.dispatch({ effects: setHits.of(list) });
     const here = list.find((h) => h.current);
-    if (here) v.dispatch({ effects: EditorView.scrollIntoView(here.from, { y: "center" }) });
-  }, [hits]);
+    if (!here) scrolledTo.current = null;
+    else if (scrolledTo.current !== `${here.from}-${here.to}`) {
+      scrolledTo.current = `${here.from}-${here.to}`;
+      v.dispatch({ effects: EditorView.scrollIntoView(here.from, { y: "center" }) });
+    }
+  }, [hitsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const v = view.current;
     if (v && reveal && reveal.at <= v.state.doc.length) v.dispatch({ effects: EditorView.scrollIntoView(reveal.at, { y: "start", yMargin: 8 }) });

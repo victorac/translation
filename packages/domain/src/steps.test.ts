@@ -89,6 +89,15 @@ describe("speakers of quotations", () => {
     expect(findQuotes("ぼくを「山田」と呼んで「おはよう」と言った。").map((q) => q.text)).toEqual(["「おはよう」"]);
   });
 
+  it("counts a 『…』 that is a line of its own as speech, and not one inside a sentence", () => {
+    const passage = "『もしもし？　殿、どうされましたか？』\n\n「あ、起きていた？」\n\n『いえ、寝ていて』\n\n旅団『銀の剣』に入った。\n\n『銀の剣』という名だった。";
+    expect(findQuotes(passage).map((q) => q.text)).toEqual(["『もしもし？　殿、どうされましたか？』", "「あ、起きていた？」", "『いえ、寝ていて』"]);
+    expect(findQuotes("『はい』と彼は言った。").map((q) => q.text)).toEqual(["『はい』"]);
+    // And such a line is not taken for the name of something.
+    expect(patternCandidates(passage)).not.toContain("いえ、寝ていて");
+    expect(patternCandidates(passage)).toContain("銀の剣"); // one inside a sentence still is
+  });
+
   it("finds the quotations in order", () => {
     expect(findQuotes("a「一」b「二」").map((q) => q.text)).toEqual(["「一」", "「二」"]);
   });

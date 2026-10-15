@@ -62,7 +62,7 @@ export interface Word {
 
 export type Gender = "female" | "male";
 
-/** One line of speech (a 「…」 quotation) and who says it. */
+/** One line of speech (a 「…」 quotation, or a 『…』 line of its own) and who says it. */
 export interface WorkLine {
   /** The paragraph it stands in (counted from 0). */
   paragraph: number;
@@ -117,7 +117,7 @@ export function readingLetters(reading: readonly string[] | undefined): string {
 }
 
 /** The English name of a person or family from the dictionary; other kinds are left for the user, who is shown the reading. */
-function englishFor(kind: NameKind, reading: readonly string[] | undefined, source = ""): string {
+export function englishFor(kind: NameKind, reading: readonly string[] | undefined, source = ""): string {
   // A name with no kanji gets no guess: in katakana the dictionary only spells out the sounds (Sumisu for Smith), which is not how the name is written in English.
   if (source !== "" && !/\p{Script=Han}/u.test(source)) return "";
   if (!reading || (kind !== "character" && kind !== "family")) return "";
@@ -253,7 +253,7 @@ export function labelDocument(text: string, words: readonly Word[], confirmed: r
     // Only when the stretch ended on a line of speech whose speaker is known does its conversation carry on.
     const last = lines.at(-1);
     const lastParagraph = passage.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
-    carry = last?.speaker && lastParagraph.trim().startsWith("「") ? { before: last.speaker, other: [...lines].reverse().find((l) => l.speaker && l.speaker !== last.speaker)?.speaker ?? null } : null;
+    carry = last?.speaker && /^[「『]/.test(lastParagraph.trim()) ? { before: last.speaker, other: [...lines].reverse().find((l) => l.speaker && l.speaker !== last.speaker)?.speaker ?? null } : null;
   }
   return out;
 }

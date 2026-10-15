@@ -16,7 +16,9 @@ import {
   readWords,
   syncParagraphs,
   findQuotes,
+  englishFor,
   nameGuess,
+  readingLetters,
   notesFor,
   STANDARD_PROMPT,
   type Word,
@@ -666,6 +668,26 @@ export class WorkspaceService {
       name.fromReading = true;
       name.written = true;
     }
+    this.workChanged();
+    return this.workView();
+  }
+
+  /**
+   * Asks the dictionary how a word is read and suggests that as its English name, as it does for a name it finds itself. For a word the
+   * user added, or whose kind they changed to a person: the dictionary is only asked for a person or a family, whatever the word is now.
+   */
+  async workLookup(source: string): Promise<Work> {
+    const { name } = this.wordOf(source);
+    if (!/\p{Script=Han}/u.test(source)) throw new UserError("no_reading", `「${source}」 has no kanji: the dictionary only reads kanji, and for katakana it would only spell out the sounds.`);
+    const readings = await readNames([source]);
+    const guess = englishFor(name.kind === "family" ? "family" : "character", readings[source], source);
+    if (guess === "") throw new UserError("no_reading", `The dictionary has no reading for 「${source}」.`);
+    // The word may have changed while the dictionary was asked.
+    const word = this.wordOf(source).name;
+    word.suggestions = { ...(word.suggestions ?? {}), english: [guess] };
+    word.fromReading = true;
+    delete word.written;
+    word.reading = readingLetters(readings[source]);
     this.workChanged();
     return this.workView();
   }

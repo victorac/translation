@@ -744,6 +744,20 @@ describe("translating a document", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")).toMatchObject({ target: "" });
   });
 
+  it("asks the dictionary for the reading of a word the user added, and says when there is none", async () => {
+    const { service } = setup();
+    await sync(service, "鈴木は笑った。ポーションを飲んだ。");
+    await service.workAddWord("鈴木");
+    service.workSetKind("鈴木", "family");
+    await service.workLookup("鈴木");
+    const word = words(service).find((n) => n.source === "鈴木")!;
+    expect(word.suggestions?.["english"]?.[0]).toMatch(/suzuki/i);
+    expect(word).toMatchObject({ english: "", fromReading: true });
+    // A word in katakana is not read: the dictionary would only spell out the sounds.
+    await service.workAddWord("ポーション");
+    await expect(service.workLookup("ポーション")).rejects.toThrow(/no kanji/);
+  });
+
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
     const { provider, service } = setup();

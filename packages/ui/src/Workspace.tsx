@@ -211,6 +211,19 @@ export function Workspace({
 
   const update = (run: () => Promise<{ ok: true; value: Work } | { ok: false; error: { message: string } }>) => void call(run).then((w) => w && setWork(w));
 
+  /**
+   * Changes what kind of word it is. Made a person or a family with no name or suggestion yet, the dictionary is asked how it is read, as for
+   * a name found in the text (a word that was not taken for a name has no such reading until it is one). No reading is not an error here.
+   */
+  const changeKind = async (source: string, kind: string) => {
+    const set = await api.invoke("work.setKind", { source, kind });
+    if (!set.ok || (kind !== "character" && kind !== "family")) return set;
+    const word = set.value.words.find((x) => x.source === source);
+    if (!word || word.english.trim() !== "" || (word.suggestions?.["english"] ?? []).length > 0) return set;
+    const looked = await api.invoke("work.lookup", { source });
+    return looked.ok ? looked : set;
+  };
+
   /** A fixed English name becomes a suggestion again: it stays as text in the field, no longer forced on the model. */
   const loosen = async (word: Word) => {
     const first = await call(() => api.invoke("work.setEnglish", { source: word.source, english: "" }));
@@ -527,10 +540,11 @@ export function Workspace({
                           onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
                           onLoosen={() => void loosen(n)}
                           onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
-                          onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
+                          onKind={(kind) => update(() => changeKind(n.source, kind))}
                           onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
                           canSuggest={readable(n)}
                           onSuggest={() => void suggest([n.source])}
+                          onLookup={() => update(() => api.invoke("work.lookup", { source: n.source }))}
                           onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
                           onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
                         />
@@ -575,10 +589,11 @@ export function Workspace({
                           onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
                           onLoosen={() => void loosen(n)}
                             onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
-                            onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
+                            onKind={(kind) => update(() => changeKind(n.source, kind))}
                             onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
                             canSuggest={readable(n)}
                             onSuggest={() => void suggest([n.source])}
+                          onLookup={() => update(() => api.invoke("work.lookup", { source: n.source }))}
                             onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
                             onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
                           />
