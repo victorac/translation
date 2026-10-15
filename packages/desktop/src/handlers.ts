@@ -75,7 +75,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   "work.get": z.undefined(),
   "work.sync": z.object({ documentId: id, text: z.string().max(5_000_000) }),
   "work.setSpeaker": z.object({ line: z.number().int().min(0).max(1_000_000), speaker: z.string().max(200).nullable() }),
-  "work.suggest": modelInput,
+  "work.suggest": modelInput.extend({ only: z.array(z.string().max(100)).max(1000).optional() }),
   "work.acceptSuggestion": z.object({ source: z.string().min(1).max(200), key: z.string().min(1).max(100) }),
   "work.dismissSuggestion": z.object({ source: z.string().min(1).max(200), key: z.string().min(1).max(100) }),
   "work.acceptSpeaker": z.object({ line: z.number().int().min(0).max(1_000_000) }),

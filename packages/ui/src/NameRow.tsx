@@ -212,6 +212,8 @@ export function NameRow({
   onUse,
   onOpen,
   onRemove,
+  canSuggest,
+  onSuggest,
   onEnglish,
   onHint,
   onKind,
@@ -231,6 +233,9 @@ export function NameRow({
   onUse: (use: boolean) => void;
   onOpen: () => void;
   onRemove: () => void;
+  /** Whether the model can be asked about this word (a paragraph that has it is translated), and the ask. */
+  canSuggest: boolean;
+  onSuggest: () => void;
   onEnglish: (english: string) => void;
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
@@ -283,6 +288,9 @@ export function NameRow({
             </IconButton>
           </DropdownMenu.Trigger>
           <DropdownMenu.Content size="1" align="end">
+            <DropdownMenu.Item disabled={!canSuggest} onSelect={onSuggest}>
+              {canSuggest ? "Suggest from the translation" : "Suggest from the translation (translate a paragraph with it first)"}
+            </DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
             {!name.draft && <DropdownMenu.Item onSelect={onOpen}>Open in the knowledge base</DropdownMenu.Item>}
             <DropdownMenu.Separator />

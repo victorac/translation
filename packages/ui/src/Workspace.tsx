@@ -290,7 +290,7 @@ export function Workspace({
   };
 
   /** Reads the translation for suggestions: how each name was written, genders and who says each line. Nothing is confirmed by it. */
-  const suggest = async () => {
+  const suggest = async (only?: string[]) => {
     if (!work || !model) return;
     setWorking("translate");
     setActivity({ what: "Reading the translation for suggestions", stop: true });
@@ -301,13 +301,18 @@ export function Workspace({
         if (r.value.reading) setActivity({ what: `Reading the translation for suggestions: ${r.value.reading.done} of ${r.value.reading.total}`, stop: true });
       });
     }, 1000);
-    const w = await call(() => api.invoke("work.suggest", modelInput()));
+    const w = await call(() => api.invoke("work.suggest", { ...modelInput(), ...(only ? { only } : {}) }));
     clearInterval(poll);
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
     setWorking(null);
   };
+
+  /** The words that stand in a paragraph of the text. */
+  const wordsIn = (k: number): string[] => words.filter((n) => n.use !== false && occurrencesOf(paragraphs[k]?.text ?? "", [n.source, ...n.aliases], sources).length > 0).map((n) => n.source);
+  /** Whether the model can be asked about a word: some paragraph that has it is translated. */
+  const readable = (n: Word): boolean => !!model && working === null && paragraphs.some((p, k) => p.translation.trim() !== "" && wordsIn(k).includes(n.source));
 
   /** Translates one paragraph again, keeping the others as they are. */
   const retranslate = async (paragraph: number) => {
@@ -319,6 +324,9 @@ export function Workspace({
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
     setWorking(null);
+    // The model reads its new translation for the words of that paragraph, as after translating everything.
+    const inIt = wordsIn(paragraph);
+    if (w && !w.error && inIt.length > 0) await suggest(inIt);
   };
 
   /** The user's own text for one paragraph is kept when they leave its box. */
@@ -513,6 +521,8 @@ export function Workspace({
                           onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                           onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                           onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
+                          canSuggest={readable(n)}
+                          onSuggest={() => void suggest([n.source])}
                           onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
                           onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
                         />
@@ -557,6 +567,8 @@ export function Workspace({
                             onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                             onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                             onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
+                            canSuggest={readable(n)}
+                            onSuggest={() => void suggest([n.source])}
                             onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
                             onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
                           />

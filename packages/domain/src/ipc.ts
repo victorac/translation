@@ -164,7 +164,8 @@ export interface CommandMap {
   /** Translates the paragraphs one after the other. Without `redo`, the ones that have a translation are skipped. */
   "work.translate": ModelInput & { from?: number; redo?: boolean };
   /** Reads the translation for suggestions: how each name was written, genders, and who says each line. Nothing is confirmed by it. */
-  "work.suggest": ModelInput;
+  /** `only`: the words (their sources) to read the translation for; without it, every word and line. */
+  "work.suggest": ModelInput & { only?: string[] };
   "work.acceptSuggestion": { source: string; key: string };
   "work.dismissSuggestion": { source: string; key: string };
   "work.acceptSpeaker": { line: number };

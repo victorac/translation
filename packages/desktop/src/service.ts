@@ -965,7 +965,7 @@ export class WorkspaceService {
    * pronouns), other attributes with a list of choices (a letter), and who says each line (a letter from the people nearby).
    * An answer that does not pass its check is thrown away. Nothing is confirmed: a suggestion becomes a value only when the user accepts it.
    */
-  async workSuggest(input: ModelInput): Promise<Work> {
+  async workSuggest(input: ModelInput & { only?: string[] | undefined }): Promise<Work> {
     const w = this.need();
     this.workView();
     const abort = this.beginSideRequest();
@@ -977,6 +977,8 @@ export class WorkspaceService {
     const evidenceFor = (n: Word): { at: number; pair: Evidence }[] =>
       w.paragraphs.flatMap((p, k) => (translated(k) && occurrencesOf(p.text, namesOf(n), sources).length > 0 ? [{ at: k, pair: { source: p.text, translation: p.translation.trim() } }] : [])).slice(0, 3);
     const label = (n: Word) => n.english.trim() || n.suggestions?.["english"]?.[0] || n.source;
+    // Asked about some words only: the lines are left alone.
+    const wanted = (n: Word): boolean => input.only === undefined || input.only.includes(n.source);
     type Task = { count: number; run: () => Promise<void> };
     const tasks: Task[] = [];
     const ask = async (q: { system: string; user: string }): Promise<string | null> => {
@@ -988,7 +990,7 @@ export class WorkspaceService {
 
     // How each word was written in the translation.
     for (const n of w.words) {
-      if (n.use === false || n.english.trim() !== "") continue;
+      if (n.use === false || n.english.trim() !== "" || !wanted(n)) continue;
       const ev = evidenceFor(n);
       if (ev.length === 0) continue;
       tasks.push({
@@ -1002,7 +1004,7 @@ export class WorkspaceService {
     }
     // The gender of a person, and the other attributes that are chosen from a list.
     for (const n of w.words) {
-      if (n.use === false) continue;
+      if (n.use === false || !wanted(n)) continue;
       const ev = evidenceFor(n);
       if (ev.length === 0) continue;
       for (const def of classes.find((c) => c.name === n.kind)?.attributes ?? []) {
@@ -1029,7 +1031,7 @@ export class WorkspaceService {
     // Who says each line that the user has not set: one of the people written in the paragraphs around it.
     const people = w.words.filter((n) => n.kind === "character" && n.use !== false);
     w.lines.forEach((l) => {
-      if (l.speaker !== null || !translated(l.paragraph)) return;
+      if (input.only !== undefined || l.speaker !== null || !translated(l.paragraph)) return;
       const near = people
         .map((n) => ({ n, distance: Math.min(...[l.paragraph - 2, l.paragraph - 1, l.paragraph, l.paragraph + 1].filter((k) => w.paragraphs[k] && occurrencesOf(w.paragraphs[k]!.text, namesOf(n), sources).length > 0).map((k) => Math.abs(k - l.paragraph)), Infinity) }))
         .filter((x) => x.distance !== Infinity)
