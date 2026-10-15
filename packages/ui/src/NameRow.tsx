@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, DotsHorizontalIcon } from "@radix-ui/react-icons";
 import { Badge, Button, DropdownMenu, Flex, IconButton, Text, TextField } from "@radix-ui/themes";
 import type { AttributeDef, Word } from "@ltw/domain";
@@ -19,8 +19,9 @@ export interface TopicRef {
 const KIND_LABEL: Record<string, string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
 
 /** A text field that keeps what is being typed and saves it when the field is left (Enter saves, Escape goes back). */
-export function TextBox({ value, label, placeholder, onSave, onEmptyEnter, onEmptyEscape, className }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void; onEmptyEnter?: () => void; onEmptyEscape?: () => void; className?: string }) {
+export function TextBox({ value, label, placeholder, onSave, onConfirm, className }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void; /** Returns true when it took the value (the field then does not save it again when it is left). */ onConfirm?: (value: string) => boolean; className?: string }) {
   const [text, setText] = useState(value);
+  const confirmed = useRef(false);
   useEffect(() => setText(value), [value]);
   return (
     <TextField.Root
@@ -30,16 +31,18 @@ export function TextBox({ value, label, placeholder, onSave, onEmptyEnter, onEmp
       value={text}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onChange={(e) => setText(e.target.value)}
-      onBlur={() => text.trim() !== value.trim() && onSave(text)}
+      onBlur={() => {
+        if (confirmed.current) confirmed.current = false;
+        else if (text.trim() !== value.trim()) onSave(text);
+      }}
       onKeyDown={(e) => {
-        const empty = text.trim() === "" && value.trim() === "";
         if (e.key === "Enter") {
-          if (empty && onEmptyEnter) onEmptyEnter();
+          // Ctrl or Cmd with Enter confirms (the field is where the value is read from afterwards), Enter alone only saves.
+          if ((e.ctrlKey || e.metaKey) && onConfirm?.(text)) confirmed.current = true;
           (e.target as HTMLInputElement).blur();
         }
         if (e.key === "Escape") {
           e.preventDefault(); // it only undoes the edit; a drawer or dialog around this field stays open
-          if (empty && onEmptyEscape) onEmptyEscape();
           setText(value);
           (e.target as HTMLInputElement).blur();
         }
@@ -215,6 +218,7 @@ export function NameRow({
   canSuggest,
   onSuggest,
   onEnglish,
+  onSuggestEnglish,
   onHint,
   onKind,
   onAttribute,
@@ -236,7 +240,10 @@ export function NameRow({
   /** Whether the model can be asked about this word (a paragraph that has it is translated), and the ask. */
   canSuggest: boolean;
   onSuggest: () => void;
+  /** The English name was written: confirmed, as the name the model must use. */
   onEnglish: (english: string) => void;
+  /** The English name was written as a suggestion: told to the model the way the dictionary's reading is, not forced. */
+  onSuggestEnglish: (english: string) => void;
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
   onAttribute: (key: string, values: string[]) => void;
@@ -263,15 +270,19 @@ export function NameRow({
           <Flex align="center" gap="1" className="name-english">
             <TextBox
               className={suggestedEnglish !== "" ? "english-suggested" : name.english.trim() === "" && !name.hint ? "english-missing" : ""}
-              value={name.english}
+              value={name.english.trim() !== "" ? name.english : suggestedEnglish}
               label={`English name of ${name.source}`}
-              placeholder={suggestedEnglish !== "" ? suggestedEnglish : name.hint ? `note: ${name.hint}` : "English name"}
-              onSave={onEnglish}
-              onEmptyEnter={() => suggestedEnglish !== "" && onAcceptSuggestion("english")}
-              onEmptyEscape={() => suggestedEnglish !== "" && onDismissSuggestion("english")}
+              placeholder={name.hint ? `note: ${name.hint}` : "English name"}
+              // A name that is confirmed stays confirmed when it is changed; otherwise what is written is a suggestion until it is confirmed.
+              onSave={(v) => (name.english.trim() !== "" ? onEnglish(v) : onSuggestEnglish(v))}
+              onConfirm={(v) => {
+                if (name.english.trim() !== "" || v.trim() === "") return false;
+                onEnglish(v);
+                return true;
+              }}
             />
             {suggestedEnglish !== "" && (
-              <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="Suggested, not confirmed. Click or press Enter to confirm, Escape to drop it.">
+              <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="This is only a suggestion. Click to confirm it as the name the model must use. You can change it first: Enter keeps it as a suggestion.">
                 <CheckIcon />
               </IconButton>
             )}

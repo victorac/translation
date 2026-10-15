@@ -405,11 +405,13 @@ describe("translating a document", () => {
     service.workSetEnglish("太郎", "Taro");
     await service.workTranslate({ ...model, contextLimit: 1620, maxOutputTokens: 64 });
     const asked = bodies(lm).map((b) => b.messages[1]!.content);
+    // A request is made again when the answer leaves out a glossary name, so the first and the last request of a paragraph are looked for by its text.
+    const last = asked.findLast((m) => m.includes("JAPANESE PARAGRAPH TO TRANSLATE:\n太郎は走った"))!;
     const glossaryOf = (m: string) => m.split("JAPANESE PARAGRAPH")[0]!.split("CONTEXT")[0]!.split("NEXT")[0]!;
     expect(glossaryOf(asked[0]!)).toContain("=> Hanako");
     expect(glossaryOf(asked[0]!)).not.toContain("=> Taro");
-    expect(glossaryOf(asked[13]!)).toContain("=> Taro");
-    expect(glossaryOf(asked[13]!)).not.toContain("=> Hanako");
+    expect(glossaryOf(last)).toContain("=> Taro");
+    expect(glossaryOf(last)).not.toContain("=> Hanako");
   });
 
   it("translates paragraph by paragraph, and writes one paragraph again without touching the others", async () => {
@@ -709,7 +711,7 @@ describe("translating a document", () => {
     expect(bodies(lm).at(-3)!.messages[1]!.content).not.toContain("is said by");
   });
 
-  it("shows the dictionary's names as suggestions, and tells the model only the names the user confirmed", async () => {
+  it("tells the model the dictionary's names as suggestions, and the names the user confirmed as the names to use", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
@@ -718,15 +720,36 @@ describe("translating a document", () => {
     await service.workTranslate({ ...model });
     const sent = bodies(lm)[0]!.messages[1]!.content;
     expect(sent).toContain("GLOSSARY:\n- 山田太郎 => Taro Yamada");
-    // The dictionary's reading is a spelling nobody wrote: the model is not told it, whatever the label (it copies it).
-    expect(sent).not.toContain("Suzuki Hanako");
-    expect(sent).not.toContain("SOUND");
-    expect(sent).not.toContain("SUGGEST");
-    // Nor what the model itself wrote in an earlier translation.
+    // The dictionary's reading is only how the name sounds, not a spelling to copy.
+    expect(sent).toContain("HOW NAMES SOUND (a rough reading of a name from a dictionary, only for the sound; write the name in English the way it is normally spelled, and the same way every time):\n- 鈴木花子 is read: Suzuki Hanako");
+    expect(sent).not.toContain("SUGGESTED NAMES");
+    expect(sent.split("HOW NAMES SOUND")[1]!.split("\n\n")[0]).not.toContain("山田太郎"); // confirmed: not a suggestion
+    // What the model wrote itself in an earlier translation is not sent back: it would keep a mistake in place.
     const word = service.workGet()!.words.find((n) => n.source === "鈴木花子")!;
     word.suggestions = { english: ["Hanako Suzuki"] };
+    delete word.fromReading;
     await service.workTranslate({ ...model, redo: true });
     expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("Hanako Suzuki");
+  });
+
+  it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
+    const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "鈴木花子は笑った。");
+    service.workSetSuggestion("鈴木花子", "english", "Suzuki  Hanako");
+    expect(words(service).find((n) => n.source === "鈴木花子")).toMatchObject({ english: "", suggestions: { english: ["Suzuki Hanako"] }, fromReading: true, written: true });
+    await service.workTranslate({ ...model });
+    expect(bodies(lm)[0]!.messages[1]!.content).toContain("- 鈴木花子 is read: Suzuki Hanako");
+    // The model's own spelling is found in the translation, and does not replace what the user wrote.
+    await service.workSuggest({ ...model });
+    expect(words(service).find((n) => n.source === "鈴木花子")!.suggestions).toEqual({ english: ["Suzuki Hanako"] });
+    service.workSetSuggestion("鈴木花子", "english", "  ");
+    expect(words(service).find((n) => n.source === "鈴木花子")!.suggestions).toBeUndefined();
+    // Dropped, the model's spelling can be asked for.
+    await service.workSuggest({ ...model, only: ["鈴木花子"] });
+    expect(words(service).find((n) => n.source === "鈴木花子")!.suggestions).toEqual({ english: ["Hanako Suzuki"] });
+    expect(() => service.workSetSuggestion("鈴木花子", "gender", "female")).toThrow(/English name/);
   });
 
   it("reads the translation for suggestions with short questions, and throws away an answer that does not pass its check", async () => {

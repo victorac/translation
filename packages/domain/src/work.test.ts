@@ -13,6 +13,7 @@ import {
   occurrencesOf,
   readWords,
   readingLetters,
+  suggestionsFor,
   syncParagraphs,
   withoutLongerNames,
   type KnownWord,
@@ -219,5 +220,18 @@ describe("when the text changes", () => {
 
   it("reads the letters of a reading", () => {
     expect(readingLetters(["ヤマダ", "タロウ"])).toBe("yamada taro");
+  });
+});
+
+describe("suggested names", () => {
+  it("are listed for the words of a paragraph that have no name yet, and not for the ones that have one or are ignored", () => {
+    const words: Word[] = [
+      word("鈴木花子", "", { suggestions: { english: ["Suzuki Hanako"] }, aliases: ["花子"] }),
+      word("魔王", "", { suggestions: { english: ["Maou"] }, fromReading: true }),
+      word("山田太郎", "Taro", { suggestions: { english: ["Yamada Taro"] } }),
+      word("桜台学園", "", { kind: "organization", suggestions: { english: ["Sakuradai"] }, use: false }),
+    ];
+    expect(suggestionsFor(words, "花子は桜台学園で山田太郎に会った。魔王が来た。")).toEqual([{ source: "魔王", suggestion: "Maou" }]); // only a dictionary reading is sent: what the model wrote before is not
+    expect(suggestionsFor(words, "何もない。")).toEqual([]);
   });
 });

@@ -301,8 +301,13 @@ export function Workspace({
         if (r.value.reading) setActivity({ what: `Reading the translation for suggestions: ${r.value.reading.done} of ${r.value.reading.total}`, stop: true });
       });
     }, 1000);
+    const before = JSON.stringify(work.words.filter((n) => !only || only.includes(n.source)).map((n) => [n.source, n.suggestions]));
     const w = await call(() => api.invoke("work.suggest", { ...modelInput(), ...(only ? { only } : {}) }));
     clearInterval(poll);
+    // Asked for particular words and nothing new came back: say so, instead of leaving the row as it was.
+    if (w && only && JSON.stringify(w.words.filter((n) => only.includes(n.source)).map((n) => [n.source, n.suggestions])) === before) {
+      toast({ text: `The model did not find how ${only.length === 1 ? only[0] : "those words"} was written in the translation. You can write a suggestion yourself.` });
+    }
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
@@ -518,6 +523,7 @@ export function Workspace({
                           onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
                           onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                           onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
+                          onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
                           onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                           onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                           onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
@@ -564,6 +570,7 @@ export function Workspace({
                             onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                             onRemove={() => void removeWord(n)}
                             onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
+                          onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
                             onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                             onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                             onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}

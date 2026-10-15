@@ -38,10 +38,14 @@ export interface Word {
   draft?: boolean;
   /**
    * What the app or the model thinks a field is, not yet confirmed by the user: by field (`english`, `gender`, or the key of another
-   * attribute), a list of one value. A suggestion is shown pre-filled and marked and is never sent to the model: it
+   * attribute), a list of one value. A suggestion is shown pre-filled and marked, is told to the model only as a suggestion, and
    * becomes the value when the user accepts it or writes the field themselves.
    */
   suggestions?: Record<string, string[]>;
+  /** The suggested English name is told to the model, in the way a dictionary's reading is (as how the name sounds, not a spelling it must use): the dictionary's own, or what the user wrote as a suggestion. */
+  fromReading?: boolean;
+  /** The user wrote the suggested English name: reading the translation does not replace it. */
+  written?: boolean;
   /** False when the user chose to ignore this word: it is not sent and not added to the knowledge base. */
   use?: boolean;
   /** The glossary topic this is, when it has been made one. */
@@ -176,6 +180,8 @@ export interface KnownWord {
   hint?: string;
   use?: boolean;
   suggestions?: Record<string, string[]>;
+  fromReading?: boolean;
+  written?: boolean;
 }
 
 export interface ReadInput {
@@ -270,6 +276,8 @@ export function readWords(input: ReadInput): Word[] {
     ...(k.hint ? { hint: k.hint } : {}),
     ...(k.use === false ? { use: false } : {}),
     ...(k.suggestions && Object.keys(k.suggestions).length > 0 ? { suggestions: k.suggestions } : {}),
+    ...(k.fromReading ? { fromReading: true } : {}),
+    ...(k.written ? { written: true } : {}),
     gender: k.gender ?? null,
   });
 
@@ -287,7 +295,7 @@ export function readWords(input: ReadInput): Word[] {
     const reading = input.readings[c];
     // What the dictionary reads it as is a suggestion, not the name.
     const guess = englishFor(kind, reading, c);
-    names.push({ source: c, english: "", kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, gender: null, attrs: {}, ...(guess !== "" ? { suggestions: { english: [guess] } } : {}) });
+    names.push({ source: c, english: "", kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, gender: null, attrs: {}, ...(guess !== "" ? { suggestions: { english: [guess] }, fromReading: true } : {}) });
   }
   // A name with a middle dot is written by one of its parts alone as well (ジョン for ジョン・スミス): that is the same person.
   for (const p of names.filter((n) => n.kind === "character" && n.source.includes("・"))) {
@@ -378,6 +386,22 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
       const note = [stands, n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
+}
+
+/**
+ * The words of a paragraph that have no confirmed English name but a dictionary reading. It is told to the model as how the name sounds,
+ * not as a spelling. What the model itself wrote in an earlier translation is not sent back: it would keep a mistake in place.
+ */
+export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
+  const sources = words.map((n) => n.source);
+  return words.flatMap((n) => {
+    const suggestion = n.suggestions?.["english"]?.[0]?.trim();
+    if (!suggestion || n.fromReading !== true || n.english.trim() !== "" || n.use === false) return [];
+    const aliases = n.aliases.filter((a) => !sources.includes(a));
+    const alone = withoutLongerNames(only, n.source, sources);
+    if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];
+    return [{ source: n.source, suggestion, ...(aliases.length > 0 ? { aliases } : {}) }];
+  });
 }
 
 /**

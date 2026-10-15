@@ -35,7 +35,7 @@ export function workFromBlocks(old: LegacyBlocks, text: string): Work {
     for (const { guessed, ...n } of b.interpretation?.names ?? []) {
       if (words.some((w) => w.source === n.source)) continue;
       // An English name the app had only guessed from a reading is a suggestion now, not the name.
-      words.push(guessed && n.english !== "" ? { ...n, english: "", suggestions: { ...(n.suggestions ?? {}), english: [n.english] } } : n);
+      words.push(guessed && n.english !== "" ? { ...n, english: "", suggestions: { ...(n.suggestions ?? {}), english: [n.english] }, fromReading: true } : n);
     }
   }
 
