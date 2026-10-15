@@ -225,9 +225,10 @@ details > summary { cursor: pointer; }
 .toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }
 .select-add { position: fixed; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); max-width: 22rem; white-space: nowrap; }
 .select-add-word { min-width: 0; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
-.model-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; align-items: end; }
+.model-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr)); gap: 0.5rem; align-items: end; }
 .model-numbers > * { min-width: 0; }
-.model-numbers label, .model-numbers .rt-Text { white-space: nowrap; }
+/* The theme's ghost buttons pull themselves out with a negative margin; in a row with another button they would overlap it. */
+.model-row > .rt-Button, .model-row > .rt-IconButton { margin: 0; }
 
 /* The knowledge base drawer: a list on the left, the chosen topic on the right, over the workspace. */
 .drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.28); display: flex; justify-content: flex-end; }

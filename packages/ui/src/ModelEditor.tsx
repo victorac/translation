@@ -49,7 +49,6 @@ export function ModelEditor({
     setM(next);
     if (live && problemOf(next) === null) onSave({ ...next, name: next.name.trim() });
   };
-  const listId = "discovered-models";
   const number = (value: number, onChange: (n: number) => void, props: { min: number; step: number; max?: number }) => (
     <TextField.Root size="2" type="number" min={props.min} step={props.step} {...(props.max !== undefined ? { max: props.max } : {})} value={value} onChange={(e) => onChange(Number(e.target.value))} />
   );
@@ -63,12 +62,11 @@ export function ModelEditor({
     >
       <Flex direction="column" gap="3">
         <Field label="Model">
-          <TextField.Root size="2" list={listId} autoFocus={!live} value={m.name} placeholder="Exact name in LM Studio" spellCheck={false} onChange={(e) => set({ name: e.target.value })} />
-          <datalist id={listId}>
-            {discovered.map((d) => (
-              <option key={d} value={d} />
-            ))}
-          </datalist>
+          {discovered.length > 0 ? (
+            <Pick label="Model" value={m.name} options={[...new Set([...(m.name ? [m.name] : []), ...discovered])].map((d) => ({ value: d, label: d }))} onChange={(name) => set({ name })} />
+          ) : (
+            <TextField.Root size="2" autoFocus={!live} value={m.name} placeholder="Exact name in LM Studio" spellCheck={false} onChange={(e) => set({ name: e.target.value })} />
+          )}
         </Field>
         <Field label="Style">
           <Pick label="Translation style" value={m.promptId} options={styles.map((p) => ({ value: p.id, label: p.name }))} onChange={(promptId) => set({ promptId })} />

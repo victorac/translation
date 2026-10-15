@@ -105,7 +105,7 @@ export function Rail({
             <ul className="plain-list">
               {setup.models.map((m, i) => (
                 <li key={m.name}>
-                  <Flex align="center" gap="1">
+                  <Flex align="center" gap="1" className="model-row">
                     <Button variant={openName === m.name ? "soft" : "ghost"} color="gray" size="2" style={{ flex: 1, justifyContent: "flex-start", minWidth: 0 }} aria-expanded={openName === m.name} title={m.name} onClick={() => setOpenName(openName === m.name ? null : m.name)}>
                       <Text truncate>{m.name}</Text>
                       {m.promptId !== "standard" && (
