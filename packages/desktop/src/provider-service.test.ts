@@ -349,11 +349,13 @@ describe("translating step by step", () => {
     expect(asked).toHaveLength(3);
     expect(asked[0]).toContain("JAPANESE PARAGRAPH TO TRANSLATE:\n花子は笑った。");
     expect(asked[0]).toContain("- 花子 => Hanako");
-    expect(asked[0]!.split("JAPANESE")[0]).not.toContain("太郎"); // its glossary has only its own words; the text around it may mention others
+    expect(asked[0]!.split("JAPANESE PARAGRAPH")[0]).not.toContain("太郎: a boy"); // its glossary and notes have only its own words
     expect(asked[1]).toContain("- 太郎: a boy");
-    // Each request has the translation so far, with an empty place for the paragraph.
-    expect(asked[0]).toContain("TRANSLATION SO FAR:\n[[HERE]][[/HERE]]");
-    expect(asked[1]).toContain(`TRANSLATION SO FAR:\n${block.parts[0]}\n\n[[HERE]][[/HERE]]`);
+    // A request has the paragraphs before with their translations, and the one after; never the whole block.
+    expect(asked[0]).not.toContain("CONTEXT");
+    expect(asked[0]).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 「おはよう」と太郎は言った。");
+    expect(asked[1]).toContain(`CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 花子は笑った。\nENGLISH: ${block.parts[0]}`);
+    expect(asked[2]).not.toContain("NEXT");
     expect(block.parts).toHaveLength(3);
     expect(block.parts.every((p) => p.startsWith("EN(qwen2.5-7b-instruct)"))).toBe(true);
     expect(block).toMatchObject({ status: "translated", translation: block.parts.join("\n\n") });
@@ -365,10 +367,11 @@ describe("translating step by step", () => {
     expect(mine.blocks[0]!.parts[2]).toBe("My own version.");
     expect(mine.blocks[0]!.translation.endsWith("My own version.")).toBe(true);
 
-    // Writing the second paragraph again: the others stay, the old text is not shown, and the paragraph after it is given as it is.
+    // Writing the second paragraph again: the others stay, the old text is not shown, and the paragraph after it is given with its translation.
     const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 1 });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(sent).toContain(`TRANSLATION SO FAR:\n${block.parts[0]}\n\n[[HERE]][[/HERE]]\n\nMy own version.`);
+    expect(sent).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 二人は歩いた。\nENGLISH: My own version.");
+    expect(sent).not.toContain(block.parts[1]!);
     expect(sent).not.toContain("REJECTED");
     expect(again.blocks[0]!.parts[0]).toBe(block.parts[0]);
     expect(again.blocks[0]!.parts[2]).toBe("My own version.");
@@ -388,6 +391,24 @@ describe("translating step by step", () => {
     expect(sent[0]).not.toContain("REJECTED VERSION");
     expect(sent[1]).toContain("REJECTED VERSION");
     expect(done.blocks[0]!.warning).toMatch(/same text again/);
+  });
+
+  it("asks again when the model writes about more than the paragraph, and joins the lines if it still does", async () => {
+    let calls = 0;
+    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("was several paragraphs") ? (calls++, "Only the paragraph.") : "First.\n\nSecond.\n\nThird.") });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
+    const done = await service.guidedTranslate({ ...model, index: 0 });
+    expect(calls).toBe(1);
+    expect(done.blocks[0]!.parts).toEqual(["Only the paragraph."]);
+    expect(done.blocks[0]!.warning ?? null).toBeNull();
+    const stubborn = await fakeLmStudio({ paragraph: () => "First.\n\nSecond." });
+    provider.save({ baseUrl: stubborn.baseUrl, allowRemote: false });
+    const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 0 });
+    expect(again.blocks[0]!.parts).toEqual(["First. Second."]);
+    expect(again.blocks[0]!.warning).toMatch(/several paragraphs, which were joined/);
   });
 
   it("asks again when the glossary name of the paragraph is left out, and says so if it still is", async () => {
@@ -418,9 +439,11 @@ describe("translating step by step", () => {
     const started = service.guidedStart({ documentId: docId, text: long, blockSize: "small" });
     if (started.blocks.length < 2) return; // the text fits in one block with this size; nothing to overlap
     await service.guidedTranslate({ ...model, index: 0 });
+    const asked = bodies(lm).length;
     await service.guidedTranslate({ ...model, index: 1 });
     const prev = service.guidedGet()!.blocks[0]!;
-    const second = bodies(lm).map((b) => b.messages[1]!.content).filter((u) => u.includes("CONTEXT")).at(0) ?? "";
+    // The first paragraph of the second block has nothing before it in its own block: it gets the end of the block before.
+    const second = bodies(lm)[asked]!.messages[1]!.content;
     expect(second).toContain("CONTEXT");
     expect(second).toContain(prev.text.split("\n").filter(Boolean).at(-1)!);
   });

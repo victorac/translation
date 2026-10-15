@@ -16,32 +16,31 @@ const request = {
   glossary: [{ source: "太郎", target: "Taro", note: "a boy" }, { source: "食べる", target: "", note: "use the past tense" }],
   notes: ["note"],
   sourceLanguage: "Japanese",
-  previous: null,
-  sourceBefore: ["前。"],
+  targetLanguage: "English",
+  before: [{ source: "前。", translation: "Before." }],
   paragraph: "本文。",
-  sourceAfter: ["後。"],
-  translatedBefore: ["Before."],
-  translatedAfter: [],
+  next: { source: "後。", translation: null },
 };
 
 describe("paragraphMessage", () => {
-  it("puts the background first, the translation so far with an empty place next, and the task last", () => {
+  it("puts the background first, the paragraphs around it for reference, and the paragraph and the task last", () => {
     const m = paragraphMessage(request);
     expect(m).toContain("GLOSSARY:\n- 太郎 => Taro\n");
     expect(m).toContain("WORD NOTES (instructions about how to translate particular words; follow them):\n- 太郎: a boy\n- 食べる: use the past tense");
-    expect(m).toContain("JAPANESE TEXT AROUND THE PARAGRAPH (reference only; the paragraph is one of these):\n前。\n\n本文。\n\n後。");
-    expect(m).toContain("TRANSLATION SO FAR:\nBefore.\n\n[[HERE]][[/HERE]]");
+    expect(m).toContain("CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 前。\nENGLISH: Before.");
+    expect(m).toContain("NEXT (the paragraph after this one; reference only, do not translate):\nJAPANESE: 後。");
     expect(m).toContain("JAPANESE PARAGRAPH TO TRANSLATE:\n本文。");
-    expect(m.trimEnd().endsWith("between [[HERE]] and [[/HERE]].")).toBe(true);
+    expect(m.trimEnd().endsWith("Translate that paragraph into English. Reply with its translation only, as one paragraph.")).toBe(true);
     expect(m).not.toContain("REJECTED");
   });
-  it("shows the paragraphs after it when they are known, and a rejected version only when given", () => {
-    const m = paragraphMessage({ ...request, translatedAfter: ["After."], rejected: "Old words." });
-    expect(m).toContain("[[HERE]][[/HERE]]\n\nAfter.");
+  it("shows the translation of the next paragraph when it has one, and a rejected version only when given", () => {
+    const m = paragraphMessage({ ...request, next: { source: "後。", translation: "After." }, rejected: "Old words." });
+    expect(m).toContain("JAPANESE: 後。\nENGLISH: After.");
     expect(m).toContain("REJECTED VERSION");
   });
-  it("leaves out the text around a lone paragraph", () => {
-    expect(paragraphMessage({ ...request, sourceBefore: [], sourceAfter: [], translatedBefore: [] })).not.toContain("TEXT AROUND");
+  it("leaves out the sections that have nothing in them", () => {
+    const m = paragraphMessage({ ...request, before: [], next: null, notes: [], glossary: [] });
+    expect(m).not.toMatch(/CONTEXT|NEXT|GLOSSARY|NOTES/);
   });
   it("has the style as guidance for tone, not as the task", () => {
     const system = paragraphSystem("Be literary.", "Japanese", "English");
@@ -52,10 +51,11 @@ describe("paragraphMessage", () => {
 });
 
 describe("answerOf", () => {
-  it("takes what is between the markers, or the whole reply without them", () => {
-    expect(answerOf("Sure! [[HERE]]New text.[[/HERE]] Done.")).toBe("New text.");
-    expect(answerOf("New text.")).toBe("New text.");
-    expect(answerOf("  ")).toBeNull();
+  it("takes the reply without a code fence or a label in front", () => {
+    expect(answerOf("New text.", "English")).toBe("New text.");
+    expect(answerOf("English: New text.", "English")).toBe("New text.");
+    expect(answerOf("```\nNew text.\n```", "English")).toBe("New text.");
+    expect(answerOf("  ", "English")).toBeNull();
   });
 });
 
@@ -65,6 +65,13 @@ describe("missingNames", () => {
     expect(missingNames(glossary, "花子と太郎。", "Hanako and Taro.")).toEqual([]);
     expect(missingNames(glossary, "花子と太郎。", "She and Tarou.")).toEqual(["花子 => Hanako"]);
     expect(missingNames(glossary, "他の人。", "Someone.")).toEqual([]); // not in the paragraph
+  });
+  it("lets a short form of a name be translated as part of the name", () => {
+    const glossary = [{ source: "山田太郎", target: "Taro Yamada", aliases: ["太郎"] }];
+    expect(missingNames(glossary, "「太郎、行くぞ」", "\"Taro, let's go.\"")).toEqual([]);
+    expect(missingNames(glossary, "「太郎、行くぞ」", "\"Let's go.\"")).toEqual(["山田太郎 => Taro Yamada"]);
+    // when the whole name is in the paragraph, the whole English name is wanted
+    expect(missingNames(glossary, "山田太郎は笑った。", "Taro laughed.")).toEqual(["山田太郎 => Taro Yamada"]);
   });
 });
 

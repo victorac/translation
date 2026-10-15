@@ -9,6 +9,9 @@ import {
   WORD_NOTES_LABEL,
 } from "./labels.js";
 
+const CONTEXT_LABEL = "CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):";
+const NEXT_LABEL = "NEXT (the paragraph after this one; reference only, do not translate):";
+
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
 export interface Paragraph {
   start: number;
@@ -28,25 +31,25 @@ export function paragraphsOf(text: string): Paragraph[] {
   return out;
 }
 
-const OPEN = "[[HERE]]";
-const CLOSE = "[[/HERE]]";
-const CONTEXT_LABEL = "CONTEXT (the end of the block before; reference only, do not translate):";
-
 type GlossaryItem = { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined };
 
+/** A paragraph and its translation. */
+export interface Pair {
+  source: string;
+  translation: string;
+}
+
 /**
- * The instruction for translating one paragraph of a block. The paragraph is translated into an empty place in the translation so
- * far, so the model has the paragraphs around it to fit in with. The translation style is added as guidance for tone and wording.
+ * The instruction for translating one paragraph of a story. Only the paragraph is translated: the paragraphs around it are shown for
+ * reference. The translation style is added as guidance for tone and wording.
  */
 export function paragraphSystem(styleGuidance: string, sourceLanguage: string, targetLanguage: string): string {
   return [
-    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), the ${sourceLanguage} text around the paragraph (for reference only), TRANSLATION SO FAR, which has an empty place between ${OPEN} and ${CLOSE}, and the ${sourceLanguage} PARAGRAPH TO TRANSLATE.`,
+    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), CONTEXT and NEXT (the paragraphs around the one to translate, with their translations when there are any; for reference only, never translate them), and the ${sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE.`,
     `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}`,
-    `Your task: translate the paragraph into the empty place, so that it fits the translation before and after it. Translate all of it and only it. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not omit or sanitize anything, and do not add comments.`,
-    `Reply with the translation of the paragraph between ${OPEN} and ${CLOSE}, and nothing else.`,
-  ]
-    .filter((x) => x !== "")
-    .join("\n\n");
+    `Your task: translate the paragraph, all of it and only it, so that it fits what comes before. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not omit or sanitize anything, and do not add comments.`,
+    `Reply with the translation of the paragraph only, as one paragraph: no labels, and nothing about the other paragraphs.`,
+  ].join("\n\n");
 }
 
 /** What the request for one paragraph is made of. */
@@ -54,56 +57,58 @@ export interface ParagraphRequest {
   glossary: readonly GlossaryItem[];
   notes: readonly string[];
   sourceLanguage: string;
-  /** The end of the block before, when this is the first paragraph of a block. */
-  previous: { source: string; translation: string } | null;
-  /** The source paragraphs around this one (those in the window), and this one. */
-  sourceBefore: readonly string[];
+  targetLanguage: string;
+  /** The paragraphs before this one with their translations, oldest first (for the first paragraph of a block: the end of the block before). */
+  before: readonly Pair[];
   paragraph: string;
-  sourceAfter: readonly string[];
-  /** What is translated already of the paragraphs before and after (the ones after only when a paragraph is written again). */
-  translatedBefore: readonly string[];
-  translatedAfter: readonly string[];
+  /** The paragraph after this one, with its translation when it has one. */
+  next: { source: string; translation: string | null } | null;
   /** A version the user did not accept, shown only when the model gave it back unchanged. */
   rejected?: string | undefined;
 }
 
 export function paragraphMessage(r: ParagraphRequest): string {
+  const from = r.sourceLanguage.toUpperCase();
+  const to = r.targetLanguage.toUpperCase();
+  const pair = (source: string, translation: string | null) => `${from}: ${source}${translation ? `\n${to}: ${translation}` : ""}`;
   const parts: string[] = [];
   if (r.notes.length > 0) parts.push(`${NOTES_LABEL}\n${r.notes.map((n) => `- ${n}`).join("\n")}`);
   const lines = glossaryLines(r.glossary);
   if (lines.length > 0) parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
   const wordNotes = wordNoteLines(r.glossary);
   if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
-  if (r.previous) parts.push(`${CONTEXT_LABEL}\n${r.previous.source}\n\n${r.previous.translation}`);
-  const around = [...r.sourceBefore, r.paragraph, ...r.sourceAfter];
-  if (around.length > 1) parts.push(`${r.sourceLanguage.toUpperCase()} TEXT AROUND THE PARAGRAPH (reference only; the paragraph is one of these):\n${around.join("\n\n")}`);
-  const before = r.translatedBefore.filter((t) => t.trim() !== "");
-  const after = r.translatedAfter.filter((t) => t.trim() !== "");
-  parts.push(`TRANSLATION SO FAR:\n${[...before, `${OPEN}${CLOSE}`, ...after].join("\n\n")}`);
+  if (r.before.length > 0) parts.push(`${CONTEXT_LABEL}\n${r.before.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
+  if (r.next) parts.push(`${NEXT_LABEL}\n${pair(r.next.source, r.next.translation)}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);
-  parts.push(`${r.sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
-  parts.push(`Translate that paragraph into the empty place between ${OPEN} and ${CLOSE}.`);
+  parts.push(`${from} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
+  parts.push(`Translate that paragraph into ${r.targetLanguage}. Reply with its translation only, as one paragraph.`);
   return parts.join("\n\n");
 }
 
-/** What the model wrote: what is between the markers when it wrote them, else its whole reply. Null when there is nothing. */
-export function answerOf(reply: string): string | null {
-  const open = reply.indexOf(OPEN);
-  const close = reply.lastIndexOf(CLOSE);
-  let t = open >= 0 && close > open ? reply.slice(open + OPEN.length, close) : reply.split(OPEN).join("").split(CLOSE).join("");
-  t = t.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
+/** What the model wrote, without a code fence or a label such as "English:" in front. Null when there is nothing. */
+export function answerOf(reply: string, targetLanguage: string): string | null {
+  let t = reply.trim().replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "").trim();
+  const label = new RegExp(`^${targetLanguage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*`, "i");
+  t = t.replace(label, "").trim();
   return t === "" ? null : t;
 }
 
-/** The glossary names (as `word => English`) that the source paragraph has but the translation of it does not use. */
+/**
+ * The glossary names (as `word => English`) that the source paragraph has but the translation of it does not use. A word that stands
+ * in the paragraph only as a short form of the name (an alias) may be translated as part of the name: "Rein" for "Rein Garland".
+ */
 export function missingNames(glossary: readonly GlossaryItem[], source: string, translation: string): string[] {
   const hay = translation.toLocaleLowerCase();
-  return glossary
-    .filter((g) => [g.source, ...(g.aliases ?? [])].some((n) => source.includes(n)))
-    .flatMap((g) => {
-      const wanted = targetVariants(g.target);
-      return wanted.length > 0 && !wanted.some((w) => hay.includes(w.toLocaleLowerCase())) ? [`${g.source} => ${wanted[0]}`] : [];
-    });
+  return glossary.flatMap((g) => {
+    const wanted = targetVariants(g.target);
+    if (wanted.length === 0) return [];
+    const full = source.includes(g.source);
+    if (!full && !(g.aliases ?? []).some((n) => source.includes(n))) return [];
+    const ok = full
+      ? wanted.some((w) => hay.includes(w.toLocaleLowerCase()))
+      : wanted.some((w) => w.split(/\s+/).some((word) => word.length >= 2 && hay.includes(word.toLocaleLowerCase())));
+    return ok ? [] : [`${g.source} => ${wanted[0]}`];
+  });
 }
 
 /** The text of a block's translation: the paragraphs that have one, one after the other with a blank line between. */

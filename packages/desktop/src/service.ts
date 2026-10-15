@@ -39,6 +39,7 @@ import {
   stripThinking,
   paragraphSystem,
   paragraphMessage,
+  type Pair,
   answerOf,
   missingNames,
   joinParts,
@@ -825,34 +826,30 @@ export class WorkspaceService {
     const glossary = glossaryFor(interp, paragraph);
     const notes = notesFor(interp, paragraph);
     const previousBlock = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
-    const previous = k === 0 && previousBlock && previousBlock.status === "translated" ? { source: lastLines(previousBlock.text, 3, 500), translation: lastLines(previousBlock.translation, 3, 500) } : null;
+    const previous: Pair | null = k === 0 && previousBlock && previousBlock.status === "translated" ? { source: lastLines(previousBlock.text, 3, 500), translation: lastLines(previousBlock.translation, 3, 500) } : null;
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+    // What comes before: the end of the block before, then this block's paragraphs that are translated already.
+    const pairs: Pair[] = [
+      ...(previous ? [previous] : []),
+      ...sources.slice(0, k).flatMap((source, j) => (block.parts[j]?.trim() ? [{ source, translation: block.parts[j]!.trim() }] : [])),
+    ];
+    const following = sources[k + 1] !== undefined ? { source: sources[k + 1]!, translation: block.parts[k + 1]?.trim() || null } : null;
     let reject: string | undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      // As much of the source around the paragraph as fits: the whole block, then fewer paragraphs on each side.
+      // As much context as fits: the paragraph after this one and all the paragraphs before it, then fewer of them.
       let user = "";
-      for (let radius = Math.max(k, sources.length - 1 - k); radius >= 0; radius--) {
-        const lo = Math.max(0, k - radius);
-        const hi = Math.min(sources.length - 1, k + radius);
-        user =
-          paragraphMessage({
-            glossary,
-            notes,
-            sourceLanguage: input.sourceLanguage,
-            previous,
-            sourceBefore: sources.slice(lo, k),
-            paragraph,
-            sourceAfter: sources.slice(k + 1, hi + 1),
-            translatedBefore: block.parts.slice(lo, k),
-            translatedAfter: block.parts.slice(k + 1, hi + 1),
-            rejected: reject,
-          }) + complaint;
-        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-        if (radius === 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+      let fits = false;
+      for (const next of following ? [following, null] : [null]) {
+        for (let n = pairs.length; n >= 0 && !fits; n--) {
+          user = paragraphMessage({ glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, before: pairs.slice(pairs.length - n), paragraph, next, rejected: reject }) + complaint;
+          fits = estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit;
+        }
+        if (fits) break;
       }
+      if (!fits) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
       const reply = await this.askModel(
         {
           backend: input.backend,
@@ -868,15 +865,24 @@ export class WorkspaceService {
         abort,
       );
       if (reply === null) return null; // stopped
-      const answer = answerOf(reply);
+      const answer = answerOf(reply, input.targetLanguage);
       if (answer === null) throw new UserError("invalid_response", `The model wrote nothing for paragraph ${k + 1}. If it is a thinking model, raise its reply limit.`);
-      text = answer;
+      // A paragraph of the source is one line, so its translation is one line: several mean the model wrote about more than the paragraph.
+      const lines = answer.split(/\n+/).filter((l) => l.trim() !== "");
+      text = lines.join(" ");
+      const several = lines.length > 1;
       const missing = missingNames(glossary, paragraph, text);
       const unchanged = old !== undefined && sameText(text, old);
-      issue = missing.length > 0 ? `Paragraph ${k + 1} does not use the glossary names: ${missing.join("; ")}.` : unchanged ? `Paragraph ${k + 1}: the model wrote the same text again.` : null;
+      issue = missing.length > 0 ? `Paragraph ${k + 1} does not use the glossary names: ${missing.join("; ")}.` : unchanged ? `Paragraph ${k + 1}: the model wrote the same text again.` : several ? `Paragraph ${k + 1}: the model wrote several paragraphs, which were joined.` : null;
       if (issue === null) break;
       if (unchanged) reject = old;
-      complaint = missing.length > 0 ? `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "";
+      complaint = [
+        several ? "Your last answer was not accepted because it was several paragraphs. Translate only the paragraph above, as one paragraph." : "",
+        missing.length > 0 ? `Your last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "",
+      ]
+        .filter((x) => x !== "")
+        .map((x) => `\n\n${x}`)
+        .join("");
     }
     return { text, issue };
   }
