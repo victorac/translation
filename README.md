@@ -2,8 +2,6 @@
 
 A desktop app for translating long fiction (Japanese to English first, other pairs are settings) with a local model, for example in LM Studio. You paste the text, the app cuts it into blocks, reads each block for names and speakers, and translates it one paragraph at a time with a knowledge base of names and notes feeding every request.
 
-`app-spec/` describes the first design of the app, which translated whole blocks with several models side by side. That design has been replaced by what is described here; the folder is kept for its history.
-
 ## How it works
 
 1. **Source.** The text of a document is cut into blocks (about 600 tokens by default). The editor shows where the blocks are.
