@@ -97,7 +97,7 @@ const entrySchema = z.object({
   updatedAt: iso,
 });
 
-const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), suggestions: z.record(z.string().max(100), z.array(z.string().max(300)).max(5)).optional(), fromReading: z.boolean().optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
+const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), suggestions: z.record(z.string().max(100), z.array(z.string().max(300)).max(5)).optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
 
 const workSchema = z.object({
   documentId: id,

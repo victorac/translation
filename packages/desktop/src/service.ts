@@ -3,7 +3,6 @@ import {
   glossaryFor,
   addressedIn,
   occurrencesOf,
-  suggestionsFor,
   nameQuestion,
   copiedWords,
   choiceQuestion,
@@ -453,8 +452,8 @@ export class WorkspaceService {
         const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
         // A suggestion is dropped once the topic has that field itself.
         const suggestions = Object.fromEntries(Object.entries(n.suggestions ?? {}).filter(([key]) => (key === "english" ? e.target.trim() === "" : !(e.attrs[key] ?? []).length)));
-        const { suggestions: _old, fromReading, ...rest } = n;
-        return [{ ...rest, ...(fromReading && suggestions["english"] ? { fromReading } : {}), ...(Object.keys(suggestions).length > 0 ? { suggestions } : {}), draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        const { suggestions: _old, ...rest } = n;
+        return [{ ...rest, ...(Object.keys(suggestions).length > 0 ? { suggestions } : {}), draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
       }
       // A word that is not in the knowledge base yet is a draft: it stays as the user left it. One that was in it and was deleted is gone.
       if (!n.draft) return [];
@@ -481,7 +480,7 @@ export class WorkspaceService {
     const nicknames = (e: KnowledgeEntry) => terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).some((r) => r === e.source)).map((t) => t.source);
     const known: KnownWord[] = terms.map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
     for (const n of this.work?.words ?? []) {
-      if (n.draft && !known.some((g) => g.source === n.source)) known.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}), ...(n.hint ? { hint: n.hint } : {}), ...(n.use === false ? { use: false } : {}), ...(n.suggestions ? { suggestions: n.suggestions } : {}), ...(n.fromReading ? { fromReading: true } : {}) });
+      if (n.draft && !known.some((g) => g.source === n.source)) known.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}), ...(n.hint ? { hint: n.hint } : {}), ...(n.use === false ? { use: false } : {}), ...(n.suggestions ? { suggestions: n.suggestions } : {}) });
     }
     return known;
   }
@@ -600,7 +599,6 @@ export class WorkspaceService {
   private dropSuggestion(name: Word, key: string): void {
     if (!name.suggestions) return;
     delete name.suggestions[key];
-    if (key === "english") delete name.fromReading;
     if (Object.keys(name.suggestions).length === 0) delete name.suggestions;
   }
 
@@ -788,14 +786,13 @@ export class WorkspaceService {
     const paragraph = w.paragraphs[k]!.text;
     const glossary = glossaryFor(w.words, paragraph);
     const notes = notesFor(w.words, w.lines, { index: k, text: paragraph });
-    const suggestions = suggestionsFor(w.words, paragraph);
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
     let reject: string | undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const bare = { glossary, notes, suggestions, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
+      const bare = { glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
       let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
       if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
       // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.
@@ -894,10 +891,7 @@ export class WorkspaceService {
         run: async () => {
           const reply = await ask(nameQuestion(n.source, ev.map((e) => e.pair), input.sourceLanguage, input.targetLanguage));
           const copied = reply === null ? null : copiedWords(reply, ev.map((e) => e.pair.translation));
-          if (copied) {
-            n.suggestions = { ...(n.suggestions ?? {}), english: [copied] };
-            delete n.fromReading; // now it is how the name was written, not how it sounds
-          }
+          if (copied) n.suggestions = { ...(n.suggestions ?? {}), english: [copied] };
         },
       });
     }
