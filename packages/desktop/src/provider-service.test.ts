@@ -732,6 +732,18 @@ describe("translating a document", () => {
     expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("Hanako Suzuki");
   });
 
+  it("turns the fixed English name of a word that is already in the knowledge base back into a suggestion", async () => {
+    const { service } = setup();
+    await sync(service, "山田太郎は笑った。");
+    service.workSetEnglish("山田太郎", "Taro Yamada");
+    await service.workTranslate({ ...model, backend: "practice" }); // the word enters the knowledge base
+    expect(words(service).find((n) => n.source === "山田太郎")).toMatchObject({ english: "Taro Yamada", draft: false });
+    service.workSetEnglish("山田太郎", "");
+    service.workSetSuggestion("山田太郎", "english", "Taro Yamada");
+    expect(words(service).find((n) => n.source === "山田太郎")).toMatchObject({ english: "", suggestions: { english: ["Taro Yamada"] }, written: true });
+    expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")).toMatchObject({ target: "" });
+  });
+
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
     const { provider, service } = setup();

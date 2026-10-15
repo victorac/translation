@@ -64,7 +64,9 @@ describe("reading the text for words", () => {
     const words = read(text, [], ["ジョン", "ジョン・スミス", "銀の剣", "魔力石", "ポーション"]);
     const by = (s: string) => words.find((n) => n.source === s)!;
     expect(words.some((n) => n.source === "ジョン")).toBe(false);
-    expect(by("ジョン・スミス")).toMatchObject({ kind: "character", suggestions: { english: ["Jon Sumisu"] }, aliases: ["ジョン"] });
+    // No guess for a name in katakana: the dictionary would only spell out the sounds.
+    expect(by("ジョン・スミス")).toMatchObject({ kind: "character", english: "", aliases: ["ジョン"] });
+    expect(by("ジョン・スミス").suggestions).toBeUndefined();
     expect(by("銀の剣").kind).toBe("organization"); // 旅団『…』
     expect(by("魔力石").kind).toBe("term");
     expect(by("ポーション")).toMatchObject({ kind: "term", english: "" }); // not guessed for a term

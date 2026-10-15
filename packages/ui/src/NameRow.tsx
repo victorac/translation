@@ -239,7 +239,7 @@ export function NameRow({
   onEnglish: (english: string) => void;
   /** The English name was written as a suggestion: told to the model the way the dictionary's reading is, not forced. */
   onSuggestEnglish: (english: string) => void;
-  /** A fixed English name is turned back into a suggestion (only for a word that is not in the knowledge base yet). */
+  /** A fixed English name is turned back into a suggestion. */
   onLoosen: () => void;
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
@@ -280,16 +280,9 @@ export function NameRow({
                 variant="soft"
                 color={state === "fixed" ? "green" : "amber"}
                 className="english-state"
-                disabled={state === "fixed" && !name.draft}
                 onClick={() => (state === "suggested" ? onAcceptSuggestion("english") : onLoosen())}
                 aria-label={state === "suggested" ? `Make the English name of ${name.source} fixed` : `Make the English name of ${name.source} a suggestion again`}
-                title={
-                  state === "suggested"
-                    ? "Suggested: told to the model as a hint it may not follow. Click to fix it: the model must write exactly this."
-                    : name.draft
-                      ? "Fixed: the model must write exactly this. Click to make it a suggestion again."
-                      : "Fixed: the model must write exactly this. It is in the knowledge base; change it here, or remove the word."
-                }
+                title={state === "suggested" ? "Suggested: told to the model as a hint it may not follow. Click to fix it: the model must write exactly this." : "Fixed: the model must write exactly this. Click to make it a suggestion again."}
               >
                 {state === "suggested" ? "suggested" : "fixed"}
               </Button>

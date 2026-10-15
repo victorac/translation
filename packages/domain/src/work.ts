@@ -118,11 +118,8 @@ export function readingLetters(reading: readonly string[] | undefined): string {
 
 /** The English name of a person or family from the dictionary; other kinds are left for the user, who is shown the reading. */
 function englishFor(kind: NameKind, reading: readonly string[] | undefined, source = ""): string {
-  // A name written in katakana is its own reading: it is romanized as it stands, part by part (the user fixes the spelling).
-  if (kind === "character" && /^[\u30A1-\u30FA\u30FC・]+$/.test(source)) {
-    const parts = source.split("・").map((p) => romanize(p));
-    return parts.every((p) => p) ? parts.map((p) => p![0]!.toUpperCase() + p!.slice(1)).join(" ") : "";
-  }
+  // A name with no kanji gets no guess: in katakana the dictionary only spells out the sounds (Sumisu for Smith), which is not how the name is written in English.
+  if (source !== "" && !/\p{Script=Han}/u.test(source)) return "";
   if (!reading || (kind !== "character" && kind !== "family")) return "";
   return nameFromReadings(reading, kind === "family") ?? "";
 }

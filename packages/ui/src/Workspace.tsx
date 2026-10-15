@@ -270,14 +270,13 @@ export function Workspace({
   });
   const done = paragraphs.filter((p) => p.translation.trim() !== "").length;
 
-  /** Translates the paragraphs one after the other. Without `redo` it carries on where it stopped (the paragraphs that have a translation are skipped). */
-  const translate = async (redo: boolean) => {
+  /** Translates the paragraphs one after the other, carrying on where it stopped (the paragraphs that have a translation are skipped). A paragraph is written again with its own button. */
+  const translate = async () => {
     if (!work || !model) return;
-    if (redo && done > 0 && !window.confirm(`Write all ${paragraphs.length} paragraphs again? Translations you wrote or changed are replaced.`)) return;
     setWorking("translate");
     const n = paragraphs.length;
     const saying = (finished: number) => `Translating with ${model.name}: paragraph ${Math.min(n, finished + 1)} of ${n}`;
-    setActivity({ what: saying(redo ? 0 : done), stop: true });
+    setActivity({ what: saying(done), stop: true });
     // The paragraphs are written one after the other in one request; the ones done so far are asked for while it goes on.
     const poll = setInterval(() => {
       void api.invoke("work.get").then((r) => {
@@ -286,7 +285,7 @@ export function Workspace({
         setActivity({ what: saying(r.value.paragraphs.filter((p) => p.translation.trim() !== "").length), stop: true });
       });
     }, 1000);
-    const w = await call(() => api.invoke("work.translate", { ...modelInput(), redo }));
+    const w = await call(() => api.invoke("work.translate", modelInput()));
     clearInterval(poll);
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
@@ -413,14 +412,9 @@ export function Workspace({
           <Text size="2" color="gray">
             {paragraphs.length === 0 ? "No text yet" : `${paragraphs.length} paragraphs · ${done} translated`}
           </Text>
-          <Button size="2" onClick={() => void translate(false)} disabled={working !== null || !model || paragraphs.length === 0 || done === paragraphs.length}>
+          <Button size="2" onClick={() => void translate()} disabled={working !== null || !model || paragraphs.length === 0 || done === paragraphs.length}>
             {working === "translate" ? "Translating…" : done > 0 && done < paragraphs.length ? "Carry on translating" : "Translate"}
           </Button>
-          {done > 0 && (
-            <Button size="2" variant="soft" color="gray" onClick={() => void translate(true)} disabled={working !== null || !model} title="Write every paragraph again, with the glossary as it is now">
-              Translate everything again
-            </Button>
-          )}
         </Flex>
         <Flex align="center" gap="2">
           <Text size="1" color="gray">
