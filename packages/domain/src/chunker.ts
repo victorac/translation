@@ -1,4 +1,6 @@
-import { estimateTokens } from "./tokens.js";
+import {
+  estimateTokens,
+} from "./tokens.js";
 
 export const CHUNKER_VERSION = "1";
 

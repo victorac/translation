@@ -1,5 +1,13 @@
-import { glossaryLines, targetVariants, wordNoteLines } from "./glossary.js";
-import { GLOSSARY_LABEL, NOTES_LABEL, WORD_NOTES_LABEL } from "./labels.js";
+import {
+  glossaryLines,
+  targetVariants,
+  wordNoteLines,
+} from "./glossary.js";
+import {
+  GLOSSARY_LABEL,
+  NOTES_LABEL,
+  WORD_NOTES_LABEL,
+} from "./labels.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
 export interface Paragraph {
@@ -28,13 +36,12 @@ type GlossaryItem = { source: string; target: string; note?: string | undefined;
 
 /**
  * The instruction for translating one paragraph of a block. The paragraph is translated into an empty place in the translation so
- * far, so the model has the paragraphs around it to fit in with. A translation style that is not the standard one is added as
- * guidance for tone only: the standard one is about translating a whole block, which is another task.
+ * far, so the model has the paragraphs around it to fit in with. The translation style is added as guidance for tone and wording.
  */
-export function paragraphSystem(styleGuidance: string | null, sourceLanguage: string, targetLanguage: string): string {
+export function paragraphSystem(styleGuidance: string, sourceLanguage: string, targetLanguage: string): string {
   return [
     `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), the ${sourceLanguage} text around the paragraph (for reference only), TRANSLATION SO FAR, which has an empty place between ${OPEN} and ${CLOSE}, and the ${sourceLanguage} PARAGRAPH TO TRANSLATE.`,
-    styleGuidance ? `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}` : "",
+    `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}`,
     `Your task: translate the paragraph into the empty place, so that it fits the translation before and after it. Translate all of it and only it. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not omit or sanitize anything, and do not add comments.`,
     `Reply with the translation of the paragraph between ${OPEN} and ${CLOSE}, and nothing else.`,
   ]

@@ -1,6 +1,15 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import {
+  readFileSync,
+} from "node:fs";
+import {
+  dirname,
+  resolve,
+} from "node:path";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 /** The window imports `pure.ts`; anything it reaches that needs Node stops the window from loading at all. */
 describe("pure.ts", () => {

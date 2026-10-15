@@ -1,4 +1,4 @@
-import type { Backend, BlockSize, DemoOptions, ModelSetting, ProjectSettings, PromptPreset } from "@ltw/domain";
+import type { Backend, BlockSize, ModelSetting, ProjectSettings, PromptPreset } from "@ltw/domain";
 
 /** Everything the user has chosen: the working text and how to translate it. */
 export interface SetupState {
@@ -11,7 +11,6 @@ export interface SetupState {
   /** The user's own translation styles. */
   prompts: PromptPreset[];
   blockSize: BlockSize;
-  demo: DemoOptions;
 }
 
 export const newModel = (name: string, promptId = "standard"): ModelSetting => ({
@@ -31,7 +30,6 @@ export const initialSetup: SetupState = {
   models: [],
   prompts: [],
   blockSize: "normal",
-  demo: { speed: "normal", smallBlocks: true, failBlockOnce: null, firstModelUnloaded: false },
 };
 
 /** The choices that belong to the project (the same fields, in the same order, as the project saves them). */
@@ -72,7 +70,6 @@ export function loadSetup(): SetupState {
         ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
         ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
         ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
-        ...(s.demo && typeof s.demo === "object" ? { demo: { ...initialSetup.demo, ...s.demo } } : {}),
       };
     }
   } catch {

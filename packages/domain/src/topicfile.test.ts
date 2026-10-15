@@ -1,7 +1,26 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_CLASSES_TEXT, LEGACY_CLASSES_TEXT, parseClasses } from "./classes.js";
-import type { KnowledgeEntry } from "./entries.js";
-import { applyFile, backlinksOf, CLASSES_ID, fileText, listFiles, newTopic, resolveName, type FileContext } from "./topicfile.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  DEFAULT_CLASSES_TEXT,
+  LEGACY_CLASSES_TEXT,
+  parseClasses,
+} from "./classes.js";
+import type {
+  KnowledgeEntry,
+} from "./entries.js";
+import {
+  applyFile,
+  backlinksOf,
+  CLASSES_ID,
+  fileText,
+  listFiles,
+  newTopic,
+  resolveName,
+  type FileContext,
+} from "./topicfile.js";
 
 let n = 0;
 const deps = { newId: () => `n${++n}`, now: () => "2026-02-01T00:00:00.000Z" };

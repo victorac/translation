@@ -1,5 +1,21 @@
-import { describe, expect, it } from "vitest";
-import { glossaryHits, occurrencesOf, guessGender, glossaryFor, withoutLongerNames, guessKind, interpretPassage, lastLines, notesFor, readingLetters, type KnownName } from "./guided.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  glossaryHits,
+  occurrencesOf,
+  guessGender,
+  glossaryFor,
+  withoutLongerNames,
+  guessKind,
+  interpretPassage,
+  lastLines,
+  notesFor,
+  readingLetters,
+  type KnownName,
+} from "./guided.js";
 
 const readings = { 鈴木花子: ["スズキ", "ハナコ"], 山田太郎: ["ヤマダ", "タロウ"], 山田家: ["ヤマダ", "カ"], 桜台学園: ["サクラダイ", "ガクエン"] };
 

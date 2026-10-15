@@ -44,7 +44,7 @@ function createWindow(): void {
   let closing = false;
   win.on("close", (event) => {
     if (closing) return;
-    const busy = projects.workspace.snapshot().busy;
+    const busy = projects.workspace.busy;
     if (!busy && !projects.isDirty()) return;
     event.preventDefault();
     void (async () => {
@@ -66,7 +66,7 @@ function createWindow(): void {
         if (r.response === 2) return;
         if (r.response === 0) {
           try {
-            if (busy) projects.workspace.cancel({ kind: "job" });
+            if (busy) projects.workspace.cancelAnalysis();
             await projects.save(false);
           } catch (e) {
             dialog.showErrorBox("Could not save", e instanceof Error ? e.message : "Unknown error");
@@ -137,14 +137,6 @@ app.whenReady().then(() => {
           title: "Save project",
           defaultPath: join(app.getPath("documents"), defaultName),
           filters: [{ name: "Translation project", extensions: ["json"] }],
-        });
-        return r.canceled ? undefined : r.filePath;
-      },
-      async chooseExportPath(defaultName, extension) {
-        const r = await dialog.showSaveDialog(mainWindow!, {
-          title: "Export",
-          defaultPath: join(app.getPath("documents"), defaultName),
-          filters: [{ name: extension === ".csv" ? "CSV spreadsheet" : extension === ".md" ? "Markdown" : "Text", extensions: [extension.slice(1)] }],
         });
         return r.canceled ? undefined : r.filePath;
       },

@@ -1,30 +1,44 @@
 import {
-  buildExport,
   buildProjectFile,
   MAX_PROJECT_BYTES,
   newId as defaultNewId,
   parseProject,
   PROJECT_EXTENSION,
   serializeProject,
-  settleLoadedRun,
-  type ExportInput,
-  type ExportPreview,
-  type ExportWriteResult,
   type ProjectFile,
   type ProjectView,
 } from "@ltw/domain";
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
-import { basename, dirname } from "node:path";
-import { UserError } from "./errors.js";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from "node:fs";
+import {
+  basename,
+  dirname,
+} from "node:path";
+import {
+  UserError,
+} from "./errors.js";
 import type { ProviderService } from "./provider-service.js";
-import { WorkspaceService, type ChangeKind, type ServiceOptions } from "./service.js";
+import {
+  WorkspaceService,
+  type ChangeKind,
+  type ServiceOptions,
+} from "./service.js";
 
 /** The two native file dialogs. The real app shows system dialogs; tests and dev mode answer directly. */
 export interface FileDialogs {
   chooseSavePath(defaultName: string): Promise<string | undefined>;
   chooseOpenPath(): Promise<string | undefined>;
-  /** `extension` includes the dot, for example ".csv". */
-  chooseExportPath(defaultName: string, extension: string): Promise<string | undefined>;
 }
 
 export interface ProjectServiceOptions {
@@ -135,14 +149,7 @@ export class ProjectService {
   }
 
   private recoveryView(file: ProjectFile): NonNullable<ProjectView["recovery"]> {
-    const doc = file.documents.find((d) => d.id === file.activeDocumentId) ?? file.documents[0]!;
-    const latest = doc.versions.at(-1);
-    return {
-      updatedAt: file.project.updatedAt,
-      blocks: latest?.source.blocks.length ?? 0,
-      models: latest?.runs.filter((r) => !r.archived).length ?? 0,
-      documents: file.documents.length,
-    };
+    return { updatedAt: file.project.updatedAt, blocks: (file.guided ?? []).reduce((n, g) => n + g.blocks.length, 0), documents: file.documents.length };
   }
 
   // ---- commands ----
@@ -240,43 +247,6 @@ export class ProjectService {
     this.emit();
   }
 
-  /** What an export would contain, without writing anything. Never starts any translation. */
-  exportPreview(input: ExportInput): ExportPreview {
-    return this.runExport(input).preview;
-  }
-
-  /** Writes the export file where the user chooses. Cancelling the dialog does nothing. */
-  async exportFile(input: ExportInput): Promise<ExportWriteResult> {
-    const { preview, content } = this.runExport(input);
-    if (preview.problem) throw new UserError("export_problem", preview.problem);
-    if (content === null) {
-      throw new UserError("partial_not_allowed", 'Some blocks have no translation yet. Tick "Export partial" to include them, marked as missing.');
-    }
-    const chosen = await this.options.dialogs.chooseExportPath(preview.fileName, preview.extension);
-    if (!chosen) return { path: null, bytes: 0 };
-    const path = chosen.toLowerCase().endsWith(preview.extension) ? chosen : `${chosen}${preview.extension}`;
-    try {
-      writeFileDurably(path, content);
-    } catch (e) {
-      throw new UserError("export_failed", `Could not write ${path}: ${e instanceof Error ? e.message : "unknown error"}. Try another folder.`);
-    }
-    return { path, bytes: preview.bytes };
-  }
-
-  private runExport(input: ExportInput) {
-    if (!this.workspace.hasRevision) throw new UserError("nothing_to_export", "There is nothing to export yet. Run the open document first.");
-    const state = this.workspace.exportViewed();
-    return buildExport(state.revision, state.runs, {
-      format: input.format,
-      runIds: input.runIds,
-      textVersion: input.textVersion,
-      allowPartial: input.allowPartial,
-      formulaSafe: input.formulaSafe,
-      title: this.view().title,
-      now: this.now(),
-    });
-  }
-
   restoreRecovery(): void {
     const p = this.pending;
     if (!p) throw new UserError("no_recovery", "There is no recovered work to restore.");
@@ -308,7 +278,7 @@ export class ProjectService {
   // ---- internals ----
 
   private requireNotBusy(): void {
-    if (this.workspace.snapshot().busy) throw new UserError("busy", "Cancel the running translation first.");
+    if (this.workspace.busy) throw new UserError("busy", "Stop what the model is doing first.");
   }
 
   /** Opening or starting something new must not silently bury recovered work. */
@@ -328,7 +298,7 @@ export class ProjectService {
       ...(file.settings ? { settings: file.settings } : {}),
       ...(file.knowledge ? { knowledge: file.knowledge } : {}),
       ...(file.guided ? { guided: file.guided } : {}),
-      documents: file.documents.map((d) => ({ ...d, versions: d.versions.map((v) => ({ ...v, runs: v.runs.map((r) => settleLoadedRun(r)) })) })),
+      documents: file.documents,
     });
     // A name that is only the file's name (or the word Untitled) is not a name the user gave, so renaming the file renames the project.
     const own = !file.project.title || file.project.title === "Untitled" || (path !== null && file.project.title === stripExtension(basename(path))) ? null : file.project.title;
@@ -339,13 +309,6 @@ export class ProjectService {
     this.autosaveError = null;
     this.cancelTimer();
     this.notice = null;
-    const used = file.providerLabel;
-    const current = this.options.provider?.view().baseUrl;
-    const runs = file.documents.flatMap((d) => d.versions.flatMap((v) => v.runs));
-    if (runs.some((r) => r.providerRefId === "main") && used && current && used !== current) {
-      this.notice = `This project was made with the server at ${used}. Retries will use your current server at ${current}.`;
-    }
-    if (runs.length > 0 && runs.every((r) => r.providerRefId === "practice")) this.notice = "This project used the practice translator.";
   }
 
   private buildFile(): ProjectFile {
@@ -353,14 +316,12 @@ export class ProjectService {
     const now = this.now().toISOString();
     this.meta.id ??= this.newId();
     this.meta.createdAt ??= now;
-    const usesServer = state.documents.some((d) => d.versions.some((v) => v.runs.some((r) => r.providerRefId === "main")));
     return buildProjectFile({
       id: this.meta.id,
       title: this.view().title,
       createdAt: this.meta.createdAt,
       updatedAt: now,
       version: this.changes,
-      ...(usesServer && this.options.provider ? { providerLabel: this.options.provider.view().baseUrl } : {}),
       settings: state.settings,
       knowledge: state.knowledge,
       guided: state.guided,

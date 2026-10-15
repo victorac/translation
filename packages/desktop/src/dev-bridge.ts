@@ -20,7 +20,6 @@ const projects = new ProjectService({
   recoveryPath: `${devData}recovery/unsaved-project.ltw.json`,
   dialogs: {
     chooseSavePath: async (name) => `${devData}projects/${name}`,
-    chooseExportPath: async (name) => `${devData}exports/${name}`,
     chooseOpenPath: async () => {
       const dir = `${devData}projects`;
       const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".ltw.json")) : [];

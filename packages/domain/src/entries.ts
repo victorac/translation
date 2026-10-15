@@ -1,5 +1,10 @@
-import { parseKnowledge, serializeNotes, serializeTerm, type BlockMaterial, type KnowledgeNote } from "./knowledge.js";
-import type { GlossaryEntry } from "./state.js";
+import {
+  parseKnowledge,
+  serializeTerm,
+} from "./knowledge.js";
+import type {
+  GlossaryEntry,
+} from "./glossary.js";
 
 /** What kind of topic a term is. It is the name of a class (character, place, organization, family, term, or one you define). */
 export type TermCategory = string;
@@ -126,25 +131,6 @@ export function termNote(e: Pick<KnowledgeEntry, "attrs" | "hint">): string {
   return [...attrs, e.hint.trim()].filter(Boolean).join("; ");
 }
 
-/** The terms and notes in the form a translation run keeps (used as a backup when no one has chosen background for a block). */
-export function splitEntries(entries: readonly KnowledgeEntry[]): { glossary: GlossaryEntry[]; notes: string } {
-  const glossary: GlossaryEntry[] = [];
-  const notes: KnowledgeNote[] = [];
-  for (const e of entries) {
-    if (e.kind === "term") glossary.push({ source: e.source.trim(), target: e.target.trim(), ...(termNote(e) ? { note: termNote(e) } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) });
-    else if (e.kind === "note") notes.push({ text: e.text.trim() });
-  }
-  return { glossary, notes: serializeNotes(notes) };
-}
-
-/** One line per term and note, in the format people paste in and copy out. Scenes and summaries are not included. */
-export function entriesToText(entries: readonly KnowledgeEntry[]): string {
-  const terms = entries.filter((e) => e.kind === "term").map((e) => serializeTerm({ source: e.source, target: e.target, ...(e.hint ? { note: e.hint } : {}), ...(e.aliases.length > 0 ? { aliases: e.aliases } : {}) }));
-  const named = new Map(entries.filter((e) => e.kind === "term").map((e) => [e.id, e.target]));
-  const notes = entries.filter((e) => e.kind === "note").map((e) => `> ${e.about && named.has(e.about) ? `${named.get(e.about)}: ` : ""}${e.text}`);
-  return [...terms, ...(terms.length > 0 && notes.length > 0 ? [""] : []), ...notes].join("\n");
-}
-
 export interface EntryDeps {
   newId: () => string;
   now: () => string;
@@ -195,30 +181,6 @@ export function normalizeEntry(e: Partial<KnowledgeEntry> & Pick<KnowledgeEntry,
     origin: e.origin,
     status: e.status,
     updatedAt: e.updatedAt,
-  };
-}
-
-/**
- * The background that goes with one block, worked out from what the researcher chose for it:
- *  - the block's own scene, and the summary of its document
- *  - the terms the researcher chose, plus the people present in the scene
- *  - the facts about those terms, and any plain notes the researcher chose
- * Returns null if no one has looked at this block yet (then a backup is used).
- */
-export function blockMaterial(entries: readonly KnowledgeEntry[], chosenIds: readonly string[] | null, blockHash: string, documentId: string | null): BlockMaterial | null {
-  if (entries.length === 0) return null;
-  const scene = entries.find((e) => e.kind === "scene" && (e.scope?.blockHashes?.includes(blockHash) || e.scope?.blockHash === blockHash));
-  const summary = documentId ? entries.find((e) => e.kind === "summary" && e.scope?.documentId === documentId) : undefined;
-  if (chosenIds === null && !scene) return null;
-  const chosen = new Set([...(chosenIds ?? []), ...(scene?.related ?? [])]);
-  const terms = entries.filter((e) => e.kind === "term" && chosen.has(e.id));
-  const termIds = new Set(terms.map((t) => t.id));
-  const facts = entries.filter((e) => e.kind === "note" && e.about !== null && termIds.has(e.about)).map((e) => `${terms.find((t) => t.id === e.about)!.target}: ${e.text.trim()}`);
-  return {
-    glossary: splitEntries(terms).glossary,
-    notes: facts,
-    ...(scene ? { scene: scene.text.trim() } : {}),
-    ...(summary ? { summary: summary.text.trim() } : {}),
   };
 }
 

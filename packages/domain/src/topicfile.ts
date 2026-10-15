@@ -1,5 +1,14 @@
-import { classLabel, parseClasses, type AttributeDef, type ClassDef } from "./classes.js";
-import type { EntryDeps, EntryOrigin, KnowledgeEntry } from "./entries.js";
+import {
+  classLabel,
+  parseClasses,
+  type AttributeDef,
+  type ClassDef,
+} from "./classes.js";
+import type {
+  EntryDeps,
+  EntryOrigin,
+  KnowledgeEntry,
+} from "./entries.js";
 
 /**
  * Every topic is a small text file, a little like a note in Obsidian: the attributes of its class are written at the

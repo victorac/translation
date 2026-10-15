@@ -1,6 +1,6 @@
-import { relevantEntries } from "./glossary.js";
-import type { GlossaryEntry } from "./state.js";
-import { estimateTokens } from "./tokens.js";
+import type {
+  GlossaryEntry,
+} from "./glossary.js";
 
 /**
  * Names, hints and notes can be written as lines, for pasting in and copying out:
@@ -71,66 +71,3 @@ export const serializeNote = (n: KnowledgeNote): string => `> ${n.text}`;
 export const serializeNotes = (notes: readonly KnowledgeNote[]): string => notes.map(serializeNote).join("\n");
 export const serializeTerm = (g: GlossaryEntry): string => `${[g.source, ...(g.aliases ?? [])].join(" / ")} = ${g.target}${g.note ? ` # ${g.note}` : ""}`;
 
-/** What a run keeps from the project's knowledge: the terms, and the notes written as lines. */
-export function splitKnowledge(text: string): { glossary: GlossaryEntry[]; notes: string } {
-  const k = parseKnowledge(text);
-  return { glossary: k.glossary, notes: serializeNotes(k.notes) };
-}
-
-/** The background that goes with one block: only the entries that were chosen for it. */
-export interface BlockMaterial {
-  glossary: GlossaryEntry[];
-  notes: string[];
-  /** What is going on around this block (where, who is present, who speaks to whom). */
-  scene?: string;
-  /** An abridged version of the whole document the block is in. */
-  summary?: string;
-}
-
-export interface BlockKnowledge extends BlockMaterial {
-  /** How many chosen entries did not fit in the allowance and were left out. */
-  omitted: number;
-}
-
-/** The most tokens of background one request may carry: a fifth of the context, and never more than 1000. */
-export const knowledgeCap = (contextLimit: number): number => Math.max(0, Math.min(1000, Math.floor(contextLimit * 0.2)));
-
-/**
- * Room to set aside for background in a model's context. With a knowledge base that is the full allowance, because
- * scenes and summaries are not known when blocks are planned. Without one it is only what the terms and notes need.
- */
-export function knowledgeReserve(glossary: readonly GlossaryEntry[], notes: string, contextLimit: number, hasKnowledge = false): number {
-  if (hasKnowledge) return knowledgeCap(contextLimit);
-  const all = estimateTokens([...glossary.map(serializeTerm), ...parseKnowledge(notes).notes.map((n) => n.text)].join("\n"));
-  return Math.min(all, knowledgeCap(contextLimit));
-}
-
-/** Keeps what fits the allowance: the scene first, then terms, then notes, then the summary. */
-export function fitMaterial(material: BlockMaterial, capTokens: number): BlockKnowledge {
-  let left = capTokens;
-  let omitted = 0;
-  const take = <T>(items: readonly T[], cost: (t: T) => number): T[] => {
-    const kept: T[] = [];
-    for (const it of items) {
-      const c = cost(it);
-      if (c <= left) {
-        left -= c;
-        kept.push(it);
-      } else omitted++;
-    }
-    return kept;
-  };
-  const scene = take(material.scene ? [material.scene] : [], (t) => estimateTokens(t))[0];
-  const glossary = take(material.glossary, (g) => estimateTokens(serializeTerm(g)));
-  const notes = take(material.notes, (n) => estimateTokens(n));
-  const summary = take(material.summary ? [material.summary] : [], (t) => estimateTokens(t))[0];
-  return { glossary, notes, ...(scene ? { scene } : {}), ...(summary ? { summary } : {}), omitted };
-}
-
-/**
- * A backup for when no one has looked through the knowledge for a block: the terms that appear in its text, and all notes.
- * The normal way is for a model to choose what matters for each block.
- */
-export function backupMaterial(glossary: readonly GlossaryEntry[], notesText: string, blockText: string): BlockMaterial {
-  return { glossary: relevantEntries(glossary, blockText), notes: parseKnowledge(notesText).notes.map((n) => n.text) };
-}

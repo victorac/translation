@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { stripThinking } from "./thinking.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  stripThinking,
+} from "./thinking.js";
 
 describe("stripThinking", () => {
   it("removes a leading thinking section", () => {

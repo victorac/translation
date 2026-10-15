@@ -1,8 +1,23 @@
-import { describe, expect, it } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 import fc from "fast-check";
-import { chunkSource, defaultIsChapterSeparator, type ChunkBlock } from "./chunker.js";
-import { estimateTokens } from "./tokens.js";
-import { dialogueJa, mixedUnicode, quotedAttribution, withChapters } from "../fixtures/samples.js";
+import {
+  chunkSource,
+  defaultIsChapterSeparator,
+  type ChunkBlock,
+} from "./chunker.js";
+import {
+  estimateTokens,
+} from "./tokens.js";
+import {
+  dialogueJa,
+  mixedUnicode,
+  quotedAttribution,
+  withChapters,
+} from "../fixtures/samples.js";
 
 const texts = (src: string, blocks: ChunkBlock[]) => blocks.map((b) => src.slice(b.startOffset, b.endOffset));
 

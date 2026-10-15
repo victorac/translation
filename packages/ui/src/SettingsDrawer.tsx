@@ -1,13 +1,32 @@
-import { useEffect, useRef } from "react";
-import { Cross2Icon } from "@radix-ui/react-icons";
-import { Flex, IconButton, SegmentedControl, Switch, Tabs, Text, TextField } from "@radix-ui/themes";
-import type { BlockSize, DemoOptions } from "@ltw/domain";
-import { Connection } from "./Connection";
-import { PromptsPanel } from "./PromptsPanel";
-import { newModel, type SetupState } from "./setup";
+import {
+  useEffect,
+  useRef,
+} from "react";
+import {
+  Cross2Icon,
+} from "@radix-ui/react-icons";
+import {
+  Flex,
+  IconButton,
+  SegmentedControl,
+  Tabs,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
+import type { BlockSize } from "@ltw/domain";
+import {
+  Connection,
+} from "./Connection";
+import {
+  PromptsPanel,
+} from "./PromptsPanel";
+import {
+  newModel,
+  type SetupState,
+} from "./setup";
 import type { useProvider } from "./useProvider";
 
-export type SettingsTab = "server" | "text" | "styles" | "practice";
+export type SettingsTab = "server" | "text" | "styles";
 
 /** A labelled field: what it is above, the box below. */
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -49,7 +68,6 @@ export function SettingsDrawer({
   }, [onClose]);
 
   const set = (patch: Partial<SetupState>) => onSetup((s) => ({ ...s, ...patch }));
-  const setDemo = (patch: Partial<DemoOptions>) => set({ demo: { ...setup.demo, ...patch } });
 
   return (
     <aside className="drawer" role="dialog" aria-label="Settings" tabIndex={-1} ref={ref}>
@@ -59,7 +77,6 @@ export function SettingsDrawer({
             <Tabs.Trigger value="server">Server</Tabs.Trigger>
             <Tabs.Trigger value="text">Text</Tabs.Trigger>
             <Tabs.Trigger value="styles">Styles</Tabs.Trigger>
-            {setup.backend === "practice" && <Tabs.Trigger value="practice">Practice</Tabs.Trigger>}
           </Tabs.List>
           <IconButton variant="ghost" color="gray" aria-label="Close settings" title="Close (Esc)" onClick={onClose}>
             <Cross2Icon />
@@ -108,24 +125,6 @@ export function SettingsDrawer({
                 set({ prompts, models: setup.models.map((m) => (ids.has(m.promptId) ? m : { ...m, promptId: "standard" })) });
               }}
             />
-          </Tabs.Content>
-
-          <Tabs.Content value="practice">
-            <Flex direction="column" gap="4">
-              <Field label="Speed">
-                <SegmentedControl.Root value={setup.demo.speed} onValueChange={(v) => setDemo({ speed: v as DemoOptions["speed"] })}>
-                  <SegmentedControl.Item value="fast">Fast</SegmentedControl.Item>
-                  <SegmentedControl.Item value="normal">Normal</SegmentedControl.Item>
-                  <SegmentedControl.Item value="slow">Slow</SegmentedControl.Item>
-                </SegmentedControl.Root>
-              </Field>
-              <Text as="label" size="2">
-                <Flex gap="2" align="center">
-                  <Switch checked={setup.demo.smallBlocks} onCheckedChange={(c) => setDemo({ smallBlocks: c })} />
-                  Tiny blocks
-                </Flex>
-              </Text>
-            </Flex>
           </Tabs.Content>
         </div>
       </Tabs.Root>

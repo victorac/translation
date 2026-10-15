@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 import fc from "fast-check";
-import { normalizeSource } from "./normalize.js";
+import {
+  normalizeSource,
+} from "./normalize.js";
 
 describe("normalizeSource", () => {
   it("converts CRLF and lone CR to LF", () => {

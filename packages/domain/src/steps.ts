@@ -42,23 +42,6 @@ export function splitSentences(text: string): Sentence[] {
   return out;
 }
 
-/** The sentences that contain any of the names, with the sentence before the first one for context. */
-export function windowAround(sentences: readonly Sentence[], names: readonly string[], maxChars = 900): string {
-  const hits = sentences.map((s, i) => (names.some((n) => s.text.includes(n)) ? i : -1)).filter((i) => i >= 0);
-  if (hits.length === 0) return sentences.map((s) => s.text).join("\n").slice(0, maxChars);
-  const keep = new Set<number>();
-  for (const h of hits) {
-    keep.add(h);
-    if (h > 0) keep.add(h - 1);
-  }
-  let out = "";
-  for (const i of [...keep].sort((a, b) => a - b)) {
-    if (out.length + sentences[i]!.text.length > maxChars && out !== "") break;
-    out += `${out ? "\n" : ""}${sentences[i]!.text}`;
-  }
-  return out;
-}
-
 // ---- candidate names ----
 
 /** What a Japanese word analyzer reports for one word. */
@@ -227,32 +210,8 @@ export function reversed(q: Question): { question: Question; back: number[] } {
 export const supported = (statement: string, subject: string, passage: string): Question =>
   choice("supported", "You check statements against a text.", `Statement about 「${subject}」: ${statement}\n\nIs the statement supported by this passage?\n\nPASSAGE:\n${passage}`, ["Yes, the passage says or clearly implies it", "No, the passage does not say it"]);
 
-export const listNames = (passage: string, sourceLanguage: string): Question => ({
-  id: "list-names",
-  kind: "list",
-  system: `You find names in ${sourceLanguage} fiction. ${RULE}`,
-  user: `List every name of a person, place, organization or family that appears in this passage, one per line, written exactly as in the passage. If there are none, write NONE.\n\nPASSAGE:\n${passage}`,
-  maxTokens: 200,
-});
-
 export const classify = (name: string, context: string, options: string[]): Question =>
   choice("classify", "You classify words in fiction.", `In this passage, what is 「${name}」?\n\nPASSAGE:\n${context}`, options);
-
-export const sameAs = (name: string, context: string, known: { label: string }[]): Question =>
-  choice(
-    "same-as",
-    "You decide whether two names refer to the same thing.",
-    `In this passage, is 「${name}」 the same person or thing as one of the known entries below?\n\nPASSAGE:\n${context}`,
-    [...known.map((k) => k.label), "None of them: it is a new one"],
-  );
-
-export const englishName = (name: string, kind: string, context: string, targetLanguage: string, strict = false): Question => ({
-  id: "english-name",
-  kind: "text",
-  system: `You translate names in fiction into ${targetLanguage}. ${RULE}`,
-  user: `Give the ${targetLanguage} name that should be used for 「${name}」 (${kind}) in a ${targetLanguage} translation: romanize the names of people, and translate the meaning of places and organizations when that reads naturally. Reply with the name only.${strict ? ` Your first answer was not a plain name. Reply with the name and nothing else: at most 4 words, no explanation.` : ""}\n\nPASSAGE:\n${context}`,
-  maxTokens: 30,
-});
 
 export const describe = (name: string, kind: string, context: string, targetLanguage: string, strict = false): Question => ({
   id: "describe",
@@ -281,9 +240,6 @@ export function firstPersonInNarration(text: string): string | null {
   const narration = text.replace(/「[^」]*」/g, "").replace(/『[^』]*』/g, "");
   return ["ぼく", "僕", "私", "わたし", "俺", "おれ", "オレ", "あたし", "わたくし"].find((w) => narration.includes(w)) ?? null;
 }
-
-export const narratorQuestion = (word: string, people: string[], context: string): Question =>
-  choice("narrator", "You read fiction closely.", `This passage is told in the first person: the narrator calls himself or herself 「${word}」. Which of these people is the narrator?\n\nPASSAGE:\n${context}`, [...people, "None of them, or it cannot be told"]);
 
 export interface Speaker {
   id: string;
@@ -375,19 +331,6 @@ export function takeTurns(passage: string, quotes: readonly Quote[], who: readon
   return out;
 }
 
-/** Who says this line? `context` shows the passage with the line marked and the speakers settled so far written before their lines. */
-export const speakerQuestion = (line: string, people: string[], context: string): Question =>
-  choice("speaker", "You read fiction closely.", `Who says the line marked >> << in this passage: ${line}\n\nThe people who may be speaking are listed below. Lines are often said by the two people taking turns, and a person named inside a line is usually the one spoken to, not the one speaking.\n\nPASSAGE:\n${context}`, [...people, "It cannot be told"]);
-
-/** Do two descriptions of passages that follow each other belong to one scene? */
-export const sameSceneByDescription = (first: string, second: string): Question =>
-  choice(
-    "same-scene",
-    "You follow the scenes of a story.",
-    `These are descriptions of two passages of a story that follow each other. Do they take place in the same place and at the same time, as one continuous scene?\n\nFIRST: ${first}\nSECOND: ${second}`,
-    ["Yes, one continuous scene", "No, the second one is a different scene"],
-  );
-
 /** Shortens scene descriptions, without adding anything to them. */
 export const condense = (title: string, scenes: readonly string[], maxWords: number, targetLanguage: string): Question => ({
   id: "condense",
@@ -395,21 +338,6 @@ export const condense = (title: string, scenes: readonly string[], maxWords: num
   system: `You shorten scene descriptions of a chapter into one summary written in ${targetLanguage}. Use only what the descriptions say. Do not add any detail, name, reason or ending that is not in them. ${RULE}`,
   user: `Shorten these scene descriptions of the chapter 「${title}」 into one summary of at most ${maxWords} words, keeping every event. Reply with the summary only.\n\nSCENES:\n${scenes.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
   maxTokens: Math.min(500, Math.round(maxWords * 2.5) + 40),
-});
-
-export const sceneText = (
-  passage: string,
-  targetLanguage: string,
-  names: { source: string; target: string }[] = [],
-  narrator: { word: string; name: string } | null = null,
-  strict = false,
-  labelled = false,
-): Question => ({
-  id: "scene-text",
-  kind: "text",
-  system: `You describe what happens in a passage of a story, in ${targetLanguage}. ${RULE}`,
-  user: `In at most 35 words, say what happens in this passage: who does what, and to whom. Be careful about who is waiting for whom, who arrives and who is speaking. Do not quote the passage and do not use any Japanese characters.${names.length > 0 ? `\n\nWrite names like this: ${names.map((n) => `${n.source} = ${n.target}`).join("; ")}.` : ""}${narrator ? ` The narrator, the one who says ${narrator.word} about himself or herself, is ${narrator.name}.` : ""}${labelled ? ` Lines written as [Name] 「…」 are said by that person.` : ""}${strict ? `\n\nYour first answer could not be used. Write only ${targetLanguage}, with no Japanese or Chinese characters at all, and describe only what the passage says.` : ""}\n\nPASSAGE:\n${passage.slice(0, 1500)}`,
-  maxTokens: 120,
 });
 
 const KANA: Record<string, string> = {
@@ -458,78 +386,3 @@ export function nameFromReadings(readings: readonly string[], family: boolean): 
   return family ? `${name} family` : name;
 }
 
-/** Words that tell a description is about a person, which a place, an organization or a family is not. */
-export const PERSON_WORDS = /\b(student|boy|girl|man|woman|male|female|he|she|his|her|him|heir|son|daughter|protagonist|narrator|person)\b/i;
-
-/** A name is short and plain: no sentence, no list, no explanation. */
-export function plausibleName(reply: string, name: string): boolean {
-  const lines = reply.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length !== 1 || name.length > 60) return false;
-  return !/[,;:!?、。]/.test(name) && name.split(/\s+/).length <= 5 && !/\b(is|are|was|were|am|i|my|me|who|that|which)\b/i.test(name);
-}
-
-/**
- * What a person does in a passage, when the way their name is written settles it, so the model need not be asked:
- * a name followed by は or が is the one acting (0), and a name inside a quotation just before 」 or 、 is being spoken to (1).
- * Anything else is left to the model (null).
- */
-export function roleByForm(sentences: readonly Sentence[], names: readonly string[]): number | null {
-  const lonely = (s: string, n: string, after: string) => {
-    for (let i = s.indexOf(n); i >= 0; i = s.indexOf(n, i + 1)) {
-      const before = s[i - 1] ?? "";
-      if (before !== "" && KANJI_OR_KATAKANA.test(before) && KANJI_OR_KATAKANA.test(n[0]!)) continue;
-      const next = s.slice(i + n.length, i + n.length + 3);
-      if (new RegExp(`^(?:${after})`).test(next)) return true;
-    }
-    return false;
-  };
-  for (const s of sentences) for (const n of names) if (lonely(s.text, n, "は|が|も")) return 0;
-  for (const s of sentences) {
-    if (!/[「『]/.test(s.text)) continue;
-    for (const n of names) if (lonely(s.text, n, "」|』|、|，|さん|くん|ちゃん|様|君")) return 1;
-  }
-  return null;
-}
-
-// ---- reading answers ----
-
-/** Which option a reply chose (a letter or a number), or null if it chose none of them. */
-export function parseChoice(reply: string, count: number): number | null {
-  const m = /^\s*[(\[]?\s*([A-Za-z]|\d{1,2})\s*[)\].:|,]?(?![A-Za-z0-9])/.exec(reply);
-  if (!m) return null;
-  const token = m[1]!;
-  const index = /\d/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
-  return index >= 0 && index < count ? index : null;
-}
-
-/** A choice followed by "|" and a quote. */
-export function parseChoiceWithQuote(reply: string, count: number): { index: number; quote: string } | null {
-  const bar = reply.indexOf("|");
-  const index = parseChoice(bar >= 0 ? reply.slice(0, bar) : reply, count);
-  if (index === null) return null;
-  return { index, quote: (bar >= 0 ? reply.slice(bar + 1) : "").trim().replace(/^["「『]+|["」』]+$/g, "").trim() };
-}
-
-/** True if the quote is really in the passage (ignoring spaces and line breaks). */
-export function quoteInPassage(passage: string, quote: string): boolean {
-  const squash = (s: string) => s.replace(/\s+/g, "");
-  const q = squash(quote.replace(/^["「『]+|["」』]+$/g, ""));
-  return q.length >= 2 && squash(passage).includes(q);
-}
-
-export function parseNameList(reply: string): string[] {
-  return reply
-    .split(/\r?\n/)
-    .map((l) => l.trim().replace(/^[-*•\d.)\s]+/, "").trim())
-    .filter((l) => l !== "" && !/^none\.?$/i.test(l));
-}
-
-/** The first line of a short answer, without quotes, or null if there is nothing usable. */
-export function parseShortText(reply: string, maxChars: number, dropFinalPeriod = false): string | null {
-  const line = reply.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "");
-  if (!line) return null;
-  const clean = line.replace(/^["'「『“]+|["'」』”]+$/g, "").replace(/^(answer|name|description)\s*[:：]\s*/i, "").trim();
-  const result = dropFinalPeriod ? clean.replace(/[.。]+$/, "").trim() : clean;
-  if (result === "" || /^unknown\.?$/i.test(result) || result.length > maxChars) return null;
-  return result;
-}

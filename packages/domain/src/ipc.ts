@@ -1,29 +1,34 @@
-import type { EntryCounts, EntryInput, EntryQuery, KnowledgeEntry } from "./entries.js";
-import type { AttributeDef } from "./classes.js";
-import type { FileInfo } from "./topicfile.js";
-import type { ProjectSettings } from "./project.js";
-import type { PromptPreset } from "./prompts.js";
-import type { BlockState, GlossaryEntry, RunState } from "./state.js";
-import type { BoundaryKind } from "./chunker.js";
-import type { BlockSize } from "./defaults.js";
-import type { GuidedState } from "./guided.js";
-import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
+import type {
+  EntryCounts,
+  EntryQuery,
+  KnowledgeEntry,
+} from "./entries.js";
+import type {
+  AttributeDef,
+} from "./classes.js";
+import type {
+  FileInfo,
+} from "./topicfile.js";
+import type {
+  ProjectSettings,
+} from "./project.js";
+import type {
+  PromptPreset,
+} from "./prompts.js";
+import type {
+  GlossaryEntry,
+} from "./glossary.js";
+import type {
+  BlockSize,
+} from "./defaults.js";
+import type {
+  GuidedState,
+} from "./guided.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
 
 export type IpcError = { code: string; message: string };
 export type IpcResult<T> = { requestId: string; ok: true; value: T } | { requestId: string; ok: false; error: IpcError };
-
-/** Settings for the practice translator, so the app can be tried without a real model. */
-export interface DemoOptions {
-  speed: "fast" | "normal" | "slow";
-  /** Use small blocks so even a short pasted text splits into several. */
-  smallBlocks: boolean;
-  /** The first model's Nth block (1-based) fails halfway, once. Null for no failure. */
-  failBlockOnce: number | null;
-  /** The first model starts "not loaded" so you can see the Waiting state. */
-  firstModelUnloaded: boolean;
-}
 
 /** How one model run is configured. Each model can have its own limits. */
 export interface ModelSetting {
@@ -41,28 +46,6 @@ export interface ModelSetting {
 }
 
 export type Backend = "provider" | "practice";
-
-/** What the splitting preview shows: the blocks the run would use, and why they are that size. */
-export interface SplitPreview {
-  /** Nothing in the way of running (text present, everything fits). */
-  ok: boolean;
-  /** Why there is no preview, or null. */
-  problem: string | null;
-  blocks: { index: number; text: string; estimatedTokens: number; boundaryKind: BoundaryKind }[];
-  characters: number;
-  bytes: number;
-  /** Sizes actually used, after the models' limits were applied. */
-  targetTokens: number;
-  maxTokens: number;
-  /** The model whose limits set the block size, if any. */
-  limitingModel: string | null;
-  /** Per model: how much of its context a block may use. */
-  models: { label: string; contextLimit: number; outputReserve: number; fixedTokens: number; sourceBudget: number; contextReserve: number; fits: boolean }[];
-  /** Things that stop the run, in plain words. */
-  issues: string[];
-  /** Things worth a look, in plain words. */
-  notes: string[];
-}
 
 /** Which model translates a block in the step-by-step way, and how. */
 export interface GuidedModelInput {
@@ -117,28 +100,6 @@ export interface KnowledgeSummary extends EntryCounts {
   rev: number;
 }
 
-export interface StartJobInput {
-  text: string;
-  sourceLanguage: string;
-  targetLanguage: string;
-  /** `provider` = the saved LM Studio / local server connection; `practice` = the built-in fake translator. */
-  backend: Backend;
-  /** One entry per model run, in the order they will be translated. */
-  models: ModelSetting[];
-  glossary: GlossaryEntry[];
-  /** Background about the story and its people, sent with every block. */
-  notes?: string | undefined;
-  /** The knowledge text the terms and notes came from; kept so the project can show it as it was written. */
-  knowledge?: string | undefined;
-  /** The user's own translation styles (the built-in ones are always available). */
-  prompts: PromptPreset[];
-  /** How big each block should be. The models' own limits can make blocks smaller. */
-  blockSize: BlockSize;
-  /** Names of existing model runs to translate again from the start with the current settings. */
-  rerun: string[];
-  demo: DemoOptions;
-}
-
 /** The saved connection to a local model server. The API key itself is never sent to the window. */
 export interface ProviderView {
   baseUrl: string;
@@ -168,51 +129,28 @@ export interface ConnectionTestResult {
   models: string[];
 }
 
-/** The choices that decide how blocks are translated. Sent whenever they change, so retries use them. */
-export type SyncSettingsInput = Pick<StartJobInput, "sourceLanguage" | "targetLanguage" | "models" | "glossary" | "notes" | "knowledge" | "prompts" | "blockSize">;
-
-export type CancelInput = { kind: "job" } | { kind: "run"; runId: string } | { kind: "block"; runId: string; blockId: string };
-
-/** What to put in an exported file. */
-export interface ExportInput {
-  format: ExportFormat;
-  runIds: string[];
-  textVersion: ExportTextVersion;
-  /** Include blocks that have no translation, marked as missing. */
-  allowPartial: boolean;
-  /** CSV: protect against spreadsheet formulas. */
-  formulaSafe: boolean;
-}
-
-export interface ExportWriteResult {
-  /** Where the file was written, or null if the user cancelled the dialog. */
-  path: string | null;
-  bytes: number;
+/** The choices that decide how blocks are translated. Sent whenever they change, so the project keeps them. */
+export interface SyncSettingsInput {
+  sourceLanguage: string;
+  targetLanguage: string;
+  models: ModelSetting[];
+  glossary: GlossaryEntry[];
+  /** Background about the story and its people. Only projects from before the knowledge base have any. */
+  notes?: string | undefined;
+  knowledge?: string | undefined;
+  /** The user's own translation styles (the built-in ones are always available). */
+  prompts: PromptPreset[];
+  blockSize: BlockSize;
 }
 
 export interface CommandMap {
   "workspace.snapshot": undefined;
-  "workspace.reset": undefined;
-  "job.start": StartJobInput;
   "settings.sync": SyncSettingsInput;
   "document.create": { title?: string };
   "document.select": { documentId: string };
   "document.rename": { documentId: string; title: string };
   "document.delete": { documentId: string };
   "document.setText": { documentId: string; text: string };
-  "job.cancel": CancelInput;
-  "block.retry": { runId: string; blockId: string };
-  "block.acceptCandidate": { runId: string; blockId: string };
-  "block.keepCurrent": { runId: string; blockId: string };
-  "block.acceptReview": { runId: string; blockId: string };
-  "block.edit": { runId: string; blockId: string; text: string };
-  "run.retryUnfinished": { runId: string };
-  "run.retranslateDownstream": { runId: string };
-  "run.resolveWaiting": { runId: string; resolution: "retry" | "skip" };
-  "run.archive": { runId: string };
-  "run.restore": { runId: string };
-  "version.view": { versionId: string };
-  "demo.loadModel": undefined;
   "project.save": { saveAs: boolean };
   "project.open": { useBackup: boolean };
   "project.new": undefined;
@@ -220,9 +158,6 @@ export interface CommandMap {
   "project.restoreRecovery": undefined;
   "project.discardRecovery": undefined;
   "project.dismissProblem": undefined;
-  "export.preview": ExportInput;
-  "export.write": ExportInput;
-  "source.preview": StartJobInput;
   "notes.cancel": undefined;
   "guided.get": undefined;
   "guided.go": { index: number };
@@ -248,10 +183,7 @@ export interface CommandMap {
   "knowledge.delete": { id: string };
   "knowledge.resolve": { name: string };
   "knowledge.list": EntryQuery;
-  "knowledge.save": EntryInput;
-  "knowledge.remove": { ids: string[] };
   "knowledge.confirm": { ids?: string[] };
-  "knowledge.import": { text: string };
   "provider.get": undefined;
   "provider.save": SaveProviderInput;
   "provider.test": undefined;
@@ -259,9 +191,8 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setPart" | "guided.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setPart" | "guided.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
-  "source.preview": SplitPreview;
   "notes.cancel": { canceled: boolean };
   "guided.get": GuidedState | null;
   "guided.go": GuidedState;
@@ -285,80 +216,11 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "knowledge.delete": { removed: boolean };
   "knowledge.resolve": { id: string | null; title: string | null };
   "knowledge.list": KnowledgeList;
-  "knowledge.save": { entry: KnowledgeEntry };
-  "knowledge.remove": { removed: number };
   "knowledge.confirm": { confirmed: number };
-  "knowledge.import": { added: number; unreadable: number };
-  "export.preview": ExportPreview;
-  "export.write": ExportWriteResult;
   "provider.get": ProviderView;
   "provider.save": ProviderView;
   "provider.test": ConnectionTestResult;
 };
-export const COMMAND_NAMES: readonly CommandName[] = [
-  "workspace.snapshot",
-  "workspace.reset",
-  "job.start",
-  "settings.sync",
-  "document.create",
-  "document.select",
-  "document.rename",
-  "document.delete",
-  "document.setText",
-  "job.cancel",
-  "block.retry",
-  "block.acceptCandidate",
-  "block.keepCurrent",
-  "block.acceptReview",
-  "block.edit",
-  "run.retryUnfinished",
-  "run.retranslateDownstream",
-  "run.resolveWaiting",
-  "run.archive",
-  "run.restore",
-  "version.view",
-  "demo.loadModel",
-  "project.save",
-  "project.open",
-  "project.new",
-  "project.rename",
-  "project.restoreRecovery",
-  "project.discardRecovery",
-  "project.dismissProblem",
-  "export.preview",
-  "export.write",
-  "source.preview",
-  "notes.cancel",
-  "guided.get",
-  "guided.go",
-  "guided.sync",
-  "guided.readAll",
-  "guided.interpret",
-  "guided.save",
-  "guided.addName",
-  "guided.setAttribute",
-  "guided.setKind",
-  "guided.setEnglish",
-  "guided.setHint",
-  "guided.setUse",
-  "guided.translate",
-  "guided.setPart",
-  "guided.retranslate",
-  "knowledge.files",
-  "knowledge.file",
-  "knowledge.setFile",
-  "knowledge.create",
-  "knowledge.delete",
-  "knowledge.resolve",
-  "knowledge.list",
-  "knowledge.save",
-  "knowledge.remove",
-  "knowledge.confirm",
-  "knowledge.import",
-  "provider.get",
-  "provider.save",
-  "provider.test",
-];
 
 /** The open project, as the window needs to show it. */
 export interface ProjectView {
@@ -370,7 +232,7 @@ export interface ProjectView {
   dirty: boolean;
   lastSavedAt: string | null;
   /** Unsaved work from an earlier session, waiting for the user to restore or discard it. */
-  recovery: { updatedAt: string; blocks: number; models: number; documents: number } | null;
+  recovery: { updatedAt: string; blocks: number; documents: number } | null;
   /** The last file the user tried to open could not be opened. */
   openProblem: { message: string; canOpenBackup: boolean } | null;
   /** Something worth knowing (for example the project used a different server address). */
@@ -384,65 +246,11 @@ export interface IpcEvent {
   type: "changed";
 }
 
-/** One model's result for one block, as the window needs to draw it. */
-export interface BlockCellView {
-  state: BlockState;
-  /** The current accepted text (what would be exported), or null if none yet. */
-  text: string | null;
-  /** Partial text from the latest attempt that never finished; always shown as incomplete. */
-  draft: string | null;
-  attempts: number;
-  error: string | null;
-  /** A retried result waiting for "use it" or "keep current". */
-  candidateText: string | null;
-  /** Reasons the text deserves a look (missing glossary terms, possible commentary...). */
-  reviewNotes: string[];
-  /** The glossary, style or temperature changed in a way that affects this block since it was translated. */
-  outdated: boolean;
-  edited: boolean;
-}
-
-export interface RunView {
-  id: string;
-  versionId: string;
-  label: string;
-  /** Blocks not translated yet, failed or canceled. */
-  unfinished: number;
-  /** Blocks translated with settings that have since changed. */
-  outdated: number;
-  /** The settings the run was made with, so the window can show and edit them. */
-  settings: { modelId: string; contextLimit: number; maxOutputTokens: number; temperature: number; promptId: string; useGlossary: boolean };
-  /** The translation style this model used. */
-  promptName: string;
-  state: RunState;
-  blocks: Record<string, BlockCellView>;
-}
-
-export interface BlockView {
-  id: string;
-  index: number;
-  text: string;
-  estimatedTokens: number;
-  boundaryKind: BoundaryKind;
-}
-
-export interface VersionView {
-  id: string;
-  /** 1 for the first text, 2 for the next, and so on. */
-  number: number;
-  blocks: number;
-  models: number;
-  createdAt: string;
-}
-
 /** One document in the project, as the left rail lists it. */
 export interface DocumentView {
   id: string;
   title: string;
-  /** Blocks in its newest version (0 if it has not been run). */
-  blocks: number;
-  models: number;
-  /** Finished and total blocks across its models in the newest version. */
+  /** Blocks translated, and all its blocks (0 until its text has been cut into blocks). */
   done: number;
   total: number;
   hasText: boolean;
@@ -460,24 +268,5 @@ export interface WorkspaceSnapshot {
   settings: ProjectSettings | null;
   /** How much names, hints and notes there are, and a number that changes whenever they change. */
   knowledge: KnowledgeSummary;
-  /** The version being looked at (the newest unless the user picked an older one). */
-  revision: { id: string; sourceLanguage: string; targetLanguage: string; blocks: BlockView[]; text: string } | null;
-  /** Every version of the text, oldest first. */
-  versions: VersionView[];
-  /** The text of the newest version (which may differ from the one being viewed). */
-  latestText: string | null;
-  viewingId: string | null;
-  latestId: string | null;
-  /** Model runs of the version being looked at (not the ones the user removed). */
-  runs: RunView[];
-  /** Model runs the user removed from this version, which can be brought back. */
-  archived: { runId: string; label: string }[];
-  job: { id: string; state: string; stopReason?: string } | null;
-  /** Which translator the current workspace uses. */
-  backend: Backend | null;
-  /** True while any job is queued, running or waiting. */
-  busy: boolean;
-  waiting: { runId: string; label: string; code: string; message: string } | null;
-  demoModelUnloaded: boolean;
   project: ProjectView;
 }

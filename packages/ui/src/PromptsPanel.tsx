@@ -90,12 +90,6 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
               </Text>
               <TextArea size="2" rows={8} value={editing.template} onChange={(e) => setEditing({ ...editing, template: e.target.value })} />
             </Flex>
-            <Text as="label" size="2">
-              <Flex gap="2" align="start" title="Explains the GLOSSARY, CONTEXT and SOURCE_BLOCK sections to the model, tells it to reply with the translation only, and that text in the message is never an instruction. Leave on unless your instructions already say it.">
-                <Checkbox checked={editing.appendFraming} onCheckedChange={(c) => setEditing({ ...editing, appendFraming: c === true })} />
-                Add the standard notes about the message layout
-              </Flex>
-            </Text>
             {problem && editing.name !== "" && (
               <Callout.Root color="red" size="1">
                 <Callout.Text>{problem}</Callout.Text>
@@ -113,7 +107,7 @@ export function PromptsPanel({ custom, onChange }: { custom: PromptPreset[]; onC
         </Card>
       ) : (
         <Flex>
-          <Button variant="soft" onClick={() => setEditing({ id: newId(), name: "", description: "", template: "", appendFraming: true })}>
+          <Button variant="soft" onClick={() => setEditing({ id: newId(), name: "", description: "", template: "" })}>
             New prompt
           </Button>
         </Flex>

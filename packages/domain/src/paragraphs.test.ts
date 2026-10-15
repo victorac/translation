@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { answerOf, joinParts, missingNames, paragraphMessage, paragraphsOf, paragraphSystem } from "./paragraphs.js";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  answerOf,
+  joinParts,
+  missingNames,
+  paragraphMessage,
+  paragraphsOf,
+  paragraphSystem,
+} from "./paragraphs.js";
 
 const request = {
   glossary: [{ source: "太郎", target: "Taro", note: "a boy" }, { source: "食べる", target: "", note: "use the past tense" }],
@@ -32,9 +43,11 @@ describe("paragraphMessage", () => {
   it("leaves out the text around a lone paragraph", () => {
     expect(paragraphMessage({ ...request, sourceBefore: [], sourceAfter: [], translatedBefore: [] })).not.toContain("TEXT AROUND");
   });
-  it("has the style only as guidance, and none for the standard one", () => {
-    expect(paragraphSystem(null, "Japanese", "English")).not.toContain("Style of the whole translation");
-    expect(paragraphSystem("Be literary.", "Japanese", "English")).toContain("Be literary.");
+  it("has the style as guidance for tone, not as the task", () => {
+    const system = paragraphSystem("Be literary.", "Japanese", "English");
+    expect(system).toContain("Style of the whole translation (it applies to tone and wording only");
+    expect(system).toContain("Be literary.");
+    expect(system).toContain("one paragraph at a time");
   });
 });
 

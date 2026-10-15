@@ -1,14 +1,48 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { parseUserMessage, type GuidedState, type ModelSetting, type StartJobInput } from "@ltw/domain";
-import { createHandler } from "./handlers.js";
-import { ProviderService } from "./provider-service.js";
-import { WorkspaceService } from "./service.js";
-import { EncryptedFileCredentialStore, FileSettingsStore, MemoryCredentialStore, MemorySettingsStore, DEFAULT_SETTINGS } from "./storage.js";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+} from "node:http";
+import type {
+  AddressInfo,
+} from "node:net";
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
+import {
+  tmpdir,
+} from "node:os";
+import {
+  join,
+} from "node:path";
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  type ModelSetting,
+} from "@ltw/domain";
+import {
+  createHandler,
+} from "./handlers.js";
+import {
+  ProviderService,
+} from "./provider-service.js";
+import {
+  WorkspaceService,
+} from "./service.js";
+import {
+  EncryptedFileCredentialStore,
+  FileSettingsStore,
+  MemoryCredentialStore,
+  MemorySettingsStore,
+  DEFAULT_SETTINGS,
+} from "./storage.js";
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -25,8 +59,8 @@ interface Seen {
 /** What the stand-in "translates" a block into: not the source text, so it does not look untranslated. */
 const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
 
-/** A small stand-in for LM Studio: lists two models and "translates" by echoing the source block. */
-async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBlock?: string; answer?: (system: string, user: string) => string; researchReply?: string; paragraph?: (user: string, source: string, model: string) => string } = {}) {
+/** A small stand-in for LM Studio: lists two models and "translates" each paragraph it is asked for into something that is not the source. */
+async function fakeLmStudio(opts: { apiKey?: string; paragraph?: (user: string, source: string, model: string) => string } = {}) {
   const seen: Seen[] = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -43,22 +77,9 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
       }
       if (req.method === "POST" && req.url === "/v1/chat/completions") {
         const j = JSON.parse(body) as { model: string; messages: { content: string }[] };
-        if (opts.loaded && !opts.loaded.includes(j.model)) {
-          res.writeHead(404, { "content-type": "application/json" }).end('{"error":{"message":"No models loaded. Please load a model in the developer page."}}');
-          return;
-        }
-        const researching = j.messages[0]!.content.includes("prepare background for a translator");
-        const summarizing = j.messages[0]!.content.includes("shorten scene descriptions");
-        // A request to translate is for a whole block (the batch run) or for one paragraph of it (step by step).
-        const paragraph = /PARAGRAPH TO TRANSLATE:\n([\s\S]*?)\n\nTranslate that paragraph/.exec(j.messages[1]!.content)?.[1];
-        const reading = researching || summarizing || (paragraph === undefined && parseUserMessage(j.messages[1]!.content) === null);
-        const source = reading ? "" : (paragraph ?? parseUserMessage(j.messages[1]!.content)!.sourceBlock);
-        if (opts.failBlock && source.includes(opts.failBlock)) {
-          res.writeHead(400, { "content-type": "application/json" }).end('{"error":{"message":"Trying to keep the first 9000 tokens when context overflows"}}');
-          return;
-        }
+        const paragraph = /PARAGRAPH TO TRANSLATE:\n([\s\S]*?)\n\nTranslate that paragraph/.exec(j.messages[1]!.content)?.[1] ?? "";
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = reading ? (summarizing ? "A short summary of the chapter." : researching ? (opts.researchReply ?? "NONE") : (opts.answer?.(j.messages[0]!.content, j.messages[1]!.content) ?? "NONE")) : paragraph !== undefined && opts.paragraph ? opts.paragraph(j.messages[1]!.content, source, j.model) : `EN(${j.model}): ${fakeEnglish(source)}`;
+        const text = opts.paragraph ? opts.paragraph(j.messages[1]!.content, paragraph, j.model) : `EN(${j.model}): ${fakeEnglish(paragraph)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -84,19 +105,6 @@ async function fakeLmStudio(opts: { loaded?: string[]; apiKey?: string; failBloc
 
 const model = (name: string, over: Partial<ModelSetting> = {}): ModelSetting => ({ name, contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, promptId: "standard", useGlossary: true, ...over });
 const TEXT = "一つ目の段落です。\n\n二つ目の段落です。\n\n三つ目の段落です。";
-const job = (over: Partial<StartJobInput> = {}): StartJobInput => ({
-  text: TEXT,
-  sourceLanguage: "Japanese",
-  targetLanguage: "English",
-  backend: "provider",
-  models: [model("qwen2.5-7b-instruct")],
-  glossary: [],
-  prompts: [],
-  blockSize: "normal",
-  rerun: [],
-  demo: { speed: "fast", smallBlocks: false, failBlockOnce: null, firstModelUnloaded: false },
-  ...over,
-});
 const setup = () => {
   const settings = new MemorySettingsStore();
   const creds = new MemoryCredentialStore();
@@ -169,80 +177,7 @@ describe("testing the connection", () => {
   });
 });
 
-describe("translating through the saved connection", () => {
-  it("AC-18 (stand-in): runs a job against the server and fills every block", async () => {
-    const lm = await fakeLmStudio();
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.start(job({ models: [model("qwen2.5-7b-instruct"), model("gemma-2-9b", { temperature: 0.7 })] }));
-    await service.whenIdle();
-    const snap = service.snapshot();
-    expect(snap.job?.state).toBe("completed");
-    const block = snap.revision!.blocks[0]!;
-    expect(snap.runs[0]!.blocks[block.id]!.text).toBe(`EN(qwen2.5-7b-instruct): ${fakeEnglish(block.text)}`);
-    expect(snap.runs[1]!.blocks[block.id]!.text).toBe(`EN(gemma-2-9b): ${fakeEnglish(block.text)}`);
-    const posts = lm.seen.filter((s) => s.method === "POST");
-    expect(posts.map((p) => JSON.parse(p.body).model)).toEqual([...Array(posts.length / 2).fill("qwen2.5-7b-instruct"), ...Array(posts.length / 2).fill("gemma-2-9b")]);
-    expect(JSON.parse(posts.at(-1)!.body)).toMatchObject({ temperature: 0.7, max_tokens: 1536, stream: true });
-  });
-
-  it("sends the API key with each request", async () => {
-    const lm = await fakeLmStudio({ apiKey: "k1" });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false, apiKey: "k1" });
-    service.start(job());
-    await service.whenIdle();
-    expect(service.snapshot().job?.state).toBe("completed");
-    expect(lm.seen.every((s) => s.headers.authorization === "Bearer k1")).toBe(true);
-  });
-
-  it("an unloaded model puts the run in Waiting with LM Studio's instructions, and Retry works once it is loaded", async () => {
-    const loaded: string[] = [];
-    const lm = await fakeLmStudio({ loaded });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.start(job());
-    for (let i = 0; i < 200 && !service.snapshot().waiting; i++) await new Promise((r) => setTimeout(r, 10));
-    const w = service.snapshot().waiting!;
-    expect(w).toMatchObject({ code: "model_unavailable" });
-    expect(w.message).toMatch(/Load the model in LM Studio/);
-    loaded.push("qwen2.5-7b-instruct");
-    service.resolveWaiting(w.runId, "retry");
-    await service.whenIdle();
-    expect(service.snapshot().job?.state).toBe("completed");
-  });
-
-  it("a context overflow stops the run with guidance instead of retrying", async () => {
-    const lm = await fakeLmStudio({ failBlock: "二つ目" });
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.start(job({ text: "一つ目の段落です。\n\n二つ目の段落です。" }));
-    for (let i = 0; i < 300 && !service.snapshot().waiting; i++) await new Promise((r) => setTimeout(r, 10));
-    const snap = service.snapshot();
-    expect(snap.waiting).toMatchObject({ code: "context_overflow" });
-    expect(snap.waiting!.message).toMatch(/context/i);
-    service.cancel({ kind: "job" });
-    await service.whenIdle();
-    expect(lm.seen.filter((s) => s.method === "POST")).toHaveLength(1); // not retried
-  });
-
-  it("refuses to start with a bad connection or without one", () => {
-    const { provider, service } = setup();
-    expect(() => new WorkspaceService().start(job())).toThrow(/No model server connection/);
-    void provider;
-    // an unapproved remote host saved earlier by hand-editing the settings file
-    const settings = new MemorySettingsStore();
-    settings.save({ ...DEFAULT_SETTINGS, provider: { baseUrl: "http://192.168.9.9:1234/v1", allowedRemoteHost: null } });
-    const s2 = new WorkspaceService({ provider: new ProviderService(settings, new MemoryCredentialStore()) });
-    expect(() => s2.start(job())).toThrow(/not on this computer/);
-    void service;
-  });
-
-  it("rejects output limits that do not leave room in the context", () => {
-    const { service } = setup();
-    expect(() => service.start(job({ models: [model("m", { contextLimit: 1024, maxOutputTokens: 1024 })] }))).toThrow(/smaller than the context/);
-  });
-
+describe("the saved connection through the window's commands", () => {
   it("through the command handler, test and save report plain results", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
@@ -250,65 +185,6 @@ describe("translating through the saved connection", () => {
     expect(await h("1", "provider.save", { baseUrl: lm.baseUrl, allowRemote: false })).toMatchObject({ ok: true, value: { loopback: true } });
     expect(await h("2", "provider.test", undefined)).toMatchObject({ ok: true, value: { ok: true } });
     expect(await h("3", "provider.save", { baseUrl: "http://10.0.0.5:1234/v1", allowRemote: false })).toMatchObject({ ok: false, error: { code: "remote_not_allowed" } });
-  });
-});
-
-describe("glossary and prompt styles with a real server connection", () => {
-  const style = { id: "mine", name: "Brisk", description: "", template: "Translate {sourceLanguage} to {targetLanguage} briskly.", appendFraming: true };
-  const posts = (lm: { seen: Seen[] }) => lm.seen.filter((s) => s.method === "POST").map((s) => JSON.parse(s.body) as { model: string; messages: { content: string }[] });
-
-  it("sends each model its own style and only the glossary entries a block needs", async () => {
-    const lm = await fakeLmStudio();
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.start(
-      job({
-        text: "魔王が来た。",
-        glossary: [{ source: "魔王", target: "Demon King", note: "villain" }, { source: "勇者", target: "Hero" }],
-        prompts: [style],
-        models: [model("qwen2.5-7b-instruct"), model("qwen2.5-7b-instruct", { promptId: "mine" }), model("qwen2.5-7b-instruct", { promptId: "literary" })],
-      }),
-    );
-    await service.whenIdle();
-    const sent = posts(lm);
-    expect(sent).toHaveLength(3);
-    expect(sent[0]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // standard style
-    expect(sent[1]!.messages[0]!.content).toMatch(/^Translate Japanese to English briskly\./);
-    expect(sent[1]!.messages[0]!.content).toContain("SOURCE_BLOCK"); // layout notes were added
-    expect(parseUserMessage(sent[0]!.messages[1]!.content)!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]); // 勇者 is not in the block
-    expect(parseUserMessage(sent[2]!.messages[1]!.content)!.glossary).toEqual([{ source: "魔王", target: "Demon King" }]);
-    expect(service.snapshot().runs.map((r) => r.label)).toEqual(["qwen2.5-7b-instruct", "qwen2.5-7b-instruct · Brisk", "qwen2.5-7b-instruct · Natural, literary"]);
-  });
-
-  it("flags a block whose required term is missing, with the reason, and the user can accept it", async () => {
-    const lm = await fakeLmStudio(); // this stand-in ignores the glossary
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    service.start(job({ text: "魔王が来た。", glossary: [{ source: "魔王", target: "Demon King" }] }));
-    await service.whenIdle();
-    let snap = service.snapshot();
-    const run = snap.runs[0]!;
-    const blockId = snap.revision!.blocks[0]!.id;
-    expect(run.blocks[blockId]).toMatchObject({ state: "needs_review", reviewNotes: ['Glossary: "魔王" should be "Demon King", but that was not found.'] });
-    expect(snap.job?.state).toBe("completed_with_issues");
-    service.acceptReview(run.id, blockId);
-    snap = service.snapshot();
-    expect(snap.runs[0]!.blocks[blockId]).toMatchObject({ state: "succeeded", reviewNotes: [] });
-  });
-
-  it("a flagged block that finished normally is still used as context for the next block", async () => {
-    const lm = await fakeLmStudio();
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const text = `魔王が来た。${"あ".repeat(550)}。\n\n${"い".repeat(100)}。`; // two blocks at the default size
-    service.start(job({ text, glossary: [{ source: "魔王", target: "Demon King" }] }));
-    await service.whenIdle();
-    const snap = service.snapshot();
-    expect(snap.revision!.blocks).toHaveLength(2);
-    expect(snap.runs[0]!.blocks[snap.revision!.blocks[0]!.id]!.state).toBe("needs_review");
-    const sent = posts(lm);
-    expect(sent).toHaveLength(2);
-    expect(parseUserMessage(sent[1]!.messages[1]!.content)!.context).toMatchObject({ translation: expect.any(String) });
   });
 });
 
@@ -558,7 +434,7 @@ describe("translating step by step", () => {
     service.guidedStart({ documentId: docId, text: paragraphs.join("\n"), blockSize: "large" });
     const before = bodies(lm).length;
     // The context is small: the source around each paragraph is cut down to what fits.
-    const done = await service.guidedTranslate({ ...model, contextLimit: 1400, maxOutputTokens: 300, index: 0 });
+    const done = await service.guidedTranslate({ ...model, contextLimit: 1800, maxOutputTokens: 300, index: 0 });
     const sent = bodies(lm).slice(before).map((b) => b.messages[1]!.content);
     expect(sent).toHaveLength(30);
     expect(sent.map((u) => /PARAGRAPH TO TRANSLATE:\n(.*)\n/.exec(u)![1])).toEqual(paragraphs);
@@ -578,7 +454,7 @@ describe("translating step by step", () => {
     // Using the block puts 山田太郎 in the knowledge base. 山 is already a way to write his name; it still gets a translation of its own.
     await service.guidedTranslate({ ...model, index: 0 });
     const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
-    service.knowledgeSave({ id: taro.id, kind: "term", source: taro.source, target: taro.target, hint: taro.hint, category: taro.category, aliases: ["山"], attrs: taro.attrs, text: "", about: null });
+    service.knowledgeSetFile(taro.id, service.knowledgeFile(taro.id).text.replace("aliases:", "aliases: 山"));
     const added = await service.guidedAddName(0, "山");
     expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "山")).toMatchObject({ draft: true, kind: "term" });
     service.guidedSetEnglish("山", "Yamada");
@@ -600,7 +476,7 @@ describe("translating step by step", () => {
     await service.guidedInterpret(0);
     await service.guidedTranslate({ ...model, index: 0 });
     const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
-    service.knowledgeSave({ id: entry.id, kind: "term", source: entry.source, target: entry.target, hint: "", category: entry.category, aliases: ["山"], attrs: entry.attrs, text: "", about: null });
+    service.knowledgeSetFile(entry.id, service.knowledgeFile(entry.id).text.replace("aliases:", "aliases: 山"));
 
     // Adding a word that is one of his aliases makes a draft that stands for him.
     const added = await service.guidedAddName(0, "山");
@@ -704,10 +580,12 @@ describe("translating step by step", () => {
     expect(names().some((n) => n.source === "魔法")).toBe(false);
 
     // A word added to the glossary afterwards, from anywhere, shows up in the block by itself.
-    service.knowledgeSave({ kind: "term", source: "魔法", target: "magic", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+    const magic = service.knowledgeCreate("term", "魔法").id;
+    service.knowledgeSetFile(magic, service.knowledgeFile(magic).text.replace(/english:.*/, "english: magic"));
     expect(names().find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true, draft: false });
     // A word that is not in this block is not listed.
-    service.knowledgeSave({ kind: "term", source: "竜", target: "dragon", hint: "", category: "term", aliases: [], attrs: {}, text: "", about: null });
+    const dragon = service.knowledgeCreate("term", "竜").id;
+    service.knowledgeSetFile(dragon, service.knowledgeFile(dragon).text.replace(/english:.*/, "english: dragon"));
     expect(names().some((n) => n.source === "竜")).toBe(false);
 
     // The user writes the English name of a draft; it is not in the knowledge base until it is used.

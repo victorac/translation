@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 import {
   nameFromReadings,
   romanize,
@@ -6,24 +10,13 @@ import {
   findQuotes,
   speakerByForm,
   takeTurns,
-  speakerQuestion,
   attribute,
-  plausibleName,
-  roleByForm,
-  classify,
   mergeCandidates,
-  parseChoice,
-  parseChoiceWithQuote,
-  parseNameList,
-  parseShortText,
   patternCandidates,
   properNounRuns,
-  quoteInPassage,
   related,
-  sameAs,
   splitSentences,
   standsAlone,
-  windowAround,
   type WordToken,
 } from "./steps.js";
 
@@ -36,12 +29,7 @@ describe("sentences", () => {
     expect(splitSentences("")).toEqual([]);
   });
 
-  it("takes the sentences around a name, with the one before", () => {
-    const s = splitSentences("朝だった。花子が来た。彼は笑った。夜になった。");
-    expect(windowAround(s, ["花子"])).toBe("朝だった。\n花子が来た。");
-    expect(windowAround(s, ["誰か"])).toBe("朝だった。\n花子が来た。\n彼は笑った。\n夜になった。");
   });
-});
 
 describe("candidate names", () => {
   const tok = (surface: string, d: string[], start: number): WordToken => ({ surface, details: d, byteStart: start, byteEnd: start + surface.length * 3 });
@@ -90,67 +78,13 @@ describe("candidate names", () => {
 });
 
 describe("questions and answers", () => {
-  it("lists the options with letters and asks for one letter", () => {
-    const q = classify("花子", "花子は笑った。", ["a person", "a place", "not a name"]);
-    expect(q.user).toContain("A) a person\nB) a place\nC) not a name");
-    expect(q.user).toContain("Reply with the letter only");
-    expect(q.options).toHaveLength(3);
-    expect(sameAs("花子", "ctx", [{ label: "佐藤花子" }]).options).toEqual(["佐藤花子", "None of them: it is a new one"]);
-  });
-
-  it("asks for a quote when the answer is a fact, and a way out when it is not stated", () => {
+    it("asks for a quote when the answer is a fact, and a way out when it is not stated", () => {
     const q = attribute("花子", "gender", ["male", "female"], "ctx");
     expect(q.options).toEqual(["male", "female", "Not stated in the passage"]);
     expect(q.user).toContain("a short quote");
   });
 
-  it("reads which option was chosen from whatever the model wrote", () => {
-    for (const reply of ["B", "b", "B)", " (B) ", "B.", "2", "B | the quote", "B, because"]) expect(parseChoice(reply, 3), reply).toBe(1);
-    for (const reply of ["", "Maybe", "Z", "9", "The answer is B"]) expect(parseChoice(reply, 3), reply).toBeNull();
-    expect(parseChoice("D", 3)).toBeNull();
-  });
-
-  it("reads a choice with its quote, and checks the quote against the passage", () => {
-    expect(parseChoiceWithQuote("B | 彼女は笑った", 3)).toEqual({ index: 1, quote: "彼女は笑った" });
-    expect(parseChoiceWithQuote("A", 3)).toEqual({ index: 0, quote: "" });
-    expect(quoteInPassage("彼女は\n笑った。", "「彼女は笑った」")).toBe(true);
-    expect(quoteInPassage("彼女は笑った。", "彼は怒った")).toBe(false);
-    expect(quoteInPassage("彼女は笑った。", "")).toBe(false);
-  });
-
-  it("reads lists and short answers", () => {
-    expect(parseNameList("- 花子\n2. 太郎\nNONE\n\n学園")).toEqual(["花子", "太郎", "学園"]);
-    expect(parseNameList("NONE")).toEqual([]);
-    expect(parseShortText('  "Hanako"\nextra', 60)).toBe("Hanako");
-    expect(parseShortText("Name: Taro", 60)).toBe("Taro");
-    expect(parseShortText("Yamada Taro.", 60, true)).toBe("Yamada Taro");
-    expect(parseShortText("She waits at the gate.", 60)).toBe("She waits at the gate.");
-    expect(parseShortText("UNKNOWN", 60)).toBeNull();
-    expect(parseShortText("x".repeat(80), 60)).toBeNull();
-    expect(parseShortText("", 60)).toBeNull();
-  });
-});
-
-describe("names and roles that can be judged without a model", () => {
-  it("accepts a short plain name and refuses an explanation, a list or a sentence", () => {
-    expect(plausibleName("Hanako", "Hanako")).toBe(true);
-    expect(plausibleName("the Sato family", "the Sato family")).toBe(true);
-    expect(plausibleName("Sakurata Academy students, same class.\nHana's family runs a shop", "Sakurata Academy students, same class")).toBe(false);
-    expect(plausibleName("Hanako is a girl who waits", "Hanako is a girl who waits")).toBe(false);
-    expect(plausibleName("A, B", "A, B")).toBe(false);
-  });
-
-  it("settles what a person does from how the name is written", () => {
-    const s = splitSentences("学園の門の前で、花子は腕を組んで待っていた。「遅かったね、太郎」と彼女は言った。花子の家は古い。");
-    expect(roleByForm(s, ["花子"])).toBe(0); // 花子は: the subject
-    expect(roleByForm(s, ["太郎"])).toBe(1); // inside a quotation, just before 」: spoken to
-    expect(roleByForm(splitSentences("花子の家は古い。"), ["花子"])).toBeNull(); // only a possessive: leave it to the model
-    expect(roleByForm(splitSentences("「花子様、お待たせしました」"), ["花子"])).toBe(1);
-    expect(roleByForm(splitSentences("佐藤花子がいた。"), ["花子"])).toBeNull(); // 花子 is only part of 佐藤花子
-    expect(roleByForm(s, ["誰か"])).toBeNull();
-  });
-});
-
+      });
 
 describe("speakers of quotations", () => {
   const hanako = { id: "k", label: "Hanako", names: ["花子", "山田"] };
@@ -185,12 +119,7 @@ describe("speakers of quotations", () => {
     expect(addressedIn("「花子は来たよ」", people)).toEqual(new Set());
   });
 
-  it("asks who says a marked line, with the people and a way out", () => {
-    const q = speakerQuestion("「ああ」", ["Hanako", "Taro"], "text");
-    expect(q.options).toEqual(["Hanako", "Taro", "It cannot be told"]);
-    expect(q.user).toContain("「ああ」");
   });
-});
 
 describe("taking turns", () => {
   const hanako = { id: "k", label: "Hanako", names: ["花子"] };
@@ -228,10 +157,7 @@ describe("names from readings", () => {
     expect(nameFromReadings(["ヤマダ", "x"], false)).toBe(null);
   });
 
-  it("does not accept a sentence about oneself as a name", () => {
-    expect(plausibleName("I am Ken Tensan", "I am Ken Tensan")).toBe(false);
   });
-});
 
 describe("surname and given name", () => {
   const tok = (surface: string, d: string[], start: number) => ({ surface, details: d, byteStart: start, byteEnd: start + surface.length * 3 });

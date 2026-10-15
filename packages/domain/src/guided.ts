@@ -1,4 +1,14 @@
-import { splitSentences, addressedIn, findQuotes, firstPersonInNarration, nameFromReadings, romanize, speakerByForm, takeTurns, type Speaker } from "./steps.js";
+import {
+  splitSentences,
+  addressedIn,
+  findQuotes,
+  firstPersonInNarration,
+  nameFromReadings,
+  romanize,
+  speakerByForm,
+  takeTurns,
+  type Speaker,
+} from "./steps.js";
 
 /**
  * The step-by-step way of translating: for each block the program reads out who is named, who is telling it and who says
@@ -328,25 +338,6 @@ export function glossaryFor(interp: Interpretation, only?: string): { source: st
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
 }
-
-/** Pieces of a block for translating one at a time, so that a small model does not skip or cut off the end of a long one. Paragraphs are never split. */
-export function splitPieces(text: string, tokensPerPiece: number, count: (s: string) => number): string[] {
-  const pieces: string[] = [];
-  let current: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    current.push(line);
-    if (line.trim() !== "" && count(current.join("\n")) >= tokensPerPiece) {
-      pieces.push(current.join("\n").trim());
-      current = [];
-    }
-  }
-  const rest = current.join("\n").trim();
-  if (rest !== "") pieces.push(rest);
-  return pieces;
-}
-
-/** How many paragraphs (non-empty lines) a text has. */
-export const paragraphCount = (text: string): number => text.split(/\r?\n/).filter((l) => l.trim() !== "").length;
 
 /** The last `lines` lines of a text, but never more than `maxChars` characters. */
 export function lastLines(text: string, lines: number, maxChars: number): string {
