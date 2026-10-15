@@ -19,7 +19,7 @@ export interface LegacyBlocks {
     text: string;
     translation: string;
     parts: string[];
-    interpretation: { names: Word[]; lines: { text: string; speaker: string | null }[] } | null;
+    interpretation: { names: (Word & { guessed?: boolean })[]; lines: { text: string; speaker: string | null }[] } | null;
   }[];
 }
 
@@ -31,7 +31,13 @@ export interface LegacyBlocks {
 export function workFromBlocks(old: LegacyBlocks, text: string): Work {
   const source = normalizeSource(text);
   const words: Word[] = [];
-  for (const b of old.blocks) for (const n of b.interpretation?.names ?? []) if (!words.some((w) => w.source === n.source)) words.push(n);
+  for (const b of old.blocks) {
+    for (const { guessed, ...n } of b.interpretation?.names ?? []) {
+      if (words.some((w) => w.source === n.source)) continue;
+      // An English name the app had only guessed from a reading is a suggestion now, not the name.
+      words.push(guessed && n.english !== "" ? { ...n, english: "", suggestions: { ...(n.suggestions ?? {}), english: [n.english] } } : n);
+    }
+  }
 
   const translated: WorkParagraph[] = old.blocks.flatMap((b) => {
     const texts = paragraphsOf(b.text).map((p) => p.text);

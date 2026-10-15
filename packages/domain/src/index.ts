@@ -15,3 +15,4 @@ export * from "./classes.js";
 export * from "./topicfile.js";
 export * from "./steps.js";
 export * from "./work.js";
+export * from "./suggest.js";

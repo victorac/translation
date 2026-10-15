@@ -36,8 +36,12 @@ export interface Word {
   known: boolean;
   /** True for a word found in the text that is not in the knowledge base yet: it is added when the text is translated. */
   draft?: boolean;
-  /** True while the English name is the app's own guess (made from a reading), until the user writes one. */
-  guessed?: boolean;
+  /**
+   * What the app or the model thinks a field is, not yet confirmed by the user: by field (`english`, `gender`, or the key of another
+   * attribute), a list of one value. A suggestion is shown pre-filled and marked, is told to the model only as a suggestion, and
+   * becomes the value when the user accepts it or writes the field themselves.
+   */
+  suggestions?: Record<string, string[]>;
   /** False when the user chose to ignore this word: it is not sent and not added to the knowledge base. */
   use?: boolean;
   /** The glossary topic this is, when it has been made one. */
@@ -59,8 +63,10 @@ export interface WorkLine {
   /** The paragraph it stands in (counted from 0). */
   paragraph: number;
   text: string;
-  /** The source of the word of the person who says it, or null when it is not known. */
+  /** The source of the word of the person who says it, as the user set it; null when they have not. */
   speaker: string | null;
+  /** Who the rules or the model think says it, while the user has not set it. */
+  suggested?: string | null;
 }
 
 /** One paragraph (non-empty line) of the source and its translation. */
@@ -82,6 +88,8 @@ export interface Work {
   paragraphs: WorkParagraph[];
   /** Why the last attempt to translate failed. */
   error?: string | null;
+  /** While the translation is being read for suggestions: how far it has got. Never saved. */
+  reading?: { done: number; total: number } | null;
 }
 
 const ORGANIZATION = /(学園|学院|学校|高校|大学|会社|協会|組合|騎士団|教団|軍|党)$/;
@@ -167,7 +175,7 @@ export interface KnownWord {
   /** What the user set on a draft word, kept when the text is read again. */
   hint?: string;
   use?: boolean;
-  guessed?: boolean;
+  suggestions?: Record<string, string[]>;
 }
 
 export interface ReadInput {
@@ -210,9 +218,10 @@ export function labelLines(passage: string, words: readonly Word[], carry: Carry
 /**
  * Who says each line of the whole text. The rules (who is named beside a line, two people taking turns) work on a stretch of text
  * with a few people in it, so the text is gone through in stretches, each with the conversation that was going on at the end of the one
- * before. What the user already set (`preset`, by line) stays.
+ * before. `confirmed` is what the user already set, by line: it stays, and the rules work from it. What the rules work out for the other
+ * lines is only a suggestion.
  */
-export function labelDocument(text: string, words: readonly Word[], preset: readonly (string | null)[] = []): WorkLine[] {
+export function labelDocument(text: string, words: readonly Word[], confirmed: readonly (string | null)[] = []): WorkLine[] {
   const paragraphs = paragraphsOf(text);
   const paragraphAt = (offset: number): number => {
     let lo = 0;
@@ -231,8 +240,11 @@ export function labelDocument(text: string, words: readonly Word[], preset: read
     const passage = text.slice(chunk.startOffset, chunk.endOffset);
     // The people of this stretch: those it writes, and the two of a conversation that carries on into it.
     const here = words.filter((w) => w.kind === "character" && (occurrencesOf(passage, namesOf(w), sources).length > 0 || w.source === carry?.before || w.source === carry?.other));
-    const lines = labelLines(passage, here, carry, preset.slice(out.length));
-    for (const l of lines) out.push({ paragraph: paragraphAt(chunk.startOffset + l.start), text: l.text, speaker: l.speaker });
+    const lines = labelLines(passage, here, carry, confirmed.slice(out.length));
+    for (const l of lines) {
+      const set = confirmed[out.length] ?? null;
+      out.push({ paragraph: paragraphAt(chunk.startOffset + l.start), text: l.text, speaker: set, suggested: set === null ? l.speaker : null });
+    }
     // Only when the stretch ended on a line of speech whose speaker is known does its conversation carry on.
     const last = lines.at(-1);
     const lastParagraph = passage.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
@@ -257,7 +269,7 @@ export function readWords(input: ReadInput): Word[] {
     ...(k.attrs ? { attrs: k.attrs } : {}),
     ...(k.hint ? { hint: k.hint } : {}),
     ...(k.use === false ? { use: false } : {}),
-    ...(k.guessed ? { guessed: true } : {}),
+    ...(k.suggestions && Object.keys(k.suggestions).length > 0 ? { suggestions: k.suggestions } : {}),
     gender: k.gender ?? null,
   });
 
@@ -273,7 +285,9 @@ export function readWords(input: ReadInput): Word[] {
     if (names.some((n) => n.source.length > c.length && n.source.includes(c) && passage.split(n.source).join("").indexOf(c) < 0)) continue;
     const kind = guessKindIn(passage, c);
     const reading = input.readings[c];
-    names.push({ source: c, english: englishFor(kind, reading, c), kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, guessed: englishFor(kind, reading, c) !== "", gender: null, attrs: {} });
+    // What the dictionary reads it as is a suggestion, not the name.
+    const guess = englishFor(kind, reading, c);
+    names.push({ source: c, english: "", kind, aliases: [], reading: readingLetters(reading), known: false, draft: true, gender: null, attrs: {}, ...(guess !== "" ? { suggestions: { english: [guess] } } : {}) });
   }
   // A name with a middle dot is written by one of its parts alone as well (ジョン for ジョン・スミス): that is the same person.
   for (const p of names.filter((n) => n.kind === "character" && n.source.includes("・"))) {
@@ -293,17 +307,17 @@ export function readWords(input: ReadInput): Word[] {
     if (other >= 0) names.splice(other, 1);
     if (!namesOf(p).includes(tail)) p.aliases.push(tail);
   }
-  // Where the text says it, a person who is not known to be one way or the other is that.
-  for (const p of names.filter((n) => n.kind === "character" && !n.gender)) {
-    p.gender = guessGender(passage, namesOf(p), names.filter((o) => o !== p && o.kind === "character").flatMap(namesOf));
-    if (p.gender && p.draft) p.attrs = { ...(p.attrs ?? {}), gender: [p.gender] };
+  // Where the text says it, a person who is not known to be one way or the other is suggested to be that.
+  for (const p of names.filter((n) => n.kind === "character" && !n.gender && !n.attrs?.["gender"]?.length)) {
+    const gender = guessGender(passage, namesOf(p), names.filter((o) => o !== p && o.kind === "character").flatMap(namesOf));
+    if (gender && !p.suggestions?.["gender"]) p.suggestions = { ...(p.suggestions ?? {}), gender: [gender] };
   }
   return names;
 }
 
 const shorten = (text: string, n: number): string => (Array.from(text).length > n ? `${Array.from(text).slice(0, n).join("")}…` : text);
 
-/** The notes sent with a paragraph: the gender of the people it names, and who says the lines in it that are known. */
+/** The notes sent with a paragraph: the gender of the people it names, and who says the lines in it, as the user confirmed them. */
 export function notesFor(words: readonly Word[], lines: readonly WorkLine[], paragraph: { index: number; text: string }): string[] {
   const english = (source: string): string => words.find((n) => n.source === source)?.english || source;
   const notes: string[] = [];
@@ -364,6 +378,22 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
       const note = [stands, n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
+}
+
+/**
+ * The words of a paragraph that have no confirmed English name but a suggested one (the dictionary's reading, or what the model used in an
+ * earlier translation). They are told to the model as suggestions: it may write the name differently when that is clearly better.
+ */
+export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
+  const sources = words.map((n) => n.source);
+  return words.flatMap((n) => {
+    const suggestion = n.suggestions?.["english"]?.[0]?.trim();
+    if (!suggestion || n.english.trim() !== "" || n.use === false) return [];
+    const aliases = n.aliases.filter((a) => !sources.includes(a));
+    const alone = withoutLongerNames(only, n.source, sources);
+    if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];
+    return [{ source: n.source, suggestion, ...(aliases.length > 0 ? { aliases } : {}) }];
+  });
 }
 
 /**

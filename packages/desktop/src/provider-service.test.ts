@@ -60,7 +60,7 @@ interface Seen {
 const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
 
 /** A small stand-in for LM Studio: lists two models and "translates" each paragraph it is asked for into something that is not the source. */
-async function fakeLmStudio(opts: { apiKey?: string; paragraph?: (user: string, source: string, model: string) => string } = {}) {
+async function fakeLmStudio(opts: { apiKey?: string; answer?: (system: string, user: string) => string; paragraph?: (user: string, source: string, model: string) => string } = {}) {
   const seen: Seen[] = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -77,9 +77,11 @@ async function fakeLmStudio(opts: { apiKey?: string; paragraph?: (user: string, 
       }
       if (req.method === "POST" && req.url === "/v1/chat/completions") {
         const j = JSON.parse(body) as { model: string; messages: { content: string }[] };
-        const paragraph = /PARAGRAPH TO TRANSLATE:\n([\s\S]*?)\n\nTranslate that paragraph/.exec(j.messages[1]!.content)?.[1] ?? "";
+        const found = /PARAGRAPH TO TRANSLATE:\n([\s\S]*?)\n\nTranslate that paragraph/.exec(j.messages[1]!.content)?.[1];
+        const paragraph = found ?? "";
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const text = opts.paragraph ? opts.paragraph(j.messages[1]!.content, paragraph, j.model) : `EN(${j.model}): ${fakeEnglish(paragraph)}`;
+        // A request to translate a paragraph, or a short question about the translation.
+        const text = found === undefined ? (opts.answer?.(j.messages[0]!.content, j.messages[1]!.content) ?? "NONE") : opts.paragraph ? opts.paragraph(j.messages[1]!.content, paragraph, j.model) : `EN(${j.model}): ${fakeEnglish(paragraph)}`;
         let i = 0;
         const parts = Array.from(text);
         const tick = () => {
@@ -439,7 +441,7 @@ describe("translating a document", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const paragraphs = Array.from({ length: 80 }, (_, i) => `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`);
     await sync(service, paragraphs.join("\n"));
-    const done = await service.workTranslate({ ...model, contextLimit: 1800, maxOutputTokens: 300 });
+    const done = await service.workTranslate({ ...model, contextLimit: 2000, maxOutputTokens: 300 });
     const sent = bodies(lm).map((b) => b.messages[1]!.content);
     expect(sent).toHaveLength(80);
     expect(sent.map((u) => /PARAGRAPH TO TRANSLATE:\n(.*)\n/.exec(u)![1])).toEqual(paragraphs);
@@ -457,7 +459,11 @@ describe("translating a document", () => {
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await sync(service, "ぼくは山田太郎という。\n「山、お待たせしました」");
-    expect(words(service).find((n) => n.source === "山田太郎")!.english).toBe("Yamada Taro");
+    // The dictionary's reading is only suggested: it is the name once the user accepts it.
+    expect(words(service).find((n) => n.source === "山田太郎")).toMatchObject({ english: "", suggestions: { english: ["Yamada Taro"] } });
+    service.workAcceptSuggestion("山田太郎", "english");
+    expect(words(service).find((n) => n.source === "山田太郎")).toMatchObject({ english: "Yamada Taro" });
+    expect(words(service).find((n) => n.source === "山田太郎")!.suggestions).toBeUndefined();
     // Using the word puts 山田太郎 in the knowledge base. 山 is already a way to write his name; it still gets a translation of its own.
     await service.workTranslate({ ...model });
     const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
@@ -479,6 +485,7 @@ describe("translating a document", () => {
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await sync(service, "ぼくは山田太郎という。\n「山、お待たせしました」");
+    service.workAcceptSuggestion("山田太郎", "english");
     await service.workTranslate({ ...model });
     const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
     service.knowledgeSetFile(entry.id, service.knowledgeFile(entry.id).text.replace("aliases:", "aliases: 山"));
@@ -550,19 +557,20 @@ describe("translating a document", () => {
     expect(() => service.workSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
   });
 
-  it("clears the English name a person or family got from its reading when it is changed to another kind, but not one the user wrote", async () => {
+  it("drops the English name a reading suggested for a person when the word is changed to another kind, but not one the user wrote", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await sync(service, "鈴木花子は山田太郎に会った。");
-    const english = (source: string) => words(service).find((n) => n.source === source)!.english;
-    expect(english("鈴木花子")).toBe("Suzuki Hanako");
+    const word = (source: string) => words(service).find((n) => n.source === source)!;
+    expect(word("鈴木花子").suggestions).toEqual({ english: ["Suzuki Hanako"] });
     service.workSetKind("鈴木花子", "term");
-    expect(english("鈴木花子")).toBe(""); // made from a reading, which means nothing for a term
-    // Written by the user, it stays.
+    expect(word("鈴木花子").suggestions).toBeUndefined(); // made from a reading, which means nothing for a term
+    // Written by the user, it stays; and writing it takes the suggestion away.
     service.workSetEnglish("山田太郎", "Taro");
+    expect(word("山田太郎").suggestions?.["english"]).toBeUndefined();
     service.workSetKind("山田太郎", "term");
-    expect(english("山田太郎")).toBe("Taro");
+    expect(word("山田太郎").english).toBe("Taro");
   });
 
   it("lists every glossary word that stands in the text, also ones added to the glossary later, and lets the user write the English name of a draft", async () => {
@@ -590,28 +598,96 @@ describe("translating a document", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
   });
 
-  it("says who speaks each line, lets the user change it, and works out the rest", async () => {
+  it("suggests who says each line, and a speaker is only told to the model once the user has confirmed it", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await sync(service, "「遅いですよ」と花子は言った。\n\n「ごめん」と太郎は言った。\n\n「いいえ」\n\n「本当に？」");
-    // Two people are named; the lines that stand alone are said in turn.
-    const speakers = () => service.workGet()!.lines.map((l) => l.speaker);
-    expect(speakers()).toEqual(["花子", "太郎", "花子", "太郎"]);
+    // Two people are named; the lines that stand alone are said in turn. The rules only suggest it.
+    const lines = () => service.workGet()!.lines;
+    expect(lines().map((l) => l.suggested)).toEqual(["花子", "太郎", "花子", "太郎"]);
+    expect(lines().map((l) => l.speaker)).toEqual([null, null, null, null]);
+    service.workSetEnglish("花子", "Hanako");
+    await service.workTranslate({ ...model });
+    expect(bodies(lm)[0]!.messages[1]!.content).not.toContain("is said by"); // nothing is confirmed yet
+
+    // The user confirms one, and sets another.
+    service.workAcceptSpeaker(0);
     service.workSetSpeaker(2, "太郎");
-    expect(speakers()[2]).toBe("太郎");
+    expect(lines().map((l) => [l.speaker, l.suggested])).toEqual([["花子", null], [null, "太郎"], ["太郎", null], [null, "太郎"]]);
     // A person of the knowledge base who is not written in the text can be picked, and joins the words.
     const sato = service.knowledgeCreate("character", "佐藤").id;
     service.knowledgeSetFile(sato, service.knowledgeFile(sato).text.replace(/english:.*/, "english: Sato"));
     service.workSetSpeaker(3, "佐藤");
-    expect(speakers()[3]).toBe("佐藤");
+    expect(lines()[3]!.speaker).toBe("佐藤");
     expect(words(service).some((n) => n.source === "佐藤")).toBe(true);
-    service.workSetSpeaker(3, null);
-    expect(service.workGuessSpeakers().lines.map((l) => l.speaker)[3]).toBe("花子"); // after the line the user gave to 太郎
-    // The speakers are sent with the paragraph they speak in.
-    service.workSetEnglish("花子", "Hanako");
+    // Only what is confirmed is sent with the paragraph.
+    await service.workTranslate({ ...model, redo: true });
+    expect(bodies(lm).at(-4)!.messages[1]!.content).toContain("The line 「遅いですよ」 is said by Hanako.");
+    expect(bodies(lm).at(-3)!.messages[1]!.content).not.toContain("is said by");
+    // Everything that is still suggested is confirmed at once.
+    expect(service.workAcceptAll().lines.map((l) => l.speaker)).toEqual(["花子", "太郎", "太郎", "佐藤"].map((s, i) => (i === 1 ? "太郎" : s)));
+  });
+
+  it("tells the model the dictionary's names as suggestions, and the names the user confirmed as the names to use", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "鈴木花子は山田太郎に会った。");
+    service.workSetEnglish("山田太郎", "Taro Yamada");
     await service.workTranslate({ ...model });
-    expect(bodies(lm)[0]!.messages[1]!.content).toContain("The line 「遅いですよ」 is said by Hanako.");
+    const sent = bodies(lm)[0]!.messages[1]!.content;
+    expect(sent).toContain("GLOSSARY:\n- 山田太郎 => Taro Yamada");
+    expect(sent).toContain("SUGGESTED NAMES (a guess at how to write a name, not a rule; use it unless it is clearly wrong, and write the name the same way every time):\n- 鈴木花子 => Suzuki Hanako");
+    expect(sent.split("SUGGESTED NAMES")[1]!.split("\n\n")[0]).not.toContain("山田太郎"); // confirmed: not a suggestion
+  });
+
+  it("reads the translation for suggestions with short questions, and throws away an answer that does not pass its check", async () => {
+    const english = ["Taro Yamada laughed.", "Hanako Suzuki cried. She sat down.", '"Good morning," Taro Yamada said.'];
+    let k = 0;
+    const questions: string[] = [];
+    const lm = await fakeLmStudio({
+      paragraph: () => english[k++]!,
+      answer: (_system, user) => {
+        questions.push(user);
+        if (user.includes("stand for 「山田太郎」")) return "Taro Yamada";
+        if (user.includes("stand for 「鈴木花子」")) return "Suzuki Hanako"; // not written like that in the translation: dropped
+        if (user.includes("what is the gender of 「鈴木花子」")) return "A"; // male: the pronouns say she, so dropped
+        if (user.includes("what is the gender of 「山田太郎」")) return "A";
+        if (user.includes("Who says it?")) return "A";
+        return "NONE";
+      },
+    });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "山田太郎は笑った。\n\n鈴木花子は泣いた。彼女は座った。\n\n「おはよう」と山田太郎は言った。");
+    await service.workTranslate({ ...model });
+    const done = await service.workSuggest({ ...model });
+    const word = (source: string) => done.words.find((n) => n.source === source)!;
+    // The name was copied from the translation, so it is suggested (in place of the dictionary's reading).
+    expect(word("山田太郎").suggestions?.["english"]).toEqual(["Taro Yamada"]);
+    expect(word("鈴木花子").suggestions?.["english"]).toEqual(["Suzuki Hanako"]); // the dictionary's reading stays: nothing better came back
+    expect(word("山田太郎").suggestions?.["gender"]).toEqual(["male"]);
+    expect(word("鈴木花子").suggestions?.["gender"]).toEqual(["female"]); // the rules' suggestion from the text, not the model's wrong answer
+    expect(done.lines[0]!.suggested).toBe("山田太郎");
+    expect(done.reading ?? null).toBeNull();
+    // Nothing was confirmed.
+    expect(word("山田太郎").english).toBe("");
+    expect(done.lines[0]!.speaker).toBeNull();
+    // The questions are short: they have the paragraphs that matter, and a letter or copied words as the answer.
+    expect(questions.every((q) => q.length < 1500)).toBe(true);
+    expect(questions.find((q) => q.includes("Who says it?"))).toContain("A) Taro Yamada\nB) Suzuki Hanako\nC) not stated");
+  });
+
+  it("does not suggest, as the speaker of a line, the person the line is spoken to", async () => {
+    const lm = await fakeLmStudio({ paragraph: () => '"Taro, you are fired."', answer: (_system, user) => (user.includes("Who says it?") ? "A" : "NONE") });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "「太郎、お前はクビだ」\n\n花子は黙った。\n\n太郎は立ち上がった。");
+    await service.workTranslate({ ...model });
+    const done = await service.workSuggest({ ...model });
+    // The first option is 太郎 (written in the paragraph itself), but the line names him as spoken to: the model's answer is thrown away.
+    expect(done.lines[0]!.suggested).not.toBe("太郎");
   });
 
   it("follows a change in the text: a paragraph that is the same keeps its translation, and the others start again", async () => {

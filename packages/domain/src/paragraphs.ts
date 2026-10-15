@@ -10,6 +10,7 @@ import {
 } from "./labels.js";
 
 const CONTEXT_LABEL = "CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):";
+const SUGGESTIONS_LABEL = "SUGGESTED NAMES (a guess at how to write a name, not a rule; use it unless it is clearly wrong, and write the name the same way every time):";
 const NEXT_LABEL = "NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -45,7 +46,7 @@ export interface Pair {
  */
 export function paragraphSystem(styleGuidance: string, sourceLanguage: string, targetLanguage: string): string {
   return [
-    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), CONTEXT and NEXT (the paragraphs around the one to translate, with their translations when there are any; for reference only, never translate them), and the ${sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE.`,
+    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), SUGGESTED NAMES (guesses at names, which you may correct), CONTEXT and NEXT (the paragraphs around the one to translate, with their translations when there are any; for reference only, never translate them), and the ${sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE.`,
     `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}`,
     `Your task: translate the paragraph, all of it and only it, so that it fits what comes before. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not omit or sanitize anything, and do not add comments.`,
     `Reply with the translation of the paragraph only, as one paragraph: no labels, and nothing about the other paragraphs.`,
@@ -58,6 +59,8 @@ export interface ParagraphRequest {
   notes: readonly string[];
   sourceLanguage: string;
   targetLanguage: string;
+  /** Names that are only suggested (a dictionary's reading, what the model wrote before): told as suggestions, not as the name to use. */
+  suggestions?: readonly { source: string; suggestion: string; aliases?: string[] | undefined }[];
   /** The paragraphs before this one with their translations, oldest first (for the first paragraph of a block: the end of the block before). */
   before: readonly Pair[];
   paragraph: string;
@@ -77,6 +80,8 @@ export function paragraphMessage(r: ParagraphRequest): string {
   if (lines.length > 0) parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
   const wordNotes = wordNoteLines(r.glossary);
   if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
+  const suggested = (r.suggestions ?? []).map((g) => `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => ${g.suggestion}`);
+  if (suggested.length > 0) parts.push(`${SUGGESTIONS_LABEL}\n${suggested.join("\n")}`);
   if (r.before.length > 0) parts.push(`${CONTEXT_LABEL}\n${r.before.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.next.length > 0) parts.push(`${NEXT_LABEL}\n${r.next.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);

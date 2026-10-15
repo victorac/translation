@@ -13,6 +13,7 @@ import {
   occurrencesOf,
   readWords,
   readingLetters,
+  suggestionsFor,
   syncParagraphs,
   withoutLongerNames,
   type KnownWord,
@@ -31,12 +32,14 @@ describe("reading the text for words", () => {
     expect(guessKind("鈴木花子")).toBe("character");
   });
 
-  it("makes English names of people and families from the readings, and leaves other kinds for the user with the reading as help", () => {
+  it("suggests English names of people and families from the readings, and leaves other kinds for the user with the reading as help", () => {
     const words = read("鈴木花子は山田家の桜台学園に通う。", [], ["鈴木花子", "山田家", "桜台学園"]);
     const by = (s: string) => words.find((n) => n.source === s)!;
-    expect(by("鈴木花子")).toMatchObject({ english: "Suzuki Hanako", kind: "character", known: false });
-    expect(by("山田家")).toMatchObject({ english: "Yamada family", kind: "family" });
+    // What the dictionary reads is a suggestion, not the name.
+    expect(by("鈴木花子")).toMatchObject({ english: "", suggestions: { english: ["Suzuki Hanako"] }, kind: "character", known: false });
+    expect(by("山田家")).toMatchObject({ english: "", suggestions: { english: ["Yamada family"] }, kind: "family" });
     expect(by("桜台学園")).toMatchObject({ english: "", kind: "organization", reading: "sakuradai gakuen" });
+    expect(by("桜台学園").suggestions).toBeUndefined();
   });
 
   it("uses what the glossary already says, and does not offer it as new", () => {
@@ -46,8 +49,8 @@ describe("reading the text for words", () => {
   });
 
   it("keeps what the user set on a draft word when the text is read again", () => {
-    const draft: KnownWord = { source: "桜台学園", english: "Sakuradai Academy", kind: "organization", aliases: [], draft: true, hint: "a school", use: false };
-    expect(read("桜台学園に通う。", [draft])[0]).toMatchObject({ english: "Sakuradai Academy", draft: true, hint: "a school", use: false });
+    const draft: KnownWord = { source: "桜台学園", english: "Sakuradai Academy", kind: "organization", aliases: [], draft: true, hint: "a school", use: false, suggestions: { gender: ["female"] } };
+    expect(read("桜台学園に通う。", [draft])[0]).toMatchObject({ english: "Sakuradai Academy", draft: true, hint: "a school", use: false, suggestions: { gender: ["female"] } });
   });
 
   it("adds a given name written alone to the full name", () => {
@@ -61,7 +64,7 @@ describe("reading the text for words", () => {
     const words = read(text, [], ["ジョン", "ジョン・スミス", "銀の剣", "魔力石", "ポーション"]);
     const by = (s: string) => words.find((n) => n.source === s)!;
     expect(words.some((n) => n.source === "ジョン")).toBe(false);
-    expect(by("ジョン・スミス")).toMatchObject({ kind: "character", english: "Jon Sumisu", aliases: ["ジョン"] });
+    expect(by("ジョン・スミス")).toMatchObject({ kind: "character", suggestions: { english: ["Jon Sumisu"] }, aliases: ["ジョン"] });
     expect(by("銀の剣").kind).toBe("organization"); // 旅団『…』
     expect(by("魔力石").kind).toBe("term");
     expect(by("ポーション")).toMatchObject({ kind: "term", english: "" }); // not guessed for a term
@@ -74,42 +77,46 @@ describe("who says each line", () => {
   it("is worked out from the narration and from taking turns", () => {
     const text = "「遅いですよ」と花子は言った。\n\n「ごめん」と山田太郎は言った。\n\n「いいえ」";
     const lines = labelDocument(text, people);
-    expect(lines.map((l) => l.speaker)).toEqual(["花子", "山田太郎", "花子"]);
+    // What the rules work out is only suggested.
+    expect(lines.map((l) => l.speaker)).toEqual([null, null, null]);
+    expect(lines.map((l) => l.suggested)).toEqual(["花子", "山田太郎", "花子"]);
     expect(lines.map((l) => l.paragraph)).toEqual([0, 1, 2]);
     expect(lines.map((l) => l.text)).toEqual(["「遅いですよ」", "「ごめん」", "「いいえ」"]);
   });
 
   it("leaves the lines unlabeled when fewer than two people are known", () => {
-    expect(labelDocument("「やあ」\n「うん」", []).map((l) => l.speaker)).toEqual([null, null]);
+    expect(labelDocument("「やあ」\n「うん」", []).map((l) => l.suggested)).toEqual([null, null]);
   });
 
   it("keeps what the user set", () => {
     const lines = labelDocument("「遅いですよ」と花子は言った。\n\n「ごめん」と山田太郎は言った。", people, [null, "花子"]);
-    expect(lines.map((l) => l.speaker)).toEqual(["花子", "花子"]);
+    expect(lines.map((l) => [l.speaker, l.suggested])).toEqual([[null, "花子"], ["花子", null]]);
   });
 
   it("carries a conversation on across a long text, so lines far from where the people are named are still labeled in turns", () => {
     const talk = Array.from({ length: 150 }, (_, i) => `「はい${i}」`).join("\n");
     const lines = labelDocument(`「遅いですよ」と花子は言った。\n「ごめん」と山田太郎は言った。\n${talk}`, people);
     expect(lines).toHaveLength(152);
-    expect(lines.map((l) => l.speaker)).toEqual(lines.map((_, i) => (i % 2 === 0 ? "花子" : "山田太郎")));
+    expect(lines.map((l) => l.suggested)).toEqual(lines.map((_, i) => (i % 2 === 0 ? "花子" : "山田太郎")));
   });
 
   it("sees a name that stands for a person as that person, for who speaks and who is spoken to", () => {
     const words: Word[] = [word("山田太郎", "Taro", { aliases: ["山田"] }), word("花子", "Hanako"), word("山田", "Yamada", { kind: "term" })];
     // 山田 is spoken to, so the line is not his: it is Hanako's, and the reply is his.
-    expect(labelDocument("花子は笑った。\n「山田、お待たせ」\n「遅いぞ」", words).map((l) => l.speaker)).toEqual(["花子", "山田太郎"]);
+    expect(labelDocument("花子は笑った。\n「山田、お待たせ」\n「遅いぞ」", words).map((l) => l.suggested)).toEqual(["花子", "山田太郎"]);
   });
 });
 
 describe("what is sent with a paragraph", () => {
   const words: Word[] = [word("山田太郎", "Taro"), word("花子", "Hanako", { gender: "female" })];
   const text = "ぼくは待った。\n「遅いですよ」と花子は言った。\n「ごめん」と山田太郎は言った。";
-  const lines = labelDocument(text, words);
+  const lines = labelDocument(text, words, ["花子", null]);
 
-  it("states who says the lines of the paragraph and the gender of the people it names, in the translation's names", () => {
+  it("states who says the lines of the paragraph, as the user confirmed it, and the gender of the people it names, in the translation's names", () => {
     expect(notesFor(words, lines, { index: 1, text: "「遅いですよ」と花子は言った。" })).toEqual(["Hanako is a woman or girl (she/her).", "The line 「遅いですよ」 is said by Hanako."]);
     expect(notesFor(words, lines, { index: 0, text: "ぼくは待った。" })).toEqual([]);
+    // A speaker that is only suggested is not told to the model.
+    expect(notesFor(words, lines, { index: 2, text: "「ごめん」と山田太郎は言った。" })).toEqual([]);
   });
 
   it("sends only words that have an English form, or a note", () => {
@@ -134,9 +141,10 @@ describe("gender", () => {
     expect(guessGender("花子と太郎が来た。彼女は笑った。", ["花子"], ["太郎"])).toBe(null);
   });
 
-  it("is found by reading the text, and kept for known people", () => {
+  it("is suggested from the text, and kept for known people", () => {
     const words = read("鈴木花子。彼女は笑った。", [], ["鈴木花子"]);
-    expect(words[0]!.gender).toBe("female");
+    expect(words[0]!.gender).toBeNull();
+    expect(words[0]!.suggestions?.["gender"]).toEqual(["female"]); // the text says so, but it is only a suggestion until it is confirmed
     expect(read("花子は笑った。", [{ source: "花子", english: "Hanako", kind: "character", aliases: [], gender: "female" }])[0]!.gender).toBe("female");
   });
 });
@@ -212,5 +220,17 @@ describe("when the text changes", () => {
 
   it("reads the letters of a reading", () => {
     expect(readingLetters(["ヤマダ", "タロウ"])).toBe("yamada taro");
+  });
+});
+
+describe("suggested names", () => {
+  it("are listed for the words of a paragraph that have no name yet, and not for the ones that have one or are ignored", () => {
+    const words: Word[] = [
+      word("鈴木花子", "", { suggestions: { english: ["Suzuki Hanako"] }, aliases: ["花子"] }),
+      word("山田太郎", "Taro", { suggestions: { english: ["Yamada Taro"] } }),
+      word("桜台学園", "", { kind: "organization", suggestions: { english: ["Sakuradai"] }, use: false }),
+    ];
+    expect(suggestionsFor(words, "花子は桜台学園で山田太郎に会った。")).toEqual([{ source: "鈴木花子", suggestion: "Suzuki Hanako", aliases: ["花子"] }]);
+    expect(suggestionsFor(words, "何もない。")).toEqual([]);
   });
 });

@@ -97,13 +97,13 @@ const entrySchema = z.object({
   updatedAt: iso,
 });
 
-const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), guessed: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
+const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), suggestions: z.record(z.string().max(100), z.array(z.string().max(300)).max(5)).optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
 
 const workSchema = z.object({
   documentId: id,
   source: z.string().max(5_000_000),
   words: z.array(wordSchema).max(5000),
-  lines: z.array(z.object({ paragraph: count, text: str, speaker: z.string().max(200).nullable() })).max(100_000),
+  lines: z.array(z.object({ paragraph: count, text: str, speaker: z.string().max(200).nullable(), suggested: z.string().max(200).nullable().optional() })).max(100_000),
   paragraphs: z.array(z.object({ text: str, translation: str, issue: z.string().max(5000).nullable().optional() })).max(200_000),
   error: z.string().max(5000).nullable().optional(),
 });
@@ -117,7 +117,7 @@ const legacySchema = z.object({
         text: str,
         translation: str,
         parts: z.array(str).max(10_000).default([]),
-        interpretation: z.object({ names: z.array(wordSchema).max(500), lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000) }).nullable(),
+        interpretation: z.object({ names: z.array(wordSchema.extend({ guessed: z.boolean().optional() })).max(500), lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000) }).nullable(),
       }),
     )
     .max(20_000),

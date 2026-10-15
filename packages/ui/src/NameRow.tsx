@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon, Cross2Icon } from "@radix-ui/react-icons";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon } from "@radix-ui/react-icons";
 import { Badge, Button, Flex, IconButton, Switch, Text, TextField } from "@radix-ui/themes";
 import type { AttributeDef, Word } from "@ltw/domain";
 import { Pick } from "./Pick";
@@ -41,8 +41,28 @@ function TextBox({ value, label, placeholder, onSave }: { value: string; label: 
   );
 }
 
+/** A value that is only suggested (by the dictionary, or by the model from the translation): marked as such, to use or to drop. */
+function Suggested({ text, onUse, onDismiss }: { text: string; onUse: () => void; onDismiss: () => void }) {
+  return (
+    <Flex align="center" gap="1" className="suggested">
+      <Badge size="1" variant="soft" color="amber">
+        suggested
+      </Badge>
+      <Text size="1" color="gray" truncate>
+        {text}
+      </Text>
+      <Button variant="ghost" size="1" onClick={onUse} title="Use this value">
+        <CheckIcon /> Use
+      </Button>
+      <IconButton variant="ghost" size="1" color="gray" onClick={onDismiss} aria-label="Drop this suggestion" title="Drop this suggestion">
+        <Cross2Icon />
+      </IconButton>
+    </Flex>
+  );
+}
+
 /**
- * One word of the block. The line says what it is: the word, its English name, and whether it is used in this block. Opening it shows
+ * One word of the text. The line says what it is: the word, its English name, and whether it is used in this block. Opening it shows
  * everything about it as a tree: the English name, the kind and every attribute its kind has, each one editable and saved as it changes.
  */
 export function NameRow({
@@ -58,6 +78,8 @@ export function NameRow({
   onHint,
   onKind,
   onAttribute,
+  onAcceptSuggestion,
+  onDismissSuggestion,
 }: {
   name: Word;
   classes: ClassInfo[];
@@ -72,9 +94,13 @@ export function NameRow({
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
   onAttribute: (key: string, values: string[]) => void;
+  onAcceptSuggestion: (key: string) => void;
+  onDismissSuggestion: (key: string) => void;
 }) {
   const def = classes.find((c) => c.name === name.kind);
   const attrs = name.attrs ?? {};
+  const suggestions = name.suggestions ?? {};
+  const suggestedEnglish = name.english.trim() === "" ? (suggestions["english"]?.[0] ?? "") : "";
   const used = name.use !== false;
   const shown = (t: TopicRef) => (t.english.trim() !== "" ? `${t.english.trim()} (${t.source})` : t.source);
   const poolFor = (a: AttributeDef) => topics.filter((t) => t.source !== name.source && (!a.target || t.category === a.target));
@@ -90,9 +116,20 @@ export function NameRow({
             {name.source}
           </Text>
         </Button>
-        <Text size="2" color={name.english.trim() === "" && !name.hint ? "amber" : undefined} className="name-english" title={name.hint ? `Note to the model: ${name.hint}` : undefined}>
-          {name.english.trim() !== "" ? name.english : name.hint ? `note: ${name.hint}` : "no English name"}
-        </Text>
+        {suggestedEnglish !== "" ? (
+          <Flex align="center" gap="1" className="name-english">
+            <Text size="2" color="gray" style={{ fontStyle: "italic" }} truncate title="Only suggested: not confirmed yet">
+              {suggestedEnglish}
+            </Text>
+            <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Use ${suggestedEnglish} as the English name of ${name.source}`} title="Use this name">
+              <CheckIcon />
+            </IconButton>
+          </Flex>
+        ) : (
+          <Text size="2" color={name.english.trim() === "" && !name.hint ? "amber" : undefined} className="name-english" title={name.hint ? `Note to the model: ${name.hint}` : undefined}>
+            {name.english.trim() !== "" ? name.english : name.hint ? `note: ${name.hint}` : "no English name"}
+          </Text>
+        )}
         <Text as="label" size="1" color={used ? "green" : "gray"} weight={used ? "medium" : "regular"} title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
           <Flex align="center" gap="1">
             <Switch size="1" color="green" checked={used} onCheckedChange={onUse} aria-label={`Use ${name.source}`} />
@@ -104,7 +141,10 @@ export function NameRow({
         <ul className="tree" aria-label={`Details of ${name.source}`}>
           <li>
             <Text size="1" color="gray">english</Text>
-            <TextBox value={name.english} label={`English name of ${name.source}`} placeholder="English name" onSave={onEnglish} />
+            <div className="tree-field">
+              <TextBox value={name.english} label={`English name of ${name.source}`} placeholder={suggestedEnglish !== "" ? suggestedEnglish : "English name"} onSave={onEnglish} />
+              {suggestedEnglish !== "" && <Suggested text={suggestedEnglish} onUse={() => onAcceptSuggestion("english")} onDismiss={() => onDismissSuggestion("english")} />}
+            </div>
           </li>
           <li>
             <Text size="1" color="gray">note</Text>
@@ -128,7 +168,10 @@ export function NameRow({
               return (
                 <li key={a.key}>
                   {key}
-                  <Pick size="1" label={`${a.key} of ${name.source}`} value={chosen[0] ?? ""} options={[{ value: "", label: "not set" }, ...(a.choices ?? []).map((c) => ({ value: c, label: c }))]} onChange={(v) => onAttribute(a.key, v === "" ? [] : [v])} />
+                  <div className="tree-field">
+                    <Pick size="1" label={`${a.key} of ${name.source}`} value={chosen[0] ?? ""} options={[{ value: "", label: "not set" }, ...(a.choices ?? []).map((c) => ({ value: c, label: c }))]} onChange={(v) => onAttribute(a.key, v === "" ? [] : [v])} />
+                    {chosen.length === 0 && suggestions[a.key]?.[0] && <Suggested text={suggestions[a.key]![0]!} onUse={() => onAcceptSuggestion(a.key)} onDismiss={() => onDismissSuggestion(a.key)} />}
+                  </div>
                 </li>
               );
             const pool = poolFor(a);

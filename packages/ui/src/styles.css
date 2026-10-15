@@ -214,3 +214,6 @@ details > summary { cursor: pointer; }
 .kbf-list .rt-Button { min-width: 0; max-width: 100%; }
 .kbf-tabs { overflow-x: auto; flex: none; }
 .kbf-tab { flex: none; }
+.tree-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.suggested { min-width: 0; flex-wrap: nowrap; }
+.suggested .rt-Badge { flex: none; }

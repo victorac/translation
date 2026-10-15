@@ -1,6 +1,16 @@
 import {
   allPrompts,
   glossaryFor,
+  addressedIn,
+  occurrencesOf,
+  suggestionsFor,
+  nameQuestion,
+  copiedWords,
+  choiceQuestion,
+  chosenOption,
+  pronounGender,
+  speakerQuestion,
+  type Evidence,
   glossaryHits,
   labelDocument,
   readWords,
@@ -230,7 +240,10 @@ export class WorkspaceService {
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
       knowledge: { entries: this.knowledge.everything(), classes: this.classesText },
-      work: [...this.workByDoc.values(), ...(this.work ? [this.work] : [])].map((g) => structuredClone(g)),
+      work: [...this.workByDoc.values(), ...(this.work ? [this.work] : [])].map((g) => {
+        const { reading: _reading, ...saved } = structuredClone(g);
+        return saved;
+      }),
     };
   }
 
@@ -438,7 +451,10 @@ export class WorkspaceService {
       if (e) {
         const gender = (e.attrs["gender"] ?? [])[0];
         const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
-        return [{ ...n, draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+        // A suggestion is dropped once the topic has that field itself.
+        const suggestions = Object.fromEntries(Object.entries(n.suggestions ?? {}).filter(([key]) => (key === "english" ? e.target.trim() === "" : !(e.attrs[key] ?? []).length)));
+        const { suggestions: _old, ...rest } = n;
+        return [{ ...rest, ...(Object.keys(suggestions).length > 0 ? { suggestions } : {}), draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
       }
       // A word that is not in the knowledge base yet is a draft: it stays as the user left it. One that was in it and was deleted is gone.
       if (!n.draft) return [];
@@ -446,7 +462,10 @@ export class WorkspaceService {
       const gender = (draft.attrs?.["gender"] ?? [])[0];
       return [{ ...draft, refersTo: (draft.attrs?.["refers to"] ?? [])[0] ?? null, gender: gender === "female" || gender === "male" ? gender : null }];
     });
-    for (const l of w.lines) if (l.speaker && !w.words.some((n) => n.source === l.speaker)) l.speaker = null;
+    for (const l of w.lines) {
+      if (l.speaker && !w.words.some((n) => n.source === l.speaker)) l.speaker = null;
+      if (l.suggested && !w.words.some((n) => n.source === l.suggested)) l.suggested = null;
+    }
     return w;
   }
 
@@ -462,26 +481,27 @@ export class WorkspaceService {
     const nicknames = (e: KnowledgeEntry) => terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).some((r) => r === e.source)).map((t) => t.source);
     const known: KnownWord[] = terms.map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
     for (const n of this.work?.words ?? []) {
-      if (n.draft && !known.some((g) => g.source === n.source)) known.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}), ...(n.hint ? { hint: n.hint } : {}), ...(n.use === false ? { use: false } : {}), ...(n.guessed ? { guessed: true } : {}) });
+      if (n.draft && !known.some((g) => g.source === n.source)) known.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}), ...(n.hint ? { hint: n.hint } : {}), ...(n.use === false ? { use: false } : {}), ...(n.suggestions ? { suggestions: n.suggestions } : {}) });
     }
     return known;
   }
 
-  /** The speakers set before, by line, for a text: a line keeps its speaker when its words are the same and it is the same time they are said. */
-  private presetFor(old: readonly WorkLine[], text: string): (string | null)[] {
-    const said = new Map<string, string | null>();
+  /** What was set or suggested for the lines of the work so far, for a text: a line keeps it when its words are the same and it is the same time they are said. */
+  private carryLines(old: readonly WorkLine[], text: string): { confirmed: (string | null)[]; suggested: (string | null)[] } {
+    const before = new Map<string, WorkLine>();
     const seen = new Map<string, number>();
     for (const l of old) {
       const n = seen.get(l.text) ?? 0;
       seen.set(l.text, n + 1);
-      said.set(`${l.text}#${n}`, l.speaker);
+      before.set(`${l.text}#${n}`, l);
     }
     const counted = new Map<string, number>();
-    return findQuotes(text).map((q) => {
+    const found = findQuotes(text).map((q) => {
       const n = counted.get(q.text) ?? 0;
       counted.set(q.text, n + 1);
-      return said.get(`${q.text}#${n}`) ?? null;
+      return before.get(`${q.text}#${n}`);
     });
+    return { confirmed: found.map((l) => l?.speaker ?? null), suggested: found.map((l) => l?.suggested ?? null) };
   }
 
   /**
@@ -510,11 +530,18 @@ export class WorkspaceService {
       const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
       if (e && n.aliases.some((a) => !e.aliases.includes(a))) this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: [...new Set([...e.aliases, ...n.aliases])], attrs: e.attrs, text: "", about: null });
     }
+    // What was suggested before (by the model, from the translation) is kept for a word and a line that are still there.
+    for (const w of words) {
+      const before = old?.words.find((o) => o.source === w.source)?.suggestions;
+      if (before) w.suggestions = { ...(w.suggestions ?? {}), ...before };
+    }
+    const carried = this.carryLines(old?.lines ?? [], text);
+    const lines = labelDocument(text, words, carried.confirmed);
     this.work = {
       documentId: input.documentId,
       source: text,
       words,
-      lines: labelDocument(text, words, this.presetFor(old?.lines ?? [], text)),
+      lines: lines.map((l, i) => (l.speaker === null && carried.suggested[i] ? { ...l, suggested: carried.suggested[i]! } : l)),
       paragraphs: syncParagraphs(old?.paragraphs ?? [], text),
       error: null,
     };
@@ -540,16 +567,58 @@ export class WorkspaceService {
       w.words.push({ source: speaker, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
     }
     w.lines[line]!.speaker = speaker;
+    if (speaker !== null) w.lines[line]!.suggested = null;
     this.workChanged();
     return this.workView();
   }
 
-  /** Works out who says the lines whose speaker is not known yet, from the words and the conversation. What is set stays. */
-  workGuessSpeakers(): Work {
+  /** Confirms the suggested speaker of a line. */
+  workAcceptSpeaker(line: number): Work {
+    const w = this.need();
+    const l = w.lines[line];
+    if (!l?.suggested) throw new UserError("no_suggestion", "There is nothing suggested for that line.");
+    return this.workSetSpeaker(line, l.suggested);
+  }
+
+  /** Confirms a suggestion of a word (its English name, its gender, another attribute): it becomes the value, as if the user had written it. */
+  workAcceptSuggestion(source: string, key: string): Work {
+    const { name } = this.wordOf(source);
+    const value = name.suggestions?.[key]?.[0];
+    if (value === undefined) throw new UserError("no_suggestion", "There is nothing suggested for that.");
+    if (key === "english") return this.workSetEnglish(source, value);
+    return this.workSetAttribute(source, key, [value]);
+  }
+
+  /** Drops a suggestion of a word. */
+  workDismissSuggestion(source: string, key: string): Work {
+    const { name } = this.wordOf(source);
+    this.dropSuggestion(name, key);
+    this.workChanged();
+    return this.workView();
+  }
+
+  private dropSuggestion(name: Word, key: string): void {
+    if (!name.suggestions) return;
+    delete name.suggestions[key];
+    if (Object.keys(name.suggestions).length === 0) delete name.suggestions;
+  }
+
+  /** Confirms every suggestion: of the words (English names and attributes) and of the lines. */
+  workAcceptAll(): Work {
     const w = this.need();
     this.workView();
-    const fresh = labelDocument(w.source, w.words, w.lines.map((l) => l.speaker));
-    w.lines = w.lines.map((l, i) => (l.speaker === null && fresh[i]?.text === l.text ? { ...l, speaker: fresh[i]!.speaker } : l));
+    for (const n of [...w.words]) {
+      for (const key of Object.keys(n.suggestions ?? {})) {
+        try {
+          this.workAcceptSuggestion(n.source, key);
+        } catch {
+          this.dropSuggestion(n, key); // not something the classes allow
+        }
+      }
+    }
+    w.lines.forEach((l, i) => {
+      if (l.speaker === null && l.suggested) this.workSetSpeaker(i, l.suggested);
+    });
     this.workChanged();
     return this.workView();
   }
@@ -582,6 +651,7 @@ export class WorkspaceService {
   workSetAttribute(source: string, key: string, values: string[]): Work {
     const { name, entry } = this.wordOf(source);
     this.checkAttribute(entry?.category ?? name.kind, key, values);
+    this.dropSuggestion(name, key);
     if (entry) {
       this.knowledge.patch(entry.id, (x) => {
         if (values.length === 0) delete x.attrs[key];
@@ -602,6 +672,7 @@ export class WorkspaceService {
   /** The English name of a word, as the user writes it. */
   workSetEnglish(source: string, english: string): Work {
     const { name, entry } = this.wordOf(source);
+    if (english.trim() !== "") this.dropSuggestion(name, "english");
     if (entry) {
       this.knowledge.patch(entry.id, (x) => {
         x.target = english.trim();
@@ -610,7 +681,6 @@ export class WorkspaceService {
       this.knowledgeChanged();
     } else {
       name.english = english.trim();
-      delete name.guessed;
     }
     this.workChanged();
     return this.workView();
@@ -637,6 +707,8 @@ export class WorkspaceService {
     const target = parseClasses(this.classesText).classes.find((c) => c.name === kind);
     if (!target) throw new UserError("bad_kind", `There is no kind of topic called ${kind}.`);
     const wasName = (name.kind === "character" || name.kind === "family") && kind !== "character" && kind !== "family";
+    // What a reading suggested as the name of a person means nothing for anything else.
+    if (wasName) this.dropSuggestion(name, "english");
     if (entry) {
       this.knowledge.patch(entry.id, (x) => {
         // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
@@ -648,10 +720,6 @@ export class WorkspaceService {
       });
       this.knowledgeChanged();
     } else {
-      if (wasName && name.guessed) {
-        name.english = "";
-        delete name.guessed;
-      }
       name.kind = kind as NameKind;
       const attrs = { ...(name.attrs ?? {}) };
       for (const k of Object.keys(attrs)) if (!target.attributes.some((a) => a.key === k)) delete attrs[k];
@@ -739,13 +807,14 @@ export class WorkspaceService {
     const paragraph = w.paragraphs[k]!.text;
     const glossary = glossaryFor(w.words, paragraph);
     const notes = notesFor(w.words, w.lines, { index: k, text: paragraph });
+    const suggestions = suggestionsFor(w.words, paragraph);
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
     let reject: string | undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const bare = { glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
+      const bare = { glossary, notes, suggestions, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
       let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
       if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
       // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.
@@ -805,6 +874,118 @@ export class WorkspaceService {
         .join("");
     }
     return { text, issue };
+  }
+
+  /**
+   * Reads the translation for suggestions, with short questions to the model that each have one answer that can be checked in code:
+   * how each word was written in the translation (words copied from it), what gender a person is (a letter, checked against the
+   * pronouns), other attributes with a list of choices (a letter), and who says each line (a letter from the people nearby).
+   * An answer that does not pass its check is thrown away. Nothing is confirmed: a suggestion becomes a value only when the user accepts it.
+   */
+  async workSuggest(input: ModelInput): Promise<Work> {
+    const w = this.need();
+    this.workView();
+    const abort = this.beginSideRequest();
+    const classes = parseClasses(this.classesText).classes;
+    const sources = w.words.map((n) => n.source);
+    const namesOf = (n: Word) => [n.source, ...n.aliases];
+    const translated = (k: number) => w.paragraphs[k]!.translation.trim() !== "";
+    // The paragraphs a word stands in, that have a translation: the first three are the evidence.
+    const evidenceFor = (n: Word): { at: number; pair: Evidence }[] =>
+      w.paragraphs.flatMap((p, k) => (translated(k) && occurrencesOf(p.text, namesOf(n), sources).length > 0 ? [{ at: k, pair: { source: p.text, translation: p.translation.trim() } }] : [])).slice(0, 3);
+    const label = (n: Word) => n.english.trim() || n.suggestions?.["english"]?.[0] || n.source;
+    type Task = { count: number; run: () => Promise<void> };
+    const tasks: Task[] = [];
+    const ask = async (q: { system: string; user: string }): Promise<string | null> => {
+      // As many of the paragraphs as fit: a question that does not fit the context is skipped.
+      if (estimateTokens(q.system) + estimateTokens(q.user) + 32 + DEFAULTS.messageOverheadTokens > input.contextLimit) return null;
+      const reply = await this.askModel({ backend: input.backend, modelId: input.modelId, maxOutputTokens: 32, temperature: 0, messages: [{ role: "system", content: q.system }, { role: "user", content: q.user }], practiceReply: () => "NONE", allowEmpty: true }, abort);
+      return reply === null ? null : reply.trim();
+    };
+
+    // How each word was written in the translation.
+    for (const n of w.words) {
+      if (n.use === false || n.english.trim() !== "") continue;
+      const ev = evidenceFor(n);
+      if (ev.length === 0) continue;
+      tasks.push({
+        count: 1,
+        run: async () => {
+          const reply = await ask(nameQuestion(n.source, ev.map((e) => e.pair), input.sourceLanguage, input.targetLanguage));
+          const copied = reply === null ? null : copiedWords(reply, ev.map((e) => e.pair.translation));
+          if (copied) n.suggestions = { ...(n.suggestions ?? {}), english: [copied] };
+        },
+      });
+    }
+    // The gender of a person, and the other attributes that are chosen from a list.
+    for (const n of w.words) {
+      if (n.use === false) continue;
+      const ev = evidenceFor(n);
+      if (ev.length === 0) continue;
+      for (const def of classes.find((c) => c.name === n.kind)?.attributes ?? []) {
+        if (def.kind !== "choice" || !def.choices || (n.attrs?.[def.key] ?? []).length > 0 || n.suggestions?.[def.key]) continue;
+        const options = def.key === "gender" ? def.choices.filter((c) => c === "male" || c === "female") : def.choices;
+        if (options.length === 0) continue;
+        tasks.push({
+          count: 1,
+          run: async () => {
+            const reply = await ask(choiceQuestion(`According to the text, what is the ${def.key} of 「${n.source}」${label(n) !== n.source ? ` (${label(n)})` : ""}?`, options, ev.map((e) => e.pair), input.sourceLanguage, input.targetLanguage));
+            const at = reply === null ? null : chosenOption(reply, options);
+            if (at === null) return;
+            const value = options[at]!;
+            // The pronouns of the translation must not say otherwise.
+            if (def.key === "gender") {
+              const by = pronounGender(ev.map((e) => e.pair.translation));
+              if (by !== null && by !== value) return;
+            }
+            n.suggestions = { ...(n.suggestions ?? {}), [def.key]: [value] };
+          },
+        });
+      }
+    }
+    // Who says each line that the user has not set: one of the people written in the paragraphs around it.
+    const people = w.words.filter((n) => n.kind === "character" && n.use !== false);
+    w.lines.forEach((l) => {
+      if (l.speaker !== null || !translated(l.paragraph)) return;
+      const near = people
+        .map((n) => ({ n, distance: Math.min(...[l.paragraph - 2, l.paragraph - 1, l.paragraph, l.paragraph + 1].filter((k) => w.paragraphs[k] && occurrencesOf(w.paragraphs[k]!.text, namesOf(n), sources).length > 0).map((k) => Math.abs(k - l.paragraph)), Infinity) }))
+        .filter((x) => x.distance !== Infinity)
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 6)
+        .map((x) => x.n);
+      if (near.length === 0) return;
+      const context = [l.paragraph - 1, l.paragraph].filter((k) => k >= 0 && translated(k)).map((k) => w.paragraphs[k]!.translation.trim());
+      tasks.push({
+        count: 1,
+        run: async () => {
+          const reply = await ask(speakerQuestion(l.text, near.map(label), context, input.sourceLanguage, input.targetLanguage));
+          const at = reply === null ? null : chosenOption(reply, near.map(label));
+          if (at === null) return;
+          // A person named in the line as spoken to does not say it.
+          const spokenTo = addressedIn(l.text, near.map((n) => ({ id: n.source, label: label(n), names: namesOf(n) })));
+          if (!spokenTo.has(near[at]!.source)) l.suggested = near[at]!.source;
+        },
+      });
+    });
+
+    try {
+      w.reading = { done: 0, total: tasks.length };
+      this.workChanged();
+      for (const task of tasks) {
+        await task.run();
+        if (abort.signal.aborted) break; // stopped: what was found so far stays
+        w.reading = { done: w.reading.done + task.count, total: tasks.length };
+        this.workChanged();
+      }
+    } catch (e) {
+      w.error = e instanceof UserError ? e.message : "Reading the translation failed.";
+      throw e;
+    } finally {
+      w.reading = null;
+      this.analysisAbort = null;
+      this.workChanged();
+    }
+    return this.workView();
   }
 
   /**

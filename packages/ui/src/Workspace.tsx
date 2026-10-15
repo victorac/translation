@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
@@ -255,6 +255,28 @@ export function Workspace({
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
     setWorking(null);
+    // With the translation written, the model reads it for suggestions to fill in what was read.
+    if (w && !w.error && w.paragraphs.some((p) => p.translation.trim() !== "")) await suggest();
+  };
+
+  /** Reads the translation for suggestions: how each name was written, genders and who says each line. Nothing is confirmed by it. */
+  const suggest = async () => {
+    if (!work || !model) return;
+    setWorking("translate");
+    setActivity({ what: "Reading the translation for suggestions", stop: true });
+    const poll = setInterval(() => {
+      void api.invoke("work.get").then((r) => {
+        if (!r.ok || !r.value) return;
+        setWork(r.value);
+        if (r.value.reading) setActivity({ what: `Reading the translation for suggestions: ${r.value.reading.done} of ${r.value.reading.total}`, stop: true });
+      });
+    }, 1000);
+    const w = await call(() => api.invoke("work.suggest", modelInput()));
+    clearInterval(poll);
+    if (w) setWork(w);
+    else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
+    setActivity(null);
+    setWorking(null);
   };
 
   /** Translates one paragraph again, keeping the others as they are. */
@@ -334,6 +356,7 @@ export function Workspace({
   };
 
   const lines = work?.lines ?? [];
+  const anySuggested = words.some((n) => Object.keys(n.suggestions ?? {}).length > 0) || lines.some((l) => l.speaker === null && l.suggested);
 
   return (
     <div className="guided">
@@ -455,6 +478,8 @@ export function Workspace({
                           onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                           onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                           onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
+                          onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
+                          onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
                         />
                       ))}
                     </ul>
@@ -493,20 +518,30 @@ export function Workspace({
                           {l.text}
                         </Text>
                       </Button>
-                      <Pick
-                        size="1"
-                        label={`Speaker of line ${i + 1}`}
-                        value={l.speaker ?? ""}
-                        options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
-                        onChange={(v) => update(() => api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }))}
-                      />
+                      <Flex align="center" gap="1" className={l.speaker === null && l.suggested ? "speaker suggested-speaker" : "speaker"}>
+                        <Pick
+                          size="1"
+                          label={`Speaker of line ${i + 1}`}
+                          value={l.speaker ?? l.suggested ?? ""}
+                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: l.speaker === null && l.suggested === p.source ? `${label(p)} · suggested` : label(p) }))]}
+                          onChange={(v) => update(() => api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }))}
+                        />
+                        {l.speaker === null && l.suggested && (
+                          <IconButton variant="ghost" size="1" onClick={() => update(() => api.invoke("work.acceptSpeaker", { line: i }))} aria-label={`Use the suggested speaker of line ${i + 1}`} title="Use the suggested speaker">
+                            <CheckIcon />
+                          </IconButton>
+                        )}
+                      </Flex>
                     </li>
                   ))}
                 </ul>
               </div>
               <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
-                <Button variant="soft" color="gray" onClick={() => update(() => api.invoke("work.guessSpeakers"))} disabled={working !== null || lines.length === 0} title="Work out who says the lines still set to not known, from the words and the conversation">
-                  Guess the speakers
+                <Button variant="soft" onClick={() => update(() => api.invoke("work.acceptAll"))} disabled={working !== null || !anySuggested} title="Use every suggested value: English names, attributes and speakers">
+                  Use all suggestions
+                </Button>
+                <Button variant="soft" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions">
+                  Suggest from the translation
                 </Button>
               </Flex>
             </>

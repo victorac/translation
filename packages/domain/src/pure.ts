@@ -11,3 +11,4 @@ export * from "./steps.js";
 export * from "./work.js";
 export { estimateTokens } from "./tokens.js";
 export * from "./paragraphs.js";
+export * from "./suggest.js";
