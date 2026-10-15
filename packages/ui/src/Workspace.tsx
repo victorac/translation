@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { estimateTokens, normalizeSource, occurrencesOf, rewriteRange, wholeParagraphs } from "@ltw/domain/pure";
-import type { GuidedName, GuidedState, Located } from "@ltw/domain";
+import { estimateTokens, normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
+import type { GuidedName, GuidedState } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
 import type { PreviewBlock } from "./blockMarkers";
@@ -12,8 +12,6 @@ import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import type { SetupState } from "./setup";
 
-const FROM_TRANSLATION = "From the translation";
-const LOCATING = "Finding where the translation comes from";
 const WIDTHS_KEY = "ltw.workspace.widths.v2";
 const MIN = 0.1;
 const DEFAULT_WIDTHS = [0.28, 0.26, 0.22, 0.24];
@@ -64,7 +62,10 @@ export function Workspace({
   useEffect(() => onActivity(activity), [activity]); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState<string | null>(null);
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
-  const [translation, setTranslation] = useState("");
+  // What is in the box of each paragraph of the translation while it is being edited.
+  const [drafts, setDrafts] = useState<string[]>([]);
+  // The paragraph of the translation being looked at, whose source is shown.
+  const [partFocus, setPartFocus] = useState<number | null>(null);
   const [newTerm, setNewTerm] = useState("");
   const [widths, setWidths] = useState<number[]>(loadWidths);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
@@ -77,19 +78,6 @@ export function Workspace({
   // The cursor was put in a block by the user; the editor then does not need to scroll to it.
   const fromCursor = useRef(false);
   const [topics, setTopics] = useState<TopicRef[]>([]);
-  // The part of the translation that is selected (or where the cursor is), and the part of the source it comes from.
-  const area = useRef<HTMLTextAreaElement>(null);
-  const [sel, setSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
-  const [mapped, setMapped] = useState<{ start: number; end: number } | null>(null);
-  // The paragraph of the translation whose source is being shown (even when it is not known), and what the user has selected in the source.
-  const [mappedFor, setMappedFor] = useState<string | null>(null);
-  const [srcSel, setSrcSel] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
-  // Places the user has set by hand, which win over the model's answer: for a paragraph of the translation, in a block of the source.
-  const fixes = useRef(new Map<string, { start: number; end: number }>());
-  const places = useRef(new Map<string, Located[]>());
-  const asking = useRef<string | null>(null);
-  const typedAt = useRef(0);
-  const follower = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
   const block = state ? state.blocks[state.current] : undefined;
@@ -164,8 +152,8 @@ export function Workspace({
   }, [knowledgeRev]);
 
   useEffect(() => {
-    setTranslation(block?.translation ?? "");
-  }, [state?.current, block?.translation]); // eslint-disable-line react-hooks/exhaustive-deps
+    setDrafts(block?.parts ?? []);
+  }, [state?.current, block?.parts.join("\u0000")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Everyone who can speak: the people of this block, and every person of the knowledge base, even when the block never says their name.
   const people: { source: string; english: string }[] = [
@@ -186,19 +174,18 @@ export function Workspace({
     });
   })();
   const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
-  const hits = mappedFor !== null ? (mapped ? [mapped] : []) : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  const partRange = partFocus !== null && block ? paragraphsOf(block.text)[partFocus] : undefined;
+  const hits = partFocus !== null ? (partRange ? [{ start: partRange.start, end: partRange.end }] : []) : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = mappedFor !== null ? FROM_TRANSLATION : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
+  const looking = partFocus !== null ? `Paragraph ${partFocus + 1}` : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   useEffect(() => {
     setFocus(null);
     setLineFocus(null);
-    setMapped(null);
-    setMappedFor(null);
+    setPartFocus(null);
     setHit(0);
   }, [state?.current]);
   const look = (source: string) => {
-    setMapped(null);
-    setMappedFor(null);
+    setPartFocus(null);
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
     setOpened((o) => {
@@ -209,15 +196,13 @@ export function Workspace({
     setHit(0);
   };
   const lookAtLine = (i: number) => {
-    setMapped(null);
-    setMappedFor(null);
+    setPartFocus(null);
     setFocus(null);
     setLineFocus((f) => (f === i ? null : i));
     setHit(0);
   };
   const stopLooking = () => {
-    setMapped(null);
-    setMappedFor(null);
+    setPartFocus(null);
     setFocus(null);
     setLineFocus(null);
   };
@@ -263,7 +248,17 @@ export function Workspace({
   const translate = async () => {
     if (!state || !block || !model || !base) return;
     setWorking("translate");
-    setActivity({ what: `Translating block ${block.index + 1} with ${model.name}`, stop: true });
+    const n = block.parts.length;
+    const saying = (done: number) => `Translating block ${block.index + 1} with ${model.name}: paragraph ${Math.min(n, done + 1)} of ${n}`;
+    setActivity({ what: saying(0), stop: true });
+    // The paragraphs are written one after the other in one request; the ones done so far are asked for while it goes on.
+    const poll = setInterval(() => {
+      void api.invoke("guided.get").then((r) => {
+        if (!r.ok || !r.value) return;
+        setState(r.value);
+        setActivity({ what: saying(r.value.blocks[block.index]?.parts.filter((t) => t.trim() !== "").length ?? 0), stop: true });
+      });
+    }, 1000);
     const s = await call(() =>
       api.invoke("guided.translate", {
         index: block.index,
@@ -277,6 +272,7 @@ export function Workspace({
         targetLanguage: setup.targetLanguage,
       }),
     );
+    clearInterval(poll);
     if (s) setState(s);
     else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setActivity(null);
@@ -295,96 +291,31 @@ export function Workspace({
     targetLanguage: setup.targetLanguage,
   });
 
-  /**
-   * What an answer about where a translation comes from was made for: the document, the block and its source text, the translation text
-   * and the model that answered. An answer is kept only while all of these are the same.
-   */
-  const placeKey = (): string | null => (block && model ? [documentId, model.name, block.index, block.text, translation].join("\u0000") : null);
-
-  /** A place set by hand is for one paragraph of the translation, in one block of the source. */
-  const fixKey = (paragraph: string): string => [documentId, block?.index, block?.text, paragraph].join("\u0000");
-  const withFixes = (found: Located[]): Located[] =>
-    found.map((p) => {
-      const fixed = fixes.current.get(fixKey(translation.slice(p.from, p.to)));
-      return fixed ? { ...p, source: fixed } : p;
-    });
-
-  /** Where the paragraphs of the translation text come from: the model is asked once for each text, and the answer is kept. */
-  const locate = async (): Promise<Located[] | null> => {
-    const key = placeKey();
-    if (!block || !model || key === null) return null;
-    const known = places.current.get(key);
-    if (known) return withFixes(known);
-    if (asking.current === key) return null;
-    asking.current = key;
-    setActivity((a) => a ?? { what: LOCATING, stop: true });
-    try {
-      const r = await api.invoke("guided.locate", { ...modelInput(block.index), text: translation });
-      if (!r.ok) return null;
-      places.current.set(key, r.value);
-      return withFixes(r.value);
-    } finally {
-      asking.current = null;
-      setActivity((a) => (a?.what === LOCATING ? null : a));
-    }
-  };
-  const placeOf = (found: Located[], from: number, to: number) => found.find((p) => from <= p.to && to >= p.from)?.source ?? null;
-
-  /** The model is asked again where the paragraph comes from (its last answer was wrong). */
-  const findAgain = () => {
-    const key = placeKey();
-    if (key !== null) places.current.delete(key);
-    if (mappedFor !== null) fixes.current.delete(fixKey(mappedFor));
-    follow();
-  };
-
-  /** Moving the cursor in the translation shows in the source what it was made from. */
-  const follow = () => {
-    if (follower.current) clearTimeout(follower.current);
-    follower.current = setTimeout(() => {
-      if (Date.now() - typedAt.current < 1500) return; // typing moves the cursor too; wait for it to stop
-      const from = area.current?.selectionStart ?? 0;
-      const to = area.current?.selectionEnd ?? from;
-      void locate().then((found) => {
-        if (!found) return;
-        if ((area.current?.selectionStart ?? 0) !== from) return; // the cursor has moved on
-        const at = found.find((p) => from <= p.to && to >= p.from) ?? null;
-        setFocus(null);
-        setLineFocus(null);
-        setHit(0);
-        setMappedFor(at ? translation.slice(at.from, at.to) : null);
-        setMapped(at?.source ?? null);
-      });
-    }, 250);
-  };
-
-  /** Writes the paragraph under the cursor (or the paragraphs the selection touches) again; the rest of the text stays as it is. */
-  const retranslate = async () => {
-    if (!block || !model || !wholeParagraphs(translation, sel.from, sel.to)) return;
+  /** Translates one paragraph again, keeping the others as they are. */
+  const retranslatePart = async (paragraph: number) => {
+    if (!block || !model) return;
     setWorking("translate");
-    setActivity({ what: "Finding where the paragraph comes from", stop: true });
-    const found = await locate();
-    setActivity({ what: `Writing the paragraph again with ${model.name}`, stop: true });
-    // Paragraphs that share source text with the one under the cursor are written again together.
-    const grown = found ? rewriteRange(found, sel.from, sel.to) : null;
-    const range: { from: number; to: number } = grown ?? wholeParagraphs(translation, sel.from, sel.to)!;
-    const source = grown?.source ?? null;
-    const place: { source?: { start: number; end: number } } = source ? { source } : {};
-    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), text: translation, from: range.from, to: range.to, ...place }));
-    if (s) {
-      setState(s);
-      places.current.clear();
-      setMapped(null);
-      setMappedFor(null);
-    } else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    setActivity({ what: `Translating paragraph ${paragraph + 1} again with ${model.name}`, stop: true });
+    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), paragraph }));
+    if (s) setState(s);
+    else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
     setActivity(null);
     setWorking(null);
   };
 
-  const saveTranslation = async () => {
-    if (!block || translation === block.translation) return;
-    const s = await call(() => api.invoke("guided.setTranslation", { index: block.index, text: translation }));
+  /** The user's own text for one paragraph is kept when they leave its box. */
+  const saveDraft = async (paragraph: number) => {
+    if (!block || (drafts[paragraph] ?? "") === (block.parts[paragraph] ?? "")) return;
+    const s = await call(() => api.invoke("guided.setPart", { index: block.index, paragraph, text: drafts[paragraph] ?? "" }));
     if (s) setState(s);
+  };
+
+  /** Looking at a paragraph of the translation shows the paragraph of the source it was translated from. */
+  const lookAtPart = (k: number) => {
+    setFocus(null);
+    setLineFocus(null);
+    setHit(0);
+    setPartFocus(k);
   };
 
   // ---- the source, shown as blocks in the editor ----
@@ -401,19 +332,6 @@ export function Workspace({
   const editorBlocks: PreviewBlock[] | null = inSync ? view.blocks.map((b) => ({ index: b.index, text: b.text, estimatedTokens: estimateTokens(b.text), boundaryKind: "paragraph" as const })) : null;
   const currentRange = inSync && block ? { from: starts[view.current]!, to: starts[view.current]! + block.text.length } : null;
   const editorHits: Hit[] = inSync && block ? hits.map((h, i) => ({ from: starts[view.current]! + h.start, to: starts[view.current]! + h.end, current: i === current })) : [];
-  /** The user says where the paragraph comes from: the text selected in the source. */
-  const blockStart = starts[view.current] ?? 0;
-  const selectedHere = inSync && block && srcSel.to > srcSel.from && srcSel.from >= blockStart && srcSel.to <= blockStart + block.text.length;
-  const useMySelection = () => {
-    if (mappedFor === null || !block || !selectedHere) return;
-    const raw = block.text.slice(srcSel.from - blockStart, srcSel.to - blockStart);
-    const start = srcSel.from - blockStart + (raw.length - raw.trimStart().length);
-    const end = srcSel.to - blockStart - (raw.length - raw.trimEnd().length);
-    if (end <= start) return;
-    fixes.current.set(fixKey(mappedFor), { start, end });
-    setMapped({ start, end });
-    setHit(0);
-  };
 
   // Moving to another block with the arrows or the numbers takes the editor there; clicking in the text does not need to.
   const [reveal, setReveal] = useState<{ at: number; n: number } | null>(null);
@@ -535,7 +453,7 @@ export function Workspace({
                 {looking}
               </Text>
               <Text size="1" color="gray">
-                {hits.length === 0 ? (mappedFor !== null ? "not known" : "not found in the text") : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
+                {hits.length === 0 ? "not found in the text" : hits.length === 1 ? "1 place" : `${current + 1} of ${hits.length}`}
               </Text>
               <Flex gap="1">
                 <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current - 1)} disabled={hits.length < 2} aria-label="Previous place">
@@ -544,16 +462,6 @@ export function Workspace({
                 <IconButton variant="ghost" size="1" color="gray" onClick={() => setHit(current + 1)} disabled={hits.length < 2} aria-label="Next place">
                   <ArrowDownIcon />
                 </IconButton>
-                {looking === FROM_TRANSLATION && (
-                  <Button variant="ghost" size="1" color="gray" onClick={useMySelection} disabled={!selectedHere} title="Select the text in the source that this paragraph was made from, then press this">
-                    Use my selection
-                  </Button>
-                )}
-                {looking === FROM_TRANSLATION && (
-                  <Button variant="ghost" size="1" color="gray" onClick={findAgain} title="Ask the model again where this paragraph comes from">
-                    Find again
-                  </Button>
-                )}
                 <IconButton variant="ghost" size="1" color="gray" onClick={stopLooking} aria-label="Stop looking">
                   <Cross2Icon />
                 </IconButton>
@@ -561,7 +469,7 @@ export function Workspace({
             </Flex>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} onSelection={(from, to) => setSrcSel({ from, to })} reveal={reveal} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
           </div>
         </section>
 
@@ -715,34 +623,34 @@ export function Workspace({
                   The translation of the block you are working on appears here.
                 </Text>
               </div>
-            ) : block.status === "translated" ? (
+            ) : block.parts.some((t) => t.trim() !== "") || block.status === "translated" ? (
               <>
-                <TextArea
-                  ref={area}
-                  className="guided-translation"
-                  variant="soft"
-                  aria-label="Translation of this block"
-                  value={translation}
-                  onChange={(e) => {
-                    typedAt.current = Date.now();
-                    setTranslation(e.target.value);
-                  }}
-                  onBlur={() => void saveTranslation()}
-                  onSelect={(e) => {
-                    setSel({ from: e.currentTarget.selectionStart, to: e.currentTarget.selectionEnd });
-                    follow();
-                  }}
-                  spellCheck={false}
-                />
-                {block.warning && (
-                  <Text as="p" size="1" color="amber" mx="3" role="status">
-                    {block.warning}
+                <div className="guided-parts">
+                  {block.parts.map((_, k) => (
+                    <div key={k} className={partFocus === k ? "part part-focus" : "part"}>
+                      <TextArea
+                        className="part-text"
+                        variant="surface"
+                        aria-label={`Translation of paragraph ${k + 1}`}
+                        placeholder="…"
+                        value={drafts[k] ?? ""}
+                        onFocus={() => lookAtPart(k)}
+                        onChange={(e) => setDrafts((d) => d.map((t, i) => (i === k ? e.target.value : t)))}
+                        onBlur={() => void saveDraft(k)}
+                        spellCheck={false}
+                      />
+                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslatePart(k)}>
+                        <ReloadIcon />
+                      </IconButton>
+                    </div>
+                  ))}
+                </div>
+                {(block.warning || block.error) && (
+                  <Text as="p" size="1" color={block.error ? "red" : "amber"} mx="3" role="status">
+                    {block.error ?? block.warning}
                   </Text>
                 )}
                 <Flex gap="2" p="3" wrap="wrap" className="guided-foot">
-                  <Button variant="soft" onClick={() => void retranslate()} disabled={working !== null || !model || wholeParagraphs(translation, sel.from, sel.to) === null} title="Write the paragraph under the cursor again, with the glossary as it is now. The rest of the text stays as it is.">
-                    Retranslate paragraph
-                  </Button>
                   <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
                     {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
                     {block.index < view.blocks.length - 1 && <ArrowRightIcon />}

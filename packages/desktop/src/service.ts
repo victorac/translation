@@ -5,8 +5,6 @@ import {
   labelLines,
   type Carry,
   nameGuess,
-  paragraphCount,
-  splitPieces,
   interpretPassage,
   lastLines,
   notesFor,
@@ -62,20 +60,12 @@ import {
   runLabel,
   snapshotPrompt,
   stripThinking,
-  reviseSystem,
-  reviseMessage,
-  surroundings,
-  revisedPart,
-  locateSystem,
-  locateMessage,
-  parseLocation,
-  placeLocation,
-  dropContradicted,
+  paragraphSystem,
+  paragraphMessage,
+  answerOf,
+  missingNames,
+  joinParts,
   paragraphsOf,
-  sentenceUnits,
-  wholeParagraphs,
-  targetVariants,
-  type Located,
   validatePrompt,
   type Backend,
   type BlockCellView,
@@ -1223,6 +1213,7 @@ export class WorkspaceService {
     const g = this.guided!;
     const terms = this.knowledge.all().filter((e) => e.kind === "term");
     for (const b of g.blocks) {
+      this.fitParts(b);
       if (!b.interpretation) continue;
       // Every word of the glossary that stands in the block is listed, including ones added to the glossary after the block was read.
       for (const e of glossaryHits(b.text, terms)) {
@@ -1252,6 +1243,17 @@ export class WorkspaceService {
     return g;
   }
 
+  /**
+   * A block's translation is kept paragraph by paragraph: one entry for each paragraph of its source. A block saved as one piece of
+   * text (before this) has its paragraphs matched up when their number is the same, and otherwise the whole text is kept in the first.
+   */
+  private fitParts(b: GuidedState["blocks"][number]): void {
+    const n = paragraphsOf(b.text).length;
+    if (b.parts.length === n) return;
+    const old = b.parts.length === 0 && b.translation.trim() !== "" ? paragraphsOf(b.translation).map((p) => p.text) : b.parts;
+    b.parts = Array.from({ length: n }, (_, i) => (old.length === n ? old[i]! : i === 0 ? joinParts(old) : ""));
+  }
+
   private guidedBlock(index: number) {
     const block = this.guided?.blocks[index];
     if (!this.guided || !block) throw new UserError("no_block", "That block does not exist. Start again from the text.");
@@ -1272,7 +1274,7 @@ export class WorkspaceService {
       documentId: input.documentId,
       source: text,
       current: 0,
-      blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", status: "new" as const, error: null })),
+      blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", parts: [], status: "new" as const, error: null })),
     };
     this.guidedChanged();
     return this.guidedView();
@@ -1295,7 +1297,7 @@ export class WorkspaceService {
     const blocks = chunks.map((c, index) => {
       const body = text.slice(c.startOffset, c.endOffset);
       const same = kept.get(body);
-      return same ? { ...same, index } : { index, text: body, interpretation: null, translation: "", status: "new" as const, error: null };
+      return same ? { ...same, index } : { index, text: body, interpretation: null, translation: "", parts: [], status: "new" as const, error: null };
     });
     const here = old.blocks[old.current]?.text;
     this.guided = { documentId: old.documentId, source: text, current: Math.max(0, blocks.findIndex((b) => b.text === here)), blocks };
@@ -1564,19 +1566,105 @@ export class WorkspaceService {
     this.knowledgeChanged();
   }
 
-  /** The user's own correction of a translation. */
-  guidedSetTranslation(index: number, text: string): GuidedState {
+  /** The user's own correction of the translation of one paragraph of a block. */
+  guidedSetPart(index: number, paragraph: number, text: string): GuidedState {
     const block = this.guidedBlock(index);
-    block.translation = text;
-    if (text.trim() !== "") block.status = "translated";
-    block.warning = null;
-    this.guidedChanged();
+    this.guidedView();
+    if (paragraph < 0 || paragraph >= block.parts.length) throw new UserError("no_paragraph", "That paragraph does not exist.");
+    block.parts[paragraph] = text.trim();
+    this.afterParts(block, null);
     return this.guidedView();
   }
 
+  /** The block's translation follows its paragraphs' translations; the block is translated when every paragraph has one. */
+  private afterParts(block: ReturnType<WorkspaceService["guidedBlock"]>, warning: string | null): void {
+    block.translation = joinParts(block.parts);
+    if (block.parts.length > 0 && block.parts.every((p) => p.trim() !== "")) block.status = "translated";
+    else if (block.status === "translated") block.status = "interpreted";
+    block.error = null;
+    block.warning = warning;
+    this.guidedChanged();
+  }
+
+  /** The translation style the model's settings name, filled in with the languages. */
+  private styleOf(input: GuidedModelInput): { id: string; text: string } {
+    const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
+    return { id: style.id, text: renderPrompt(style, input.sourceLanguage, input.targetLanguage) };
+  }
+
   /**
-   * Translates a block with what the user confirmed. A long block goes in pieces, each with the end of the one before it,
-   * so that a small model does not skip or cut off the rest.
+   * Translates one paragraph of a block. The model gets what applies to the paragraph (its glossary words, notes and who speaks),
+   * the source around it as far as the context has room, and the translation so far with an empty place for it. The answer is
+   * taken from between markers; if it leaves out a glossary name of the paragraph, or gives back the text that was rejected, the
+   * model is asked once more.
+   */
+  private async translateParagraph(input: GuidedModelInput & { index: number }, k: number, system: string, abort: AbortController, old?: string): Promise<{ text: string; issue: string | null } | null> {
+    const block = this.guidedBlock(input.index);
+    const interp = block.interpretation!;
+    const sources = paragraphsOf(block.text).map((p) => p.text);
+    const paragraph = sources[k]!;
+    const glossary = glossaryFor(interp, paragraph);
+    const notes = notesFor(interp, paragraph);
+    const previousBlock = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
+    const previous = k === 0 && previousBlock && previousBlock.status === "translated" ? { source: lastLines(previousBlock.text, 3, 500), translation: lastLines(previousBlock.translation, 3, 500) } : null;
+    const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+    let reject: string | undefined;
+    let complaint = "";
+    let text = "";
+    let issue: string | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // As much of the source around the paragraph as fits: the whole block, then fewer paragraphs on each side.
+      let user = "";
+      for (let radius = Math.max(k, sources.length - 1 - k); radius >= 0; radius--) {
+        const lo = Math.max(0, k - radius);
+        const hi = Math.min(sources.length - 1, k + radius);
+        user =
+          paragraphMessage({
+            glossary,
+            notes,
+            sourceLanguage: input.sourceLanguage,
+            previous,
+            sourceBefore: sources.slice(lo, k),
+            paragraph,
+            sourceAfter: sources.slice(k + 1, hi + 1),
+            translatedBefore: block.parts.slice(lo, k),
+            translatedAfter: block.parts.slice(k + 1, hi + 1),
+            rejected: reject,
+          }) + complaint;
+        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
+        if (radius === 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
+      }
+      const reply = await this.askModel(
+        {
+          backend: input.backend,
+          modelId: input.modelId,
+          maxOutputTokens: input.maxOutputTokens,
+          temperature: input.temperature,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          practiceReply: () => `Practice translation of paragraph ${k + 1} of block ${input.index + 1}.`,
+        },
+        abort,
+      );
+      if (reply === null) return null; // stopped
+      const answer = answerOf(reply);
+      if (answer === null) throw new UserError("invalid_response", `The model wrote nothing for paragraph ${k + 1}. If it is a thinking model, raise its reply limit.`);
+      text = answer;
+      const missing = missingNames(glossary, paragraph, text);
+      const unchanged = old !== undefined && sameText(text, old);
+      issue = missing.length > 0 ? `Paragraph ${k + 1} does not use the glossary names: ${missing.join("; ")}.` : unchanged ? `Paragraph ${k + 1}: the model wrote the same text again.` : null;
+      if (issue === null) break;
+      if (unchanged) reject = old;
+      complaint = missing.length > 0 ? `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "";
+    }
+    return { text, issue };
+  }
+
+  /**
+   * Translates a block paragraph by paragraph, each one with what the user confirmed, saving each as it is done so that the
+   * paragraphs written so far show while the rest are being written, and so that stopping keeps them.
    */
   async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
@@ -1584,192 +1672,56 @@ export class WorkspaceService {
     this.guidedView();
     const interp = block.interpretation!;
     const abort = this.beginSideRequest();
+    const issues: string[] = [];
     try {
       this.commitWords(interp);
       this.guidedView();
-      // The style of the translation: one of the built-in ones or the user's own, as the model's settings say.
-      const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
-      const system = renderPrompt(style, input.sourceLanguage, input.targetLanguage);
-      const previous = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
-      // What fits: the pieces are made so that a piece, its translation and the request around it fit the model's context.
-      const room = input.contextLimit - estimateTokens(system) - DEFAULTS.messageOverheadTokens - 500;
-      const perPiece = Math.max(60, Math.min(350, Math.floor((room - input.maxOutputTokens / 2) / 3)));
-      const pieces = splitPieces(block.text, perPiece, estimateTokens);
+      const style = this.styleOf(input);
+      const system = paragraphSystem(style.id === STANDARD_PROMPT.id ? null : style.text, input.sourceLanguage, input.targetLanguage);
+      block.parts = block.parts.map(() => "");
+      block.translation = "";
+      block.status = "interpreted";
       block.error = null;
       block.warning = null;
-      const done: string[] = [];
-      let before: { source: string; translation: string } | null = previous && previous.status === "translated" ? { source: previous.text, translation: previous.translation } : null;
-      for (const piece of pieces) {
-        const glossary = glossaryFor(interp, piece);
-        const paragraphs = paragraphCount(piece);
-        const notes = [...notesFor(interp, piece), ...(paragraphs > 1 ? [`SOURCE_BLOCK has ${paragraphs} paragraphs. Translate every one of them, in order, and leave nothing out.`] : [])];
-        let user = "";
-        for (const lines of [3, 2, 1, 0]) {
-          const context = before && lines > 0 ? { source: lastLines(before.source, lines, 500), translation: lastLines(before.translation, lines, 500), translationStatus: "available" as const } : { source: null, translation: null, translationStatus: "none" as const };
-          user = renderUserMessage(glossary, context, piece, notes);
-          if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-          if (lines === 0) throw new UserError("context_overflow", `A piece of this block needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-        }
-        const reply = await this.askModel(
-          {
-            backend: input.backend,
-            modelId: input.modelId,
-            maxOutputTokens: input.maxOutputTokens,
-            temperature: input.temperature,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: user },
-            ],
-            practiceReply: () => `Practice translation of block ${input.index + 1}. A real model would write the story here.`,
-          },
-          abort,
-        );
-        if (reply === null) return this.guidedView(); // stopped
-        const translation = reply.trim();
-        done.push(translation);
-        before = { source: piece, translation };
-      }
-      block.translation = done.join("\n\n");
-      block.status = "translated";
-    } catch (e) {
-      block.error = e instanceof UserError ? e.message : "The translation failed.";
       this.guidedChanged();
+      for (let k = 0; k < block.parts.length; k++) {
+        const done = await this.translateParagraph(input, k, system, abort);
+        if (done === null) break; // stopped: what is written so far stays
+        block.parts[k] = done.text;
+        if (done.issue) issues.push(done.issue);
+        this.afterParts(block, issues.length > 0 ? issues.join(" ") : null);
+      }
+    } catch (e) {
+      this.afterParts(block, issues.length > 0 ? issues.join(" ") : null);
+      block.error = e instanceof UserError ? e.message : "The translation failed.";
       throw e;
     } finally {
       this.analysisAbort = null;
     }
-    this.guidedChanged();
     return this.guidedView();
   }
 
-  /** The style the model's settings name, filled in with the languages. */
-  private styleOf(input: GuidedModelInput): { id: string; text: string } {
-    const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
-    return { id: style.id, text: renderPrompt(style, input.sourceLanguage, input.targetLanguage) };
-  }
-
-  private styleSystem(input: GuidedModelInput): string {
-    return this.styleOf(input).text;
-  }
-
-  /**
-   * Writes whole paragraphs of a block's translation again, with the glossary as it is now, and leaves the rest of the text as the
-   * user has it. When the place the paragraphs come from is known, only that source text and its glossary words are sent; the
-   * place is the user's to fix when it is wrong. The model is asked to answer between markers, and if it leaves out a glossary name
-   * of that source text it is asked once more.
-   */
-  async guidedRetranslate(input: GuidedModelInput & { index: number; text: string; from: number; to: number; source?: { start: number; end: number } | undefined }): Promise<GuidedState> {
+  /** Translates one paragraph of a block again, keeping the others as they are. The old text is not shown to the model unless it is given back. */
+  async guidedRetranslate(input: GuidedModelInput & { index: number; paragraph: number }): Promise<GuidedState> {
     const block = this.guidedBlock(input.index);
     if (!block.interpretation) await this.guidedInterpret(input.index);
     this.guidedView();
-    const interp = block.interpretation!;
-    const text = input.text;
-    // A paragraph is written again as a whole: the selection (or the cursor) is widened to the paragraphs it touches.
-    const range = wholeParagraphs(text, input.from, input.to);
-    if (!range) throw new UserError("no_selection", "Put the cursor in the paragraph of the translation to write again.");
-    const { from, to } = range;
+    if (input.paragraph < 0 || input.paragraph >= block.parts.length) throw new UserError("no_paragraph", "That paragraph does not exist.");
     const abort = this.beginSideRequest();
     try {
-      this.commitWords(interp);
+      this.commitWords(block.interpretation!);
       this.guidedView();
-      // The standard style is about translating a whole block, which is another task; other styles are added for their tone.
       const style = this.styleOf(input);
-      const system = reviseSystem(style.id === STANDARD_PROMPT.id ? null : style.text, input.sourceLanguage, input.targetLanguage);
-      const known = input.source && input.source.start < input.source.end && input.source.end <= block.text.length;
-      const source = known ? block.text.slice(input.source!.start, input.source!.end) : block.text;
-      const glossary = glossaryFor(interp, source);
-      const notes = notesFor(interp, source);
-      const original = text.slice(from, to);
-      const names = glossary.map((g) => ({ source: g.source, aliases: g.aliases ?? [], wanted: targetVariants(g.target) })).filter((g) => g.wanted.length > 0);
-      const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-      let complaint = "";
-      let rejected: string | undefined;
-      let part: string | null = null;
-      let missing: string[] = [];
-      let unchanged = false;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        // As many whole paragraphs around the part as the context has room for.
-        const fixed = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, before: "", after: "", rejected: original }) + complaint;
-        const room = input.contextLimit - estimateTokens(system) - estimateTokens(fixed) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
-        if (room < 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(fixed)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-        const around = surroundings(text, from, to, room, estimateTokens);
-        const user = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, ...around, rejected }) + complaint;
-        const reply = await this.askModel(
-          {
-            backend: input.backend,
-            modelId: input.modelId,
-            maxOutputTokens: input.maxOutputTokens,
-            temperature: input.temperature,
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: user },
-            ],
-            practiceReply: () => `${original.trim()} (written again)`,
-          },
-          abort,
-        );
-        if (reply === null) return this.guidedView(); // stopped
-        part = revisedPart(reply, original);
-        if (part === null) throw new UserError("invalid_response", "The model wrote nothing for the paragraph.");
-        // The names of the glossary that belong to this source text must be in what was written for it.
-        const hay = part.toLocaleLowerCase();
-        missing = names.filter((g) => [g.source, ...g.aliases].some((n) => source.includes(n)) && !g.wanted.some((w) => hay.includes(w.toLocaleLowerCase()))).map((g) => `${g.source} => ${g.wanted[0]}`);
-        // The user asked for another translation: the same text again is not an answer.
-        unchanged = sameText(part, original);
-        if (missing.length === 0 && !unchanged) break;
-        if (unchanged) rejected = original;
-        complaint = missing.length > 0 ? `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "";
-      }
-      block.translation = text.slice(0, from) + part! + text.slice(to);
-      block.status = "translated";
-      block.error = null;
-      block.warning = missing.length > 0 ? `The new text does not use the glossary names: ${missing.join("; ")}. Fix it by hand or try again.` : unchanged ? "The model wrote the same text again. Change the glossary or a note, or try another model." : null;
+      const system = paragraphSystem(style.id === STANDARD_PROMPT.id ? null : style.text, input.sourceLanguage, input.targetLanguage);
+      const old = block.parts[input.paragraph] ?? "";
+      const done = await this.translateParagraph(input, input.paragraph, system, abort, old.trim() === "" ? undefined : old);
+      if (done === null) return this.guidedView();
+      block.parts[input.paragraph] = done.text;
+      this.afterParts(block, done.issue);
     } finally {
       this.analysisAbort = null;
     }
-    this.guidedChanged();
     return this.guidedView();
-  }
-
-  /**
-   * Where each paragraph of a translation comes from in the block's source. The model says which numbered sentences each paragraph
-   * was made from, and the answer is checked (numbers that exist, in the order of the text, no reaching into the next paragraph).
-   * There is no shortcut by paragraph count: paragraphs can be joined in one place and split in another.
-   */
-  async guidedLocate(input: GuidedModelInput & { index: number; text: string }): Promise<Located[]> {
-    const block = this.guidedBlock(input.index);
-    const paragraphs = paragraphsOf(input.text).length;
-    const sentences = sentenceUnits(block.text).length;
-    if (paragraphs === 0) return [];
-    const abort = this.beginSideRequest();
-    try {
-      const system = locateSystem(input.sourceLanguage, input.targetLanguage);
-      const user = locateMessage(block.text, input.text);
-      const reserve = Math.min(input.maxOutputTokens, 400);
-      if (estimateTokens(system) + estimateTokens(user) + reserve + DEFAULTS.messageOverheadTokens > input.contextLimit) {
-        throw new UserError("context_overflow", `Finding the place needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${reserve} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-      }
-      const reply = await this.askModel(
-        {
-          backend: input.backend,
-          modelId: input.modelId,
-          maxOutputTokens: input.maxOutputTokens,
-          temperature: 0,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          practiceReply: () => Array.from({ length: paragraphs }, (_, i) => `P${i + 1}: S${Math.min(sentences, i + 1)}`).join("\n"),
-        },
-        abort,
-      );
-      if (reply === null) return [];
-      const placed = placeLocation(block.text, input.text, parseLocation(reply, paragraphs, sentences));
-      const names = (block.interpretation?.names ?? []).filter((n) => n.use !== false && n.english.trim() !== "").map((n) => ({ source: n.source, aliases: n.aliases, english: n.english }));
-      return dropContradicted(placed, input.text, block.text, names);
-    } finally {
-      this.analysisAbort = null;
-    }
   }
 
   // ---- suggested notes ----

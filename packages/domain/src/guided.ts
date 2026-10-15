@@ -71,7 +71,10 @@ export interface GuidedBlock {
   index: number;
   text: string;
   interpretation: Interpretation | null;
+  /** The translation as one text: the paragraphs' translations one after the other. */
   translation: string;
+  /** The translation of each paragraph of the source text (non-empty line), in order; empty where there is none yet. */
+  parts: string[];
   status: GuidedStatus;
   /** Why the last attempt to translate it failed. */
   error: string | null;

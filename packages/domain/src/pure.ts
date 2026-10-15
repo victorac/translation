@@ -12,4 +12,4 @@ export * from "./topicfile.js";
 export * from "./steps.js";
 export * from "./guided.js";
 export { estimateTokens } from "./tokens.js";
-export * from "./revise.js";
+export * from "./paragraphs.js";

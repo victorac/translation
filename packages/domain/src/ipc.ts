@@ -7,7 +7,6 @@ import type { BlockState, GlossaryEntry, RunState } from "./state.js";
 import type { BoundaryKind } from "./chunker.js";
 import type { BlockSize } from "./defaults.js";
 import type { GuidedState } from "./guided.js";
-import type { Located } from "./revise.js";
 import type { ExportFormat, ExportPreview, ExportTextVersion } from "./export.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
@@ -238,11 +237,10 @@ export interface CommandMap {
   "guided.setHint": { source: string; hint: string };
   "guided.setUse": { source: string; use: boolean };
   "guided.translate": GuidedModelInput & { index: number };
-  "guided.setTranslation": { index: number; text: string };
-  /** Writes the selected part (from..to) of the translation text again, and keeps the rest of the text as it is. */
-  "guided.retranslate": GuidedModelInput & { index: number; text: string; from: number; to: number; source?: { start: number; end: number } };
-  /** Where each paragraph of the translation text comes from in the source block. */
-  "guided.locate": GuidedModelInput & { index: number; text: string };
+  /** The user's own text for the translation of one paragraph of a block. */
+  "guided.setPart": { index: number; paragraph: number; text: string };
+  /** Translates one paragraph of a block again, keeping the others. */
+  "guided.retranslate": GuidedModelInput & { index: number; paragraph: number };
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
@@ -261,7 +259,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setTranslation" | "guided.retranslate" | "guided.locate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
+export type SnapshotCommand = Exclude<CommandName, "notes.analyze" | "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setPart" | "guided.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.save" | "knowledge.remove" | "knowledge.confirm" | "knowledge.import" | "provider.get" | "provider.save" | "provider.test" | "export.preview" | "export.write" | "source.preview">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "source.preview": SplitPreview;
   "notes.cancel": { canceled: boolean };
@@ -278,9 +276,8 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "guided.setHint": GuidedState;
   "guided.setUse": GuidedState;
   "guided.translate": GuidedState;
-  "guided.setTranslation": GuidedState;
+  "guided.setPart": GuidedState;
   "guided.retranslate": GuidedState;
-  "guided.locate": Located[];
   "knowledge.files": KnowledgeFiles;
   "knowledge.file": KnowledgeFile;
   "knowledge.setFile": KnowledgeFile;
@@ -345,9 +342,8 @@ export const COMMAND_NAMES: readonly CommandName[] = [
   "guided.setHint",
   "guided.setUse",
   "guided.translate",
-  "guided.setTranslation",
+  "guided.setPart",
   "guided.retranslate",
-  "guided.locate",
   "knowledge.files",
   "knowledge.file",
   "knowledge.setFile",

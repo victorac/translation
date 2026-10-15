@@ -402,7 +402,11 @@ button.toggle .tag { margin-left: 0.35rem; }
 .reading-editor .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0.5rem 0.25rem; }
 .reading-editor .cm-kbf-comment { color: var(--muted); }
 .guided-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); }
-.guided-translation { flex: 1; min-height: 0; resize: none; border: none; outline: none; padding: 0.75rem; background: transparent; color: inherit; font: inherit; line-height: 1.7; }
+.guided-parts { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; }
+.part { display: flex; align-items: flex-start; gap: 0.25rem; border-left: 2px solid transparent; padding-left: 0.4rem; }
+.part-focus { border-left-color: var(--accent); }
+.part-text { flex: 1; min-width: 0; }
+.part-text textarea { field-sizing: content; min-height: 2.2rem; resize: none; line-height: 1.6; }
 .guided-warning { margin: 0; padding: 0.4rem 0.75rem; background: var(--accent-soft); font-size: 0.88em; }
 
 .guided-scroll h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }

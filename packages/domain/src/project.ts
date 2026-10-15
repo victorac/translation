@@ -227,6 +227,7 @@ const guidedSchema = z.object({
         index: count,
         text: str,
         translation: str,
+        parts: z.array(str).max(10_000).default([]),
         status: z.enum(["new", "interpreted", "translated"]),
         error: z.string().max(5000).nullable(),
         warning: z.string().max(5000).nullable().optional(),
