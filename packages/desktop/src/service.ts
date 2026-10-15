@@ -367,28 +367,80 @@ export class WorkspaceService {
     const existing = resolveName(clean, this.knowledge.all());
     if (existing) throw new UserError("duplicate_topic", `There is already a topic called "${existing.source}".`);
     const topic = newTopic(type, clean, { newId, now: () => new Date().toISOString() });
-    this.knowledge.replaceWith([...this.knowledge.everything(), topic]);
+    this.knowledge.replaceWith([...this.knowledge.everything().filter((e) => !(e.status === "rejected" && e.kind === "term" && e.source === topic.source)), topic]);
     this.knowledgeChanged();
     return { id: topic.id };
   }
 
   /**
-   * Deletes a file. A topic a model suggested is remembered as rejected so it is not suggested again;
-   * anything else is removed for good. The notes and classes files cannot be deleted.
+   * Deletes a file. A topic is remembered as rejected, so the word is not found and offered again; anything else is removed for good.
+   * The notes and classes files cannot be deleted. The last deletion can be taken back with `undoRemove`.
    */
   knowledgeDelete(id: string): { removed: boolean } {
     const entry = this.knowledge.all().find((e) => e.id === id);
     if (!entry) return { removed: false };
-    if (entry.kind === "term" && entry.status === "suggested") {
-      const all = this.knowledge.everything();
-      this.knowledge.replaceWith(
-        all
-          .filter((e) => !(e.kind === "note" && e.about === id && e.status === "confirmed"))
-          .map((e) => (e.id === id || (e.kind === "note" && e.about === id) ? { ...e, status: "rejected" as const } : e.kind === "scene" ? { ...e, related: e.related.filter((r) => r !== id) } : e)),
-      );
-    } else this.knowledge.remove([id]);
+    const snapshot = this.knowledge.everything();
+    if (entry.kind === "term") this.rejectTerm(id);
+    else this.knowledge.remove([id]);
     this.knowledgeChanged();
+    this.rememberRemoval(snapshot);
     return { removed: true };
+  }
+
+  /** Marks a topic as rejected and drops the confirmed notes about it and its place in scenes. */
+  private rejectTerm(id: string): void {
+    const all = this.knowledge.everything();
+    this.knowledge.replaceWith(
+      all
+        .filter((e) => !(e.kind === "note" && e.about === id && e.status === "confirmed"))
+        .map((e) => (e.id === id || (e.kind === "note" && e.about === id) ? { ...e, status: "rejected" as const } : e.kind === "scene" ? { ...e, related: e.related.filter((r) => r !== id) } : e)),
+    );
+  }
+
+  /** What the last removal changed, so that it can be taken back while nothing else has changed the glossary. */
+  private lastRemoval: { snapshot: KnowledgeEntry[]; rev: number; documentId: string; word?: Word; index?: number; lines?: WorkLine[] } | null = null;
+
+  private rememberRemoval(snapshot: KnowledgeEntry[], word?: Word, index?: number, lines?: WorkLine[]): void {
+    this.lastRemoval = { snapshot, rev: this.knowledge.rev, documentId: this.activeDocId, ...(word ? { word, index: index ?? 0 } : {}), ...(lines ? { lines } : {}) };
+  }
+
+  /** Takes back the last removal of a word or a topic. It is refused when the glossary has changed since, because the old state would undo those changes too. */
+  workUndoRemove(): Work | null {
+    const last = this.lastRemoval;
+    if (!last || last.rev !== this.knowledge.rev || last.documentId !== this.activeDocId) throw new UserError("too_late", "Too late to undo: the glossary has changed since.");
+    this.lastRemoval = null;
+    this.knowledge.replaceWith(last.snapshot);
+    const w = this.work;
+    if (w && last.word && !w.words.some((n) => n.source === last.word!.source)) w.words.splice(Math.min(last.index ?? 0, w.words.length), 0, last.word);
+    // Who said the lines is put back as it was, when the lines are the same ones.
+    if (w && last.lines && last.lines.length === w.lines.length && last.lines.every((l, i) => l.text === w.lines[i]!.text)) w.lines = last.lines;
+    this.knowledgeChanged();
+    this.workChanged();
+    return w ? this.workView() : null;
+  }
+
+  /**
+   * Removes a word from the glossary: its topic is rejected, or, for a word that is not a topic yet, remembered as one the user does not
+   * want, so reading the text does not bring it back. Lines it said have no speaker again.
+   */
+  workRemoveWord(source: string): Work {
+    const w = this.need();
+    this.workView();
+    const index = w.words.findIndex((n) => n.source === source);
+    if (index < 0) throw new UserError("no_entry", "That word is not in the text any more.");
+    const word = structuredClone(w.words[index]!);
+    const lines = structuredClone(w.lines);
+    const snapshot = this.knowledge.everything();
+    const entry = this.knowledge.all().find((e) => e.kind === "term" && e.source === source);
+    if (entry) this.rejectTerm(entry.id);
+    else this.knowledge.replaceWith([...snapshot, { ...newTopic(word.kind, source, { newId, now: () => new Date().toISOString() }), status: "rejected" as const }]);
+    w.words.splice(index, 1);
+    for (const l of w.lines) if (l.speaker === source) l.speaker = null;
+    this.knowledgeChanged();
+    this.workChanged();
+    const view = this.workView();
+    this.rememberRemoval(snapshot, word, index, lines);
+    return view;
   }
 
   knowledgeResolve(name: string): { id: string | null; title: string | null } {

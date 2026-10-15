@@ -183,7 +183,6 @@ details > summary { cursor: pointer; }
 .tree .tree-action { display: block; }
 .tree .tree-action::before { display: none; }
 
-.guided-scroll label
 .glossary-head .glossary-source { flex: none; max-width: 55%; justify-content: flex-start; }
 .glossary-head .name-english { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .name-item.ignored .glossary-source, .name-item.ignored .name-english { opacity: 0.5; text-decoration: line-through; }
@@ -217,3 +216,10 @@ details > summary { cursor: pointer; }
 .tree-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 .suggested { min-width: 0; flex-wrap: nowrap; }
 .suggested .rt-Badge { flex: none; }
+
+/* A word's English name is written in its row. A suggestion shows as grey italics in the empty field; a word with nothing yet is marked. */
+.glossary-head .name-english { display: flex; }
+.glossary-head .name-english .rt-TextFieldRoot { flex: 1; min-width: 0; }
+.english-suggested input::placeholder { font-style: italic; }
+.english-missing { box-shadow: inset 0 0 0 1px var(--amber-8); }
+.toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }

@@ -331,6 +331,37 @@ describe("translating a document", () => {
     expect(words(service).find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
   });
 
+  it("removes a word from the glossary so that reading the text does not bring it back, and takes the removal back", async () => {
+    const { service } = setup();
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。");
+    const before = words(service).map((n) => n.source);
+    expect(before).toEqual(expect.arrayContaining(["花子", "太郎"]));
+    service.workRemoveWord("花子");
+    expect(words(service).map((n) => n.source)).not.toContain("花子");
+    // The text is edited: the word is still not offered.
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n二人は歩いた。");
+    expect(words(service).map((n) => n.source)).not.toContain("花子");
+    // Taking it back puts the word where it was, and reading the text finds it again.
+    service.workUndoRemove();
+    expect(words(service).map((n) => n.source)).toContain("花子");
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n三人は歩いた。");
+    expect(words(service).map((n) => n.source)).toContain("花子");
+    // Once something else changed the glossary, the old state would undo that too, so it is refused.
+    service.workRemoveWord("太郎");
+    service.knowledgeCreate("place", "東京");
+    expect(() => service.workUndoRemove()).toThrow(/Too late/);
+  });
+
+  it("puts back who said a line when the removal of a person is taken back", async () => {
+    const { service } = setup();
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。");
+    service.workSetSpeaker(0, "太郎");
+    service.workRemoveWord("太郎");
+    expect(service.workGet()!.lines[0]!.speaker).toBeNull();
+    service.workUndoRemove();
+    expect(service.workGet()!.lines[0]!.speaker).toBe("太郎");
+  });
+
   it("sends only the glossary words that stand in the paragraphs of the request", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

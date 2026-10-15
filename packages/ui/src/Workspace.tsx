@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowUpIcon, CheckIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
@@ -9,6 +9,7 @@ import { KnowledgeFiles } from "./KnowledgeFiles";
 import { SourceEditor, type Hit } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
+import { useToast } from "./Toast";
 import type { SetupState } from "./setup";
 
 const WIDTHS_KEY = "ltw.workspace.widths.v2";
@@ -73,6 +74,8 @@ export function Workspace({
   // The words whose details are open. It belongs here, not to each row, so a word that moves to another group keeps its place.
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
+  const [showIgnored, setShowIgnored] = useState(false);
+  const toast = useToast();
   const [filter, setFilter] = useState("");
   const [topics, setTopics] = useState<TopicRef[]>([]);
   const boxes = useRef<(HTMLDivElement | null)[]>([]);
@@ -179,13 +182,14 @@ export function Workspace({
   const look = (source: string) => {
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
+    setHit(0);
+  };
+  const toggleDetails = (source: string) =>
     setOpened((o) => {
       const next = new Set(o);
       if (!next.delete(source)) next.add(source);
       return next;
     });
-    setHit(0);
-  };
   const lookAtLine = (i: number) => {
     setFocus(null);
     setLineFocus((f) => (f === i ? null : i));
@@ -201,13 +205,30 @@ export function Workspace({
   const kindLabel = (kind: string): string => classes.find((c) => c.name === kind)?.label ?? kind;
   // What a link can point to: the topics of the knowledge base, and the words of the text that are not in it yet.
   const linkTargets: TopicRef[] = [...topics, ...words.filter((n) => n.draft && !topics.some((t) => t.source === n.source)).map((n) => ({ source: n.source, english: n.english, category: n.kind }))];
-  const shownNames = words.filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
+  const shownNames = words.filter((n) => n.use !== false).filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
   const firstAt = (n: Word): number => occurrencesOf(work?.source ?? "", [n.source, ...n.aliases], sources)[0]?.start ?? Number.MAX_SAFE_INTEGER;
   const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
   const groups = kinds.map((kind) => ({ kind, names: shownNames.filter((n) => n.kind === kind).sort((a, b) => firstAt(a) - firstAt(b)) })).filter((g) => g.names.length > 0);
+  const ignoredNames = words.filter((n) => n.use === false);
   const label = (p: { source: string; english: string }): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
 
   const update = (run: () => Promise<{ ok: true; value: Work } | { ok: false; error: { message: string } }>) => void call(run).then((w) => w && setWork(w));
+
+  /** Takes a word out of the glossary (and says so, with a way back): it is not found again in this text. */
+  const removeWord = async (word: Word) => {
+    const w = await call(() => api.invoke("work.removeWord", { source: word.source }));
+    if (!w) return;
+    setWork(w);
+    setOpened((o) => new Set([...o].filter((x) => x !== word.source)));
+    if (focus === word.source) stopLooking();
+    toast({
+      text: `Removed ${word.source} from the glossary.`,
+      action: {
+        label: "Undo",
+        run: () => void call(() => api.invoke("work.undoRemove")).then((back) => back && setWork(back)),
+      },
+    });
+  };
 
   const addTerm = async () => {
     const word = newTerm.trim();
@@ -470,7 +491,9 @@ export function Workspace({
                           topics={linkTargets}
                           expanded={opened.has(n.source)}
                           focused={focus === n.source}
-                          onToggle={() => look(n.source)}
+                          onToggle={() => toggleDetails(n.source)}
+                          onLocate={() => look(n.source)}
+                          onRemove={() => void removeWord(n)}
                           onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
                           onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                           onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
@@ -497,6 +520,38 @@ export function Workspace({
                     </Button>
                   </Flex>
                 </form>
+                {ignoredNames.length > 0 && (
+                  <section className="glossary-group">
+                    <Button variant="ghost" color="gray" size="1" mt="3" onClick={() => setShowIgnored((v) => !v)} aria-expanded={showIgnored}>
+                      {showIgnored ? <ChevronDownIcon /> : <ChevronRightIcon />} Ignored · {ignoredNames.length}
+                    </Button>
+                    {showIgnored && (
+                      <ul className="guided-glossary">
+                        {ignoredNames.map((n) => (
+                          <NameRow
+                            key={n.source}
+                            name={n}
+                            classes={classes}
+                            topics={linkTargets}
+                            expanded={false}
+                            focused={false}
+                            onToggle={() => undefined}
+                            onLocate={() => look(n.source)}
+                            onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
+                            onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
+                            onRemove={() => void removeWord(n)}
+                            onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
+                            onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
+                            onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
+                            onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
+                            onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
+                            onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                )}
 
                 <Heading as="h4" size="2" mt="5" mb="2">
                   Who says each line{" "}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon } from "@radix-ui/react-icons";
-import { Badge, Button, Flex, IconButton, Switch, Text, TextField } from "@radix-ui/themes";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, DotsHorizontalIcon } from "@radix-ui/react-icons";
+import { Badge, Button, DropdownMenu, Flex, IconButton, Text, TextField } from "@radix-ui/themes";
 import type { AttributeDef, Word } from "@ltw/domain";
 import { Pick } from "./Pick";
 
@@ -19,20 +19,26 @@ export interface TopicRef {
 const KIND_LABEL: Record<string, string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
 
 /** A text field that keeps what is being typed and saves it when the field is left (Enter saves, Escape goes back). */
-function TextBox({ value, label, placeholder, onSave }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void }) {
+function TextBox({ value, label, placeholder, onSave, onEmptyEnter, onEmptyEscape, className }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void; onEmptyEnter?: () => void; onEmptyEscape?: () => void; className?: string }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   return (
     <TextField.Root
       size="1"
+      {...(className !== undefined ? { className } : {})}
       aria-label={label}
       value={text}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => text.trim() !== value.trim() && onSave(text)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        const empty = text.trim() === "" && value.trim() === "";
+        if (e.key === "Enter") {
+          if (empty && onEmptyEnter) onEmptyEnter();
+          (e.target as HTMLInputElement).blur();
+        }
         if (e.key === "Escape") {
+          if (empty && onEmptyEscape) onEmptyEscape();
           setText(value);
           (e.target as HTMLInputElement).blur();
         }
@@ -62,8 +68,9 @@ function Suggested({ text, onUse, onDismiss }: { text: string; onUse: () => void
 }
 
 /**
- * One word of the text. The line says what it is: the word, its English name, and whether it is used in this block. Opening it shows
- * everything about it as a tree: the English name, the kind and every attribute its kind has, each one editable and saved as it changes.
+ * One word of the text, on one line: the word (click it to see where it stands in the text), its English name, which is written right
+ * there (a suggestion shows in grey, Enter accepts it and Escape drops it), and a menu. The arrow opens the details: the type, a note,
+ * and the attributes that have a value; the others are added from "Add detail".
  */
 export function NameRow({
   name,
@@ -72,8 +79,10 @@ export function NameRow({
   expanded,
   focused,
   onToggle,
+  onLocate,
   onUse,
   onOpen,
+  onRemove,
   onEnglish,
   onHint,
   onKind,
@@ -86,10 +95,13 @@ export function NameRow({
   topics: TopicRef[];
   expanded: boolean;
   focused: boolean;
-  /** The word was clicked: it is shown in the source, and its attributes open or close. */
+  /** The arrow was clicked: the details open or close. */
   onToggle: () => void;
+  /** The word was clicked: it is shown in the source. */
+  onLocate: () => void;
   onUse: (use: boolean) => void;
   onOpen: () => void;
+  onRemove: () => void;
   onEnglish: (english: string) => void;
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
@@ -104,57 +116,74 @@ export function NameRow({
   const used = name.use !== false;
   const shown = (t: TopicRef) => (t.english.trim() !== "" ? `${t.english.trim()} (${t.source})` : t.source);
   const poolFor = (a: AttributeDef) => topics.filter((t) => t.source !== name.source && (!a.target || t.category === a.target));
+  // The attributes with a value (or a suggestion) show; the user adds the others one at a time.
+  const [added, setAdded] = useState<string[]>([]);
+  const hasValue = (a: AttributeDef) => (attrs[a.key] ?? []).length > 0 || (suggestions[a.key] ?? []).length > 0 || added.includes(a.key);
+  const attributes = def?.attributes ?? [];
+  const hidden = attributes.filter((a) => !hasValue(a));
 
   const kindOptions = classes.length === 0 ? [{ value: name.kind, label: KIND_LABEL[name.kind] ?? name.kind }] : classes.map((c) => ({ value: c.name, label: KIND_LABEL[c.name] ?? c.name }));
 
   return (
     <li className={used ? "name-item" : "name-item ignored"}>
-      <Flex align="center" gap="2" className="glossary-head">
-        <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={onToggle} aria-expanded={expanded} title="Show where it appears in the block, and its details" className="glossary-source">
+      <Flex align="center" gap="1" className="glossary-head">
+        <IconButton variant="ghost" size="1" color="gray" onClick={onToggle} aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} the details of ${name.source}`} title="Details">
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        </IconButton>
+        <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={onLocate} aria-pressed={focused} title="Show where it appears in the text" className="glossary-source">
           <Text weight="bold" size="2" truncate>
             {name.source}
           </Text>
         </Button>
-        {suggestedEnglish !== "" ? (
+        {used ? (
           <Flex align="center" gap="1" className="name-english">
-            <Text size="2" color="gray" style={{ fontStyle: "italic" }} truncate title="Only suggested: not confirmed yet">
-              {suggestedEnglish}
-            </Text>
-            <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="Confirm this name">
-              <CheckIcon />
-            </IconButton>
+            <TextBox
+              className={suggestedEnglish !== "" ? "english-suggested" : name.english.trim() === "" && !name.hint ? "english-missing" : ""}
+              value={name.english}
+              label={`English name of ${name.source}`}
+              placeholder={suggestedEnglish !== "" ? suggestedEnglish : name.hint ? `note: ${name.hint}` : "English name"}
+              onSave={onEnglish}
+              onEmptyEnter={() => suggestedEnglish !== "" && onAcceptSuggestion("english")}
+              onEmptyEscape={() => suggestedEnglish !== "" && onDismissSuggestion("english")}
+            />
+            {suggestedEnglish !== "" && (
+              <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="Suggested, not confirmed. Click or press Enter to confirm, Escape to drop it.">
+                <CheckIcon />
+              </IconButton>
+            )}
           </Flex>
         ) : (
-          <Text size="2" color={name.english.trim() === "" && !name.hint ? "amber" : undefined} className="name-english" title={name.hint ? `Note to the model: ${name.hint}` : undefined}>
-            {name.english.trim() !== "" ? name.english : name.hint ? `note: ${name.hint}` : "no English name"}
+          <Text size="2" color="gray" className="name-english" truncate>
+            ignored in this text
           </Text>
         )}
-        <Text as="label" size="1" color={used ? "green" : "gray"} weight={used ? "medium" : "regular"} title={used ? "Used: sent with the block, and added to the knowledge base" : "Ignored in this block"}>
-          <Flex align="center" gap="1">
-            <Switch size="1" color="green" checked={used} onCheckedChange={onUse} aria-label={`Use ${name.source}`} />
-            {used ? "use" : "ignore"}
-          </Flex>
-        </Text>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            <IconButton variant="ghost" size="1" color="gray" aria-label={`More about ${name.source}`}>
+              <DotsHorizontalIcon />
+            </IconButton>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content size="1" align="end">
+            <DropdownMenu.Item onSelect={() => onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
+            {!name.draft && <DropdownMenu.Item onSelect={onOpen}>Open in the knowledge base</DropdownMenu.Item>}
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item color="red" onSelect={onRemove}>
+              Remove from the glossary
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </Flex>
       {expanded && (
         <ul className="tree" aria-label={`Details of ${name.source}`}>
           <li>
-            <Text size="1" color="gray">english</Text>
-            <div className="tree-field">
-              <TextBox value={name.english} label={`English name of ${name.source}`} placeholder={suggestedEnglish !== "" ? suggestedEnglish : "English name"} onSave={onEnglish} />
-              {suggestedEnglish !== "" && <Suggested text={suggestedEnglish} onUse={() => onAcceptSuggestion("english")} onDismiss={() => onDismissSuggestion("english")} />}
-            </div>
+            <Text size="1" color="gray">type</Text>
+            <Pick size="1" label={`Type of ${name.source}`} value={name.kind} options={kindOptions} onChange={onKind} />
           </li>
           <li>
             <Text size="1" color="gray">note</Text>
             <TextBox value={name.hint ?? ""} label={`Note to the model about ${name.source}`} placeholder="A hint for the model (the English name can stay empty)" onSave={onHint} />
           </li>
-          <li>
-            <Text size="1" color="gray">type</Text>
-            <Pick size="1" label={`Type of ${name.source}`} value={name.kind} options={kindOptions} onChange={onKind} />
-          </li>
-          {(def?.attributes ?? []).map((a) => {
+          {attributes.filter(hasValue).map((a) => {
             const chosen = attrs[a.key] ?? [];
             const key = <Text size="1" color="gray">{a.key}</Text>;
             if (a.kind === "text")
@@ -219,11 +248,9 @@ export function NameRow({
               </li>
             );
           })}
-          {!name.draft && (
+          {hidden.length > 0 && (
             <li className="tree-action">
-              <Button variant="ghost" size="1" onClick={onOpen}>
-                Open topic
-              </Button>
+              <Pick size="1" variant="ghost" label={`Add a detail to ${name.source}`} value="" options={[{ value: "", label: "+ Add detail" }, ...hidden.map((a) => ({ value: a.key, label: a.key }))]} onChange={(v) => v !== "" && setAdded((x) => [...x, v])} />
             </li>
           )}
         </ul>

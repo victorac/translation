@@ -47,6 +47,8 @@ const COMMANDS = new Set([
   "work.dismissSuggestion",
   "work.acceptSpeaker",
   "work.addWord",
+  "work.removeWord",
+  "work.undoRemove",
   "work.setAttribute",
   "work.setKind",
   "work.setEnglish",

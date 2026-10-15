@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Theme } from "@radix-ui/themes";
 import "@radix-ui/themes/styles.css";
 import { App } from "./App";
+import { ToastProvider } from "./Toast";
 import "./styles.css";
 
 /** Light or dark, as the system says, and following it when it changes. */
@@ -22,7 +23,9 @@ function Root() {
   const appearance = useAppearance();
   return (
     <Theme appearance={appearance} accentColor="indigo" grayColor="slate" radius="medium" panelBackground="solid" style={{ height: "100%" }}>
-      <App />
+      <ToastProvider>
+        <App />
+      </ToastProvider>
     </Theme>
   );
 }
