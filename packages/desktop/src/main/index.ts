@@ -165,11 +165,10 @@ app.whenReady().then(() => {
   });
 
   createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
 });
 
+// One window is the whole app, and closing it shuts the project down (see the close handler), so closing it quits the app on every system,
+// macOS included: a window opened again afterwards would have nothing behind it.
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  app.quit();
 });
