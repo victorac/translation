@@ -9,6 +9,21 @@ import { useToast } from "./Toast";
 import { TopicEditor, type Problem } from "./TopicEditor";
 
 const ALL_KINDS = "";
+const WIDTH_KEY = "ltw.drawer.width.v1";
+const MIN_WIDTH = 560;
+/** How far the drawer stops from the left edge of the window at its widest, and how far a key press moves its edge. */
+const EDGE_GAP = 48;
+const KEY_STEP = 32;
+
+const loadWidth = (): number => {
+  try {
+    const v = Number(localStorage.getItem(WIDTH_KEY));
+    if (Number.isFinite(v) && v >= MIN_WIDTH) return v;
+  } catch {
+    /* the width is then kept for this session only */
+  }
+  return Math.min(1024, Math.round(window.innerWidth * 0.94));
+};
 
 /**
  * The knowledge base, as a drawer over the workspace: a list of the topics (searchable, by kind, with checkboxes to act on several)
@@ -30,6 +45,19 @@ export function KnowledgeDrawer({
   onClose: () => void;
 }) {
   const toast = useToast();
+  const widest = () => Math.max(MIN_WIDTH, window.innerWidth - EDGE_GAP);
+  const keepWidth = (w: number) => {
+    const next = Math.round(Math.min(Math.max(w, MIN_WIDTH), widest()));
+    setWidth(next);
+    return next;
+  };
+  const saveWidth = (w: number) => {
+    try {
+      localStorage.setItem(WIDTH_KEY, String(w));
+    } catch {
+      /* kept for this session only */
+    }
+  };
   const [list, setList] = useState<FileList | null>(null);
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [query, setQuery] = useState("");
@@ -38,7 +66,10 @@ export function KnowledgeDrawer({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<string | null>(null);
   const [asText, setAsText] = useState(false);
-  const [creating, setCreating] = useState<{ type: string; name: string } | null>(null);
+  const [creating, setCreating] = useState<{ type: string; name: string; english: string; hint: string } | null>(null);
+  const [width, setWidth] = useState(loadWidth);
+  const dragging = useRef(false);
+  const panel = useRef<HTMLElement>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ problems: Problem[]; backlinks: { id: string; title: string }[] } | null>(null);
   const [typed, setTyped] = useState("");
@@ -54,6 +85,19 @@ export function KnowledgeDrawer({
       live = false;
     };
   }, [rev, open]);
+
+  // Escape closes the drawer, after a menu or a dropdown that is open (they take the key first and mark it as used) and after a new topic being written.
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (creating) setCreating(null);
+      else onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, creating, onClose]);
 
   useEffect(() => {
     if (request) {
@@ -110,6 +154,7 @@ export function KnowledgeDrawer({
   }, [links, rev]);
 
   const show = (id: string) => {
+    setCreating(null);
     setActive(id);
     setAsText(false);
   };
@@ -124,11 +169,9 @@ export function KnowledgeDrawer({
 
   const create = async () => {
     if (!creating || creating.name.trim() === "") return;
-    const r = await api.invoke("knowledge.create", { type: creating.type, name: creating.name.trim() });
+    const r = await api.invoke("knowledge.create", { type: creating.type, name: creating.name.trim(), english: creating.english, hint: creating.hint });
     if (!r.ok) return setMessage(r.error.message);
-    setCreating(null);
     setMessage(null);
-    // The list is read again when the change is announced; show the new topic right away.
     show(r.value.id);
   };
 
@@ -157,14 +200,30 @@ export function KnowledgeDrawer({
 
   return (
     <div className="drawer-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside
-        className="drawer"
-        role="dialog"
-        aria-label="Knowledge base"
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && !(e.target as HTMLElement).closest?.(".cm-editor, [role=listbox], [role=menu]")) onClose();
-        }}
-      >
+      <aside className="drawer" role="dialog" aria-label="Knowledge base" ref={panel} tabIndex={-1} style={{ width: Math.min(width, widest()) }}>
+        <div
+          className="drawer-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the knowledge base"
+          aria-valuenow={width}
+          tabIndex={0}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            dragging.current = true;
+          }}
+          onPointerMove={(e) => dragging.current && keepWidth(window.innerWidth - e.clientX)}
+          onPointerUp={(e) => {
+            if (!dragging.current) return;
+            dragging.current = false;
+            saveWidth(keepWidth(window.innerWidth - e.clientX));
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            e.preventDefault();
+            saveWidth(keepWidth(width + (e.key === "ArrowLeft" ? KEY_STEP : -KEY_STEP)));
+          }}
+        />
         <Flex align="center" justify="between" gap="3" px="4" py="3" className="drawer-head">
           <Flex align="baseline" gap="2">
             <Heading as="h2" size="4">
@@ -208,26 +267,16 @@ export function KnowledgeDrawer({
                     <MagnifyingGlassIcon />
                   </TextField.Slot>
                 </TextField.Root>
-                <Button size="2" onClick={() => setCreating(creating ? null : { type: classes[0]?.name ?? "character", name: "" })} aria-expanded={creating !== null}>
+                <Button size="2" onClick={() => {
+                    setMessage(null);
+                    setActive(null);
+                    setCreating(creating ? null : { type: classes[0]?.name ?? "character", name: "", english: "", hint: "" });
+                  }}
+                  aria-pressed={creating !== null}
+                >
                   <PlusIcon /> New
                 </Button>
               </Flex>
-              {creating && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void create();
-                  }}
-                >
-                  <Flex gap="2" align="center">
-                    <Pick size="1" label="Kind of the new topic" value={creating.type} options={classes.map((c) => ({ value: c.name, label: c.label }))} onChange={(type) => setCreating({ ...creating, type })} />
-                    <TextField.Root size="1" style={{ flex: 1, minWidth: 0 }} autoFocus aria-label="Name of the new topic as written in the text" placeholder="Name as written in the text" value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} />
-                    <Button size="1" type="submit" disabled={creating.name.trim() === ""}>
-                      Add
-                    </Button>
-                  </Flex>
-                </form>
-              )}
               <Flex gap="3" align="center">
                 <Pick size="1" label="Show only this kind" value={kindFilter} options={[{ value: ALL_KINDS, label: "All kinds" }, ...classes.map((c) => ({ value: c.name, label: c.label }))]} onChange={setKindFilter} />
                 {counts.suggested > 0 && (
@@ -306,7 +355,61 @@ export function KnowledgeDrawer({
           </Flex>
 
           <Flex direction="column" className="drawer-detail">
-            {!file && active !== "classes" ? (
+            {creating ? (
+              <form
+                className="drawer-scroll"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void create();
+                }}
+              >
+                <Flex direction="column" gap="3" p="4">
+                  <Heading as="h3" size="4">
+                    New topic
+                  </Heading>
+                  <Text size="2" color="gray">
+                    Write the name as it is in the text, then how it is written in English, or a note for the model, or both. Nothing is saved until you press Create.
+                  </Text>
+                  <label>
+                    <Text as="div" size="2" weight="medium" mb="1">
+                      Name in the text
+                    </Text>
+                    <TextField.Root autoFocus value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} aria-label="Name in the text" />
+                  </label>
+                  <div>
+                    <Text as="div" size="2" weight="medium" mb="1">
+                      Kind
+                    </Text>
+                    <Pick label="Kind of the new topic" value={creating.type} options={classes.map((c) => ({ value: c.name, label: c.label }))} onChange={(type) => setCreating({ ...creating, type })} />
+                  </div>
+                  <label>
+                    <Text as="div" size="2" weight="medium" mb="1">
+                      English name
+                    </Text>
+                    <TextField.Root value={creating.english} onChange={(e) => setCreating({ ...creating, english: e.target.value })} placeholder="The model must write it exactly like this" aria-label="English name" />
+                  </label>
+                  <label>
+                    <Text as="div" size="2" weight="medium" mb="1">
+                      Note to the model
+                    </Text>
+                    <TextField.Root value={creating.hint} onChange={(e) => setCreating({ ...creating, hint: e.target.value })} placeholder="A hint, such as who it is or how to write it; it is a suggestion, not forced" aria-label="Note to the model" />
+                  </label>
+                  {message && (
+                    <Text as="p" size="1" color="red" role="status">
+                      {message}
+                    </Text>
+                  )}
+                  <Flex gap="2">
+                    <Button type="submit" disabled={creating.name.trim() === "" || (creating.english.trim() === "" && creating.hint.trim() === "")}>
+                      Create
+                    </Button>
+                    <Button type="button" variant="soft" color="gray" onClick={() => setCreating(null)}>
+                      Cancel
+                    </Button>
+                  </Flex>
+                </Flex>
+              </form>
+            ) : !file && active !== "classes" ? (
               <Text as="p" size="2" color="gray" m="4">
                 Choose a topic from the list.
               </Text>

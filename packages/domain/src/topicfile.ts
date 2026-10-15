@@ -300,7 +300,10 @@ export function applyFile(existing: readonly KnowledgeEntry[], id: string, text:
   const name = field("name")?.value.trim() || "";
   const english = field("english")?.value.trim() || "";
   if (name === "") problems.push({ line: field("name")?.line ?? 1, message: "A topic needs a name (as written in the text). It was left as it was." });
-  if (english === "") problems.push({ line: field("english")?.line ?? 1, message: "A topic needs an English name. It was left as it was." });
+  const body = readBody(parsed.body, problems);
+  // A topic made from a note alone has no English name; one that has a name keeps it.
+  const noteOnly = body.summary !== "" && entry.target === "";
+  if (english === "" && !noteOnly) problems.push({ line: field("english")?.line ?? 1, message: "A topic needs an English name. It was left as it was." });
   const newName = name || entry.source;
   const newEnglish = english || entry.target;
   const category = lower(field("type")?.value ?? entry.category) || entry.category;
@@ -338,7 +341,6 @@ export function applyFile(existing: readonly KnowledgeEntry[], id: string, text:
     if (suggested) attrFlags.push(f.key);
   }
 
-  const body = readBody(parsed.body, problems);
   const changed =
     entry.source !== newName || entry.target !== newEnglish || entry.hint !== body.summary || entry.category !== category || entry.aliases.join("\u0000") !== aliases.join("\u0000") || JSON.stringify(entry.attrs) !== JSON.stringify(attrs) || entry.attrFlags.join() !== attrFlags.join();
   const updated: KnowledgeEntry = {

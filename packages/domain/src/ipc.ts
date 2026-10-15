@@ -175,7 +175,7 @@ export interface CommandMap {
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
-  "knowledge.create": { type: string; name: string };
+  "knowledge.create": { type: string; name: string; english?: string; hint?: string };
   "knowledge.delete": { id: string };
   "knowledge.deleteMany": { ids: string[] };
   "knowledge.edit": { id: string; target?: string; hint?: string; kind?: string; attribute?: { key: string; values: string[] } };

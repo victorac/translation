@@ -377,6 +377,24 @@ describe("translating a document", () => {
     expect(() => service.knowledgeEdit({ id, kind: "nonsense" })).toThrow(/no kind/);
   });
 
+  it("makes a topic from the form only with an English name or a note, and keeps nothing for a word that has neither", async () => {
+    const { service } = setup();
+    expect(() => service.knowledgeCreate("character", "山田", "", "")).toThrow(/English name, or a note/);
+    const byNote = service.knowledgeCreate("character", "山田", "", "a teacher");
+    const byName = service.knowledgeCreate("place", "東京", "Tokyo", "");
+    const entries = service.knowledgeList({ kind: "term" }).entries;
+    expect(entries.find((e) => e.id === byNote.id)).toMatchObject({ target: "", hint: "a teacher" });
+    expect(entries.find((e) => e.id === byName.id)).toMatchObject({ target: "Tokyo" });
+    // The note-only topic reads back as a file without a complaint.
+    expect(service.knowledgeSetFile(byNote.id, service.knowledgeFile(byNote.id).text).problems).toEqual([]);
+    // A word of the text with nothing said about it is not added to the knowledge base when translating.
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。");
+    service.workSetEnglish("花子", "Hanako");
+    await service.workTranslate({ ...model, backend: "practice" });
+    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => e.source)).not.toContain("太郎");
+    expect(service.knowledgeList({ kind: "term" }).entries.map((e) => e.source)).toContain("花子");
+  });
+
   it("sends only the glossary words that stand in the paragraphs of the request", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

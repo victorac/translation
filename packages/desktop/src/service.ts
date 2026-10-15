@@ -361,12 +361,16 @@ export class WorkspaceService {
   }
 
   /** Makes a new, empty topic of a class and returns its file. */
-  knowledgeCreate(type: string, name: string): { id: string } {
+  knowledgeCreate(type: string, name: string, english?: string, hint?: string): { id: string } {
     const clean = name.trim();
     if (clean === "") throw new UserError("bad_name", "Enter a name.");
+    // Made from the form: the model needs an English name or a note. (A link that points nowhere makes a topic with just the name.)
+    const form = english !== undefined || hint !== undefined;
+    if (form && (english ?? "").trim() === "" && (hint ?? "").trim() === "") throw new UserError("bad_english", "Write the English name, or a note for the model.");
     const existing = resolveName(clean, this.knowledge.all());
     if (existing) throw new UserError("duplicate_topic", `There is already a topic called "${existing.source}".`);
-    const topic = newTopic(type, clean, { newId, now: () => new Date().toISOString() });
+    const made = newTopic(type, clean, { newId, now: () => new Date().toISOString() });
+    const topic = form ? { ...made, target: (english ?? "").trim(), hint: (hint ?? "").replace(/\s+/g, " ").trim() } : made;
     this.knowledge.replaceWith([...this.knowledge.everything().filter((e) => !(e.status === "rejected" && e.kind === "term" && e.source === topic.source)), topic]);
     this.knowledgeChanged();
     return { id: topic.id };
@@ -838,6 +842,8 @@ export class WorkspaceService {
     for (const n of words) {
       if (n.use === false) continue;
       const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
+      // A word with no English name, no note and no attribute has nothing to remember yet: it stays a word of this text.
+      if (!entry && n.english.trim() === "" && (n.hint ?? "").trim() === "" && Object.keys(n.attrs ?? {}).length === 0) continue;
       if (entry) {
         if (entry.status !== "confirmed") this.knowledge.confirm([entry.id]);
         continue;

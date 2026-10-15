@@ -38,6 +38,7 @@ export function TextBox({ value, label, placeholder, onSave, onEmptyEnter, onEmp
           (e.target as HTMLInputElement).blur();
         }
         if (e.key === "Escape") {
+          e.preventDefault(); // it only undoes the edit; a drawer or dialog around this field stays open
           if (empty && onEmptyEscape) onEmptyEscape();
           setText(value);
           (e.target as HTMLInputElement).blur();
