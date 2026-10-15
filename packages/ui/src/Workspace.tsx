@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ShuffleIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
 import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
@@ -358,12 +358,12 @@ export function Workspace({
   /** Whether the model can be asked about a word: some paragraph that has it is translated. */
   const readable = (n: Word): boolean => !!model && working === null && paragraphs.some((p, k) => p.translation.trim() !== "" && wordsIn(k).includes(n.source));
 
-  /** Translates one paragraph again, keeping the others as they are. */
-  const retranslate = async (paragraph: number) => {
+  /** Translates one paragraph again, keeping the others as they are; as an alternative, the model is asked for a version that differs from the one it has. */
+  const retranslate = async (paragraph: number, alternative = false) => {
     if (!work || !model) return;
     setWorking("translate");
-    setActivity({ what: `Translating paragraph ${paragraph + 1} again with ${model.name}`, stop: true });
-    const w = await call(() => api.invoke("work.retranslate", { ...modelInput(), paragraph }));
+    setActivity({ what: alternative ? `Writing another version of paragraph ${paragraph + 1} with ${model.name}` : `Translating paragraph ${paragraph + 1} again with ${model.name}`, stop: true });
+    const w = await call(() => api.invoke("work.retranslate", { ...modelInput(), paragraph, ...(alternative ? { alternative } : {}) }));
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
@@ -720,9 +720,14 @@ export function Workspace({
                         </Text>
                       )}
                     </div>
-                    <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslate(k)}>
+                    <Flex direction="column" gap="1">
+                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslate(k)}>
                       <ReloadIcon />
                     </IconButton>
+                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Write another version of paragraph ${k + 1}`} title="Ask for an alternative: a different translation from this one. The other paragraphs stay as they are." disabled={working !== null || !model || p.translation.trim() === ""} onClick={() => void retranslate(k, true)}>
+                        <ShuffleIcon />
+                      </IconButton>
+                    </Flex>
                   </div>
                 ))}
               </div>

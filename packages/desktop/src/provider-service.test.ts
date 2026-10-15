@@ -780,6 +780,23 @@ describe("translating a document", () => {
     expect(() => service.workSetSpeakerSuggestion(9, "太郎")).toThrow(/does not exist/);
   });
 
+  it("asks for an alternative by showing the translation it has as the version to differ from, and a plain retranslation does not", async () => {
+    let n = 0;
+    const lm = await fakeLmStudio({ paragraph: () => `Version ${++n}.` });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "花子は笑った。");
+    await service.workTranslate({ ...model });
+    await service.workRetranslate({ ...model, paragraph: 0 });
+    const plain = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(plain).not.toContain("REJECTED VERSION");
+    await service.workRetranslate({ ...model, paragraph: 0, alternative: true });
+    const alternative = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(alternative).toContain("REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\nVersion 2.");
+    expect(alternative).toContain("in a clearly different way from the REJECTED VERSION");
+    expect(service.workGet()!.paragraphs[0]!.translation).toBe("Version 3.");
+  });
+
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
     const { provider, service } = setup();

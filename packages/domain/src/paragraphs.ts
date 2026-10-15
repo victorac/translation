@@ -88,7 +88,9 @@ export function paragraphMessage(r: ParagraphRequest): string {
   if (r.next.length > 0) parts.push(`${NEXT_LABEL}\n${r.next.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);
   parts.push(`${from} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
-  parts.push(`Translate that paragraph into ${r.targetLanguage}. Reply with its translation only, as one paragraph.`);
+  // Shown a version that was not accepted, the model copies it unless it is told outright to write something else.
+  const how = r.rejected ? ` in a clearly different way from the REJECTED VERSION: other words and another sentence structure, with the same meaning` : "";
+  parts.push(`Translate that paragraph into ${r.targetLanguage}${how}. Reply with its translation only, as one paragraph.`);
   return parts.join("\n\n");
 }
 

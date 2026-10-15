@@ -938,14 +938,15 @@ export class WorkspaceService {
    * the story goes), and the paragraph. The answer is checked: if it leaves out a glossary name of the paragraph, gives back the text that was
    * rejected, or is several paragraphs, the model is asked once more.
    */
-  private async translateParagraph(input: ModelInput, k: number, system: string, abort: AbortController, old?: string): Promise<{ text: string; issue: string | null } | null> {
+  private async translateParagraph(input: ModelInput, k: number, system: string, abort: AbortController, old?: string, alternative = false): Promise<{ text: string; issue: string | null } | null> {
     const w = this.work!;
     const paragraph = w.paragraphs[k]!.text;
     const glossary = glossaryFor(w.words, paragraph);
     const notes = notesFor(w.words, w.lines, { index: k, text: paragraph });
     const suggestions = suggestionsFor(w.words, paragraph);
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-    let reject: string | undefined;
+    // An alternative is asked for with the current translation shown as the version that was not accepted, as when the model gives back the same text.
+    let reject: string | undefined = alternative ? old : undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
@@ -1183,7 +1184,7 @@ export class WorkspaceService {
   }
 
   /** Translates one paragraph again, keeping the others as they are. The old text is not shown to the model unless it is given back. */
-  async workRetranslate(input: ModelInput & { paragraph: number }): Promise<Work> {
+  async workRetranslate(input: ModelInput & { paragraph: number; alternative?: boolean | undefined }): Promise<Work> {
     const w = this.need();
     this.workView();
     if (!w.paragraphs[input.paragraph]) throw new UserError("no_paragraph", "That paragraph does not exist.");
@@ -1193,7 +1194,7 @@ export class WorkspaceService {
       this.workView();
       const system = paragraphSystem(this.styleOf(input).text, input.sourceLanguage, input.targetLanguage);
       const old = w.paragraphs[input.paragraph]!.translation;
-      const done = await this.translateParagraph(input, input.paragraph, system, abort, old.trim() === "" ? undefined : old);
+      const done = await this.translateParagraph(input, input.paragraph, system, abort, old.trim() === "" ? undefined : old, input.alternative === true);
       if (done === null) return this.workView();
       w.paragraphs[input.paragraph] = { text: w.paragraphs[input.paragraph]!.text, translation: done.text, issue: done.issue };
       w.error = null;

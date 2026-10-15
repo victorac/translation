@@ -176,7 +176,8 @@ export interface CommandMap {
   /** The user's own text for the translation of one paragraph. */
   "work.setPart": { paragraph: number; text: string };
   /** Translates one paragraph again, keeping the others. */
-  "work.retranslate": ModelInput & { paragraph: number };
+  /** `alternative`: the translation it has now is shown to the model as the one to differ from. */
+  "work.retranslate": ModelInput & { paragraph: number; alternative?: boolean };
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };

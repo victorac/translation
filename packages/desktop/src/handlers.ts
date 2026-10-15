@@ -92,7 +92,7 @@ const schemas: Record<CommandName, z.ZodType> = {
   "work.setKind": z.object({ source: z.string().min(1).max(200), kind: z.string().min(1).max(100) }),
   "work.translate": modelInput.extend({ from: z.number().int().min(0).max(1_000_000).optional(), redo: z.boolean().optional() }),
   "work.setPart": z.object({ paragraph: z.number().int().min(0).max(1_000_000), text: z.string().max(1_000_000) }),
-  "work.retranslate": modelInput.extend({ paragraph: z.number().int().min(0).max(1_000_000) }),
+  "work.retranslate": modelInput.extend({ paragraph: z.number().int().min(0).max(1_000_000), alternative: z.boolean().optional() }),
   "notes.cancel": z.undefined(),
   "knowledge.list": z.object({ text: z.string().max(500).optional(), kind: z.enum(["term", "note", "scene", "summary"]).optional(), status: z.enum(["suggested", "confirmed"]).optional(), by: z.enum(["user", "model"]).optional() }),
   "knowledge.files": z.undefined(),
