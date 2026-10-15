@@ -101,6 +101,21 @@ export function Workspace({
     if (w) setWork(w);
   };
 
+  // Another document or project: nothing of the one before is kept on screen.
+  useEffect(() => {
+    setWork(null);
+    setDrafts([]);
+    setCur(null);
+    setFocus(null);
+    setLineFocus(null);
+    setOpened(new Set());
+    setError(null);
+  }, [editorKey]);
+  // No text, no work to show.
+  useEffect(() => {
+    if (text.trim() === "") setWork(null);
+  }, [text]);
+
   // The work always follows the text: made when it first appears, and brought up to date a moment after typing stops. A paragraph whose
   // text is unchanged keeps its translation.
   useEffect(() => {
@@ -508,6 +523,12 @@ export function Workspace({
                 The translation appears here, one box for each paragraph.
               </Text>
             </div>
+          ) : done === 0 && working !== "translate" ? (
+            <div className="guided-body">
+              <Text as="p" size="2" color="gray">
+                The translation appears here when you translate the text.
+              </Text>
+            </div>
           ) : (
             <>
               <div className="guided-parts">
@@ -519,7 +540,7 @@ export function Workspace({
                     <div className="part-body">
                       <TextArea
                         className="part-text"
-                        variant="surface"
+                        variant="soft"
                         aria-label={`Translation of paragraph ${k + 1}`}
                         placeholder="…"
                         value={drafts[k] ?? ""}
