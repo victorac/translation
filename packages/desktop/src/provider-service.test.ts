@@ -395,19 +395,19 @@ describe("translating step by step", () => {
 
   it("asks again when the model writes about more than the paragraph, and joins the lines if it still does", async () => {
     let calls = 0;
-    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("was several paragraphs") ? (calls++, "Only the paragraph.") : "First.\n\nSecond.\n\nThird.") });
+    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("was several paragraphs") ? (calls++, "Only the paragraph, Hanako.") : "First. Hanako\n\nSecond.\n\nThird.") });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const docId = service.snapshot().activeDocumentId;
     service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
     const done = await service.guidedTranslate({ ...model, index: 0 });
     expect(calls).toBe(1);
-    expect(done.blocks[0]!.parts).toEqual(["Only the paragraph."]);
+    expect(done.blocks[0]!.parts).toEqual(["Only the paragraph, Hanako."]);
     expect(done.blocks[0]!.warning ?? null).toBeNull();
-    const stubborn = await fakeLmStudio({ paragraph: () => "First.\n\nSecond." });
+    const stubborn = await fakeLmStudio({ paragraph: () => "First. Hanako\n\nSecond." });
     provider.save({ baseUrl: stubborn.baseUrl, allowRemote: false });
     const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 0 });
-    expect(again.blocks[0]!.parts).toEqual(["First. Second."]);
+    expect(again.blocks[0]!.parts).toEqual(["First. Hanako Second."]);
     expect(again.blocks[0]!.warning).toMatch(/several paragraphs, which were joined/);
   });
 
