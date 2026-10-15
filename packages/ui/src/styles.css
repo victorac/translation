@@ -223,3 +223,4 @@ details > summary { cursor: pointer; }
 .english-suggested input::placeholder { font-style: italic; }
 .english-missing { box-shadow: inset 0 0 0 1px var(--amber-8); }
 .toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }
+.select-add { position: fixed; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); max-width: 22rem; }

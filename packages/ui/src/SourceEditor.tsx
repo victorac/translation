@@ -84,16 +84,23 @@ export interface SourceEditorProps {
   onCursor?: (position: number) => void;
   /** Take the editor to this place (the start of a paragraph chosen elsewhere). `n` changes each time. */
   reveal?: { at: number; n: number } | null;
+  /** Some words of one line were selected (where to put a button, in window coordinates), or the selection went away. */
+  onSelect?: (selection: { text: string; left: number; bottom: number } | null) => void;
 }
 
+/** The longest selection that can be a word of a glossary. */
+const LONGEST_WORD = 40;
+
 /** The source text as an editor, with the number of each paragraph in the margin. The numbers are not part of the text. */
-export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onCursorRef = useRef(onCursor);
   onCursorRef.current = onCursor;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
   const latest = useRef({ value });
   latest.current = { value };
 
@@ -111,8 +118,15 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
       hitField,
       currentField,
       theme,
+      EditorView.domEventHandlers({ scroll: () => void onSelectRef.current?.(null) }),
       EditorView.updateListener.of((u) => {
         if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+        if (u.docChanged || u.selectionSet) {
+          const { from, to } = u.state.selection.main;
+          const text = from === to || to - from > LONGEST_WORD ? "" : u.state.sliceDoc(from, to);
+          const at = text.trim() === "" || text.includes("\n") ? null : u.view.coordsAtPos(to);
+          onSelectRef.current?.(at ? { text: text.trim(), left: at.left, bottom: at.bottom } : null);
+        }
         // Where the user put the cursor (not where typing moved it).
         else if (u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
       }),

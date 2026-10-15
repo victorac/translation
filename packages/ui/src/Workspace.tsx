@@ -75,6 +75,8 @@ export function Workspace({
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
   const [showIgnored, setShowIgnored] = useState(false);
+  /** Words selected in the source: the button to add them to the glossary shows beside them. */
+  const [selected, setSelected] = useState<{ text: string; left: number; bottom: number } | null>(null);
   const toast = useToast();
   const [filter, setFilter] = useState("");
   const [topics, setTopics] = useState<TopicRef[]>([]);
@@ -228,6 +230,18 @@ export function Workspace({
         run: () => void call(() => api.invoke("work.undoRemove")).then((back) => back && setWork(back)),
       },
     });
+  };
+
+  /** Adds the selected words to the glossary and puts the cursor in the English name of the new row, ready to write it. */
+  const addSelected = async () => {
+    const word = selected?.text;
+    if (!word) return;
+    setSelected(null);
+    const w = await call(() => api.invoke("work.addWord", { source: word }));
+    if (!w) return;
+    setWork(w);
+    const label = `English name of ${word}`;
+    setTimeout(() => (Array.from(document.querySelectorAll("input")).find((i) => i.getAttribute("aria-label") === label) as HTMLInputElement | undefined)?.focus(), 50);
   };
 
   const addTerm = async () => {
@@ -436,8 +450,13 @@ export function Workspace({
               </Flex>
             </Flex>
           )}
+          {selected && !words.some((n) => n.source === selected.text) && (
+            <Button className="select-add" size="1" style={{ left: Math.max(4, selected.left), top: selected.bottom + 6 }} onMouseDown={(e) => e.preventDefault()} onClick={() => void addSelected()}>
+              Add {selected.text} to the glossary
+            </Button>
+          )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} />
           </div>
         </section>
 
