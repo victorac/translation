@@ -1681,16 +1681,19 @@ export class WorkspaceService {
       const notes = notesFor(interp, source);
       const original = text.slice(from, to);
       const names = glossary.map((g) => ({ source: g.source, aliases: g.aliases ?? [], wanted: targetVariants(g.target) })).filter((g) => g.wanted.length > 0);
+      const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
       let complaint = "";
+      let rejected: string | undefined;
       let part: string | null = null;
       let missing: string[] = [];
+      let unchanged = false;
       for (let attempt = 0; attempt < 2; attempt++) {
         // As many whole paragraphs around the part as the context has room for.
-        const fixed = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, before: "", selected: original, after: "" }) + complaint;
+        const fixed = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, before: "", after: "", rejected: original }) + complaint;
         const room = input.contextLimit - estimateTokens(system) - estimateTokens(fixed) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
         if (room < 0) throw new UserError("context_overflow", `This request needs about ${estimateTokens(system) + estimateTokens(fixed)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
         const around = surroundings(text, from, to, room, estimateTokens);
-        const user = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, ...around, selected: original }) + complaint;
+        const user = reviseMessage({ glossary, notes, source, sourceIsPart: !!known, sourceLanguage: input.sourceLanguage, ...around, rejected }) + complaint;
         const reply = await this.askModel(
           {
             backend: input.backend,
@@ -1711,13 +1714,16 @@ export class WorkspaceService {
         // The names of the glossary that belong to this source text must be in what was written for it.
         const hay = part.toLocaleLowerCase();
         missing = names.filter((g) => [g.source, ...g.aliases].some((n) => source.includes(n)) && !g.wanted.some((w) => hay.includes(w.toLocaleLowerCase()))).map((g) => `${g.source} => ${g.wanted[0]}`);
-        if (missing.length === 0) break;
-        complaint = `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Write the marked part again and use them exactly as written.`;
+        // The user asked for another translation: the same text again is not an answer.
+        unchanged = sameText(part, original);
+        if (missing.length === 0 && !unchanged) break;
+        if (unchanged) rejected = original;
+        complaint = missing.length > 0 ? `\n\nYour last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "";
       }
       block.translation = text.slice(0, from) + part! + text.slice(to);
       block.status = "translated";
       block.error = null;
-      block.warning = missing.length > 0 ? `The new text does not use the glossary names: ${missing.join("; ")}. Fix it by hand or try again.` : null;
+      block.warning = missing.length > 0 ? `The new text does not use the glossary names: ${missing.join("; ")}. Fix it by hand or try again.` : unchanged ? "The model wrote the same text again. Change the glossary or a note, or try another model." : null;
     } finally {
       this.analysisAbort = null;
     }

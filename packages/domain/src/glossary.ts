@@ -67,12 +67,20 @@ export const targetVariants = (target: string): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
-/** One line of the glossary as the model reads it. A word with no English name, only a hint, has the hint alone. */
-export function glossaryLine(g: { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined }): string {
-  const names = [g.source, ...(g.aliases ?? [])].join(" / ");
-  const [first, ...others] = targetVariants(g.target);
-  if (first === undefined) return `- ${names}${g.note ? ` — ${g.note}` : ""}`;
-  return `- ${names} => ${first}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}${g.note ? ` — ${g.note}` : ""}`;
+type GlossaryItem = { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined };
+
+/** The glossary lines the model reads: the English name to use for each word that has one. Notes about words are separate (see wordNoteLines). */
+export function glossaryLines(glossary: readonly GlossaryItem[]): string[] {
+  return glossary.flatMap((g) => {
+    const [first, ...others] = targetVariants(g.target);
+    if (first === undefined) return [];
+    return [`- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => ${first}${others.length > 0 ? ` (or ${others.join(" / ")})` : ""}`];
+  });
+}
+
+/** The notes about words, one line each, for a section of their own: they are instructions, not names, and are read as such there. */
+export function wordNoteLines(glossary: readonly GlossaryItem[]): string[] {
+  return glossary.filter((g) => g.note).map((g) => `- ${g.source}: ${g.note}`);
 }
 
 const lower = (s: string): string => s.toLocaleLowerCase();

@@ -208,7 +208,8 @@ describe("the request is plain labelled text, not data", () => {
     expect(c).toBeGreaterThan(g);
     expect(s).toBeGreaterThan(c);
     expect(content.endsWith("二つ目の段落です。\n\n")).toBe(true);
-    expect(content).toContain("- 段落 => paragraph — a section");
+    expect(content).toContain("- 段落 => paragraph\n");
+    expect(content).toContain("- 段落: a section");
   });
 
   it("leaves out empty sections: no glossary line, and no context for the first block", () => {
@@ -228,7 +229,8 @@ describe("the request is plain labelled text, not data", () => {
       { source: "前の文。", translation: "The previous sentence.", translationStatus: "available" },
       "本文。",
     );
-    expect(text).toContain("- 魔王 => Demon King (or Demon Lord) — villain");
+    expect(text).toContain("- 魔王 => Demon King (or Demon Lord)\n");
+    expect(text).toContain("- 魔王: villain");
     expect(parseUserMessage(text)).toEqual({
       glossary: [{ source: "魔王", target: "Demon King" }],
       context: { source: "前の文。", translation: "The previous sentence." },
@@ -258,7 +260,7 @@ describe("story notes and hints", () => {
   it("puts notes before the glossary and still reads back the glossary and text", () => {
     const msg = renderUserMessage([{ source: "花子", target: "Hanako", note: "girl, speaks politely" }], ctx, "本文", ["Hanako is a girl."]);
     expect(msg.indexOf("Hanako is a girl.")).toBeLessThan(msg.indexOf("GLOSSARY:"));
-    expect(msg).toContain("— girl, speaks politely");
+    expect(msg).toContain("WORD NOTES (instructions about how to translate particular words; follow them):\n- 花子: girl, speaks politely");
     expect(parseUserMessage(msg)).toMatchObject({ glossary: [{ source: "花子", target: "Hanako" }], sourceBlock: "本文" });
   });
 

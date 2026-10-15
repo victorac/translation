@@ -2,12 +2,22 @@ import { describe, expect, it } from "vitest";
 import { locateMessage, parseLocation, placeLocation, paragraphsOf, reviseMessage, reviseSystem, revisedPart, sentenceUnits, surroundings } from "./revise.js";
 
 describe("reviseMessage", () => {
-  it("puts the background first, the marked translation next and the task last", () => {
-    const m = reviseMessage({ glossary: [{ source: "太郎", target: "Taro" }], notes: ["note"], source: "原文", sourceIsPart: true, sourceLanguage: "Japanese", before: "Before. ", selected: "WRONG", after: " After." });
-    expect(m).toContain("- 太郎 => Taro");
-    expect(m).toContain("JAPANESE TEXT THE MARKED PART WAS MADE FROM:\n原文");
-    expect(m).toContain("TRANSLATION:\nBefore. [[REDO]]WRONG[[/REDO]] After.");
+  const base = { glossary: [{ source: "太郎", target: "Taro", note: "a boy" }, { source: "食べる", target: "", note: "use the past tense" }], notes: ["note"], source: "原文", sourceIsPart: true, sourceLanguage: "Japanese", before: "Before. ", after: " After." };
+  it("leaves the old text out, so the model has to translate", () => {
+    const m = reviseMessage(base);
+    expect(m).toContain("TRANSLATION:\nBefore. [[REDO]][[/REDO]] After.");
+    expect(m).toContain("JAPANESE TEXT TO TRANSLATE INTO THE EMPTY PLACE:\n原文");
     expect(m.trimEnd().endsWith("between [[REDO]] and [[/REDO]].")).toBe(true);
+    expect(m).not.toContain("REJECTED");
+  });
+  it("keeps names and notes about words apart", () => {
+    const m = reviseMessage(base);
+    expect(m).toContain("GLOSSARY:\n- 太郎 => Taro\n");
+    expect(m).toContain("WORD NOTES (instructions about how to translate particular words; follow them):\n- 太郎: a boy\n- 食べる: use the past tense");
+    expect(m.split("GLOSSARY:")[1]!.split("WORD NOTES")[0]).not.toContain("食べる");
+  });
+  it("shows a rejected version only when asked to", () => {
+    expect(reviseMessage({ ...base, rejected: "Old words." })).toContain("REJECTED VERSION");
   });
   it("does not use the translation style when it is the standard one", () => {
     expect(reviseSystem(null, "Japanese", "English")).not.toContain("Return only its translation");

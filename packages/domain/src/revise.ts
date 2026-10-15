@@ -1,5 +1,5 @@
-import { glossaryLine, targetVariants } from "./glossary.js";
-import { GLOSSARY_LABEL, NOTES_LABEL } from "./labels.js";
+import { glossaryLines, targetVariants, wordNoteLines } from "./glossary.js";
+import { GLOSSARY_LABEL, NOTES_LABEL, WORD_NOTES_LABEL } from "./labels.js";
 import { splitSentences } from "./steps.js";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -66,10 +66,10 @@ export function sentenceUnits(text: string): { text: string; start: number; end:
  */
 export function reviseSystem(styleGuidance: string | null, sourceLanguage: string, targetLanguage: string): string {
   return [
-    `You are correcting part of a translation from ${sourceLanguage} into ${targetLanguage} that is already written. The user message has labelled sections: GLOSSARY (names and terms that must be written as given), NOTES (background; do not translate it), the ${sourceLanguage} text the translation was made from, and TRANSLATION, which is the translation with the part to write again between ${REDO_OPEN} and ${REDO_CLOSE}.`,
+    `You are completing a translation from ${sourceLanguage} into ${targetLanguage}. One part of it is missing, and it is your job to translate that part. The user message has labelled sections: GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), NOTES (background; do not translate it), the ${sourceLanguage} text the missing part is made from, and TRANSLATION, which is the translation with the empty place for the missing part between ${REDO_OPEN} and ${REDO_CLOSE}.`,
     styleGuidance ? `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}` : "",
-    `Your task: write the part between ${REDO_OPEN} and ${REDO_CLOSE} again, translated from the ${sourceLanguage} text, so that it fits the translation before and after it. Use the names from GLOSSARY exactly as written. Do not translate or repeat anything outside the markers.`,
-    `Reply with the new text for the marked part between ${REDO_OPEN} and ${REDO_CLOSE}, and nothing else: no explanation and no labels.`,
+    `Your task: translate the ${sourceLanguage} text into the empty place between ${REDO_OPEN} and ${REDO_CLOSE}, so that it fits the translation before and after it. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not translate or repeat anything outside the markers.`,
+    `Reply with the translation for the empty place between ${REDO_OPEN} and ${REDO_CLOSE}, and nothing else: no explanation and no labels.`,
   ]
     .filter((x) => x !== "")
     .join("\n\n");
@@ -115,15 +115,21 @@ export function reviseMessage(input: {
   sourceIsPart: boolean;
   sourceLanguage: string;
   before: string;
-  selected: string;
   after: string;
+  /** A version the user did not accept, shown only when the model gave it back unchanged. */
+  rejected?: string | undefined;
 }): string {
   const parts: string[] = [];
   if (input.notes.length > 0) parts.push(`${NOTES_LABEL}\n${input.notes.map((n) => `- ${n}`).join("\n")}`);
-  if (input.glossary.length > 0) parts.push(`${GLOSSARY_LABEL}\n${input.glossary.map(glossaryLine).join("\n")}`);
-  parts.push(`${input.sourceLanguage.toUpperCase()} TEXT ${input.sourceIsPart ? "THE MARKED PART WAS MADE FROM" : "(the whole block; the marked part is made from some of it)"}:\n${input.source}`);
-  parts.push(`TRANSLATION:\n${input.before}${REDO_OPEN}${input.selected}${REDO_CLOSE}${input.after}`);
-  parts.push(`Write the marked part again, between ${REDO_OPEN} and ${REDO_CLOSE}.`);
+  const lines = glossaryLines(input.glossary);
+  if (lines.length > 0) parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
+  const wordNotes = wordNoteLines(input.glossary);
+  if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
+  parts.push(`${input.sourceLanguage.toUpperCase()} TEXT ${input.sourceIsPart ? "TO TRANSLATE INTO THE EMPTY PLACE" : "(the whole block; the empty place is made from some of it)"}:\n${input.source}`);
+  // The old text is left out on purpose: shown the old version, a model tends to give it back.
+  parts.push(`TRANSLATION:\n${input.before}${REDO_OPEN}${REDO_CLOSE}${input.after}`);
+  if (input.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${input.rejected}`);
+  parts.push(`Translate the ${input.sourceLanguage} text into the empty place between ${REDO_OPEN} and ${REDO_CLOSE}.`);
   return parts.join("\n\n");
 }
 

@@ -468,14 +468,30 @@ describe("translating step by step", () => {
     // The selection is a few words in the first paragraph: the whole paragraph is written again.
     const done = await service.guidedRetranslate({ ...model, index: 0, text: mine, from, to: from + "Taro WRONG laughed.".length, source: { start: at, end: at + 14 } });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(sent).toContain("TRANSLATION:\n[[REDO]]Hanako laughed. Taro WRONG laughed.[[/REDO]]\n\nShe said good morning.");
-    expect(sent).toContain("JAPANESE TEXT THE MARKED PART WAS MADE FROM:\n花子は笑った。太郎も笑った。"); // only the text it was made from
+    expect(sent).toContain("TRANSLATION:\n[[REDO]][[/REDO]]\n\nShe said good morning.");
+    expect(sent).not.toContain("WRONG"); // the old text is not shown
+    expect(sent).toContain("JAPANESE TEXT TO TRANSLATE INTO THE EMPTY PLACE:\n花子は笑った。太郎も笑った。"); // only the text it was made from
     expect(done.blocks[0]!.translation).toBe("Beast King's Fang\n\nShe said good morning.");
     // Where each paragraph comes from is asked of the model, and the answer is placed on the source text.
     const lm2 = await fakeLmStudio({ answer: () => "P1: S1\nP2: S2" });
     provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
     const placed = await service.guidedLocate({ ...model, index: 0, text: "A.\n\nB." });
     expect(placed.map((p) => sourceText.slice(p.source!.start, p.source!.end))).toEqual(["花子は笑った。", "太郎も笑った。"]);
+  });
+
+  it("asks again, showing the rejected version, when the model gives the same text back", async () => {
+    const lm = await fakeLmStudio({ answer: () => "Hanako laughed." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const docId = service.snapshot().activeDocumentId;
+    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
+    await service.guidedInterpret(0);
+    const done = await service.guidedRetranslate({ ...model, index: 0, text: "Hanako laughed.", from: 0, to: 15 });
+    const sent = bodies(lm).map((b) => b.messages[1]!.content);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).not.toContain("REJECTED VERSION");
+    expect(sent[1]).toContain("REJECTED VERSION");
+    expect(done.blocks[0]!.warning).toMatch(/same text again/);
   });
 
   it("accepts a rewrite whose glossary name is in a later paragraph of the part", async () => {
@@ -503,7 +519,8 @@ describe("translating step by step", () => {
     service.guidedSetHint("花子", "  a verb here:\n use the past tense ");
     await service.guidedTranslate({ ...model, index: 0 });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
-    expect(sent).toContain("- 花子 — a verb here: use the past tense");
+    expect(sent).toContain("WORD NOTES");
+    expect(sent).toContain("- 花子: a verb here: use the past tense");
     expect(sent).not.toContain("花子 =>");
     expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}|${e.target}|${e.hint}`)).toEqual(["花子||a verb here: use the past tense"]);
   });
@@ -638,7 +655,8 @@ describe("translating step by step", () => {
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
     expect(sent).toContain("- 山田太郎 => Yamada Taro");
     expect(sent).not.toContain("山田太郎 / 山");
-    expect(sent).toContain("- 山 => Yamada — a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
+    expect(sent).toContain("- 山 => Yamada");
+    expect(sent).toContain("- 山: a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
   });
 
   it("ties a word to the person it stands for, by itself when the word is one of their aliases, and it can be changed on the draft", async () => {
@@ -659,7 +677,7 @@ describe("translating step by step", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "山")).toBe(false);
     service.guidedSetEnglish("山", "Yamada");
     await service.guidedTranslate({ ...model, index: 0 });
-    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山 => Yamada — a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
+    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山: a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
     // Now it is in the knowledge base, with the link.
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山")!.attrs["refers to"]).toEqual(["山田太郎"]);
 

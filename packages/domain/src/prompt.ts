@@ -1,7 +1,7 @@
 import { contextAllowance, modelBudget } from "./budget.js";
 import { DEFAULTS } from "./defaults.js";
-import { GLOSSARY_LABEL, NOTES_LABEL } from "./labels.js";
-import { glossaryLine, relevantEntries, targetVariants } from "./glossary.js";
+import { GLOSSARY_LABEL, NOTES_LABEL, WORD_NOTES_LABEL } from "./labels.js";
+import { glossaryLines, wordNoteLines, relevantEntries, targetVariants } from "./glossary.js";
 import { backupMaterial, fitMaterial, knowledgeReserve, type BlockMaterial } from "./knowledge.js";
 import { renderPrompt, STANDARD_PROMPT } from "./prompts.js";
 import { sha256Hex } from "./platform.js";
@@ -94,10 +94,10 @@ export function renderUserMessage(glossary: { source: string; target: string; no
   if (extras.summary) parts.push(`${SUMMARY_LABEL}\n${extras.summary}`);
   if (extras.scene) parts.push(`${SCENE_LABEL}\n${extras.scene}`);
   if (notes.length > 0) parts.push(`${NOTES_LABEL}\n${notes.map((n) => `- ${n}`).join("\n")}`);
-  if (glossary.length > 0) {
-    const lines = glossary.map(glossaryLine);
-    parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
-  }
+  const lines = glossaryLines(glossary);
+  if (lines.length > 0) parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
+  const wordNotes = wordNoteLines(glossary);
+  if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
   if (context.translationStatus === "available" || context.translationStatus === "unavailable") {
     const before = context.source !== null ? `Previous source:\n${context.source}` : "";
     const after = `Previous translation:\n${context.translation ?? UNAVAILABLE}`;
@@ -124,7 +124,8 @@ export function parseUserMessage(content: string): ParsedUserMessage | null {
   const glossAt = head.indexOf(GLOSSARY_LABEL);
   const glossary: ParsedUserMessage["glossary"] = [];
   if (glossAt >= 0) {
-    const end = ctxAt > glossAt ? ctxAt : head.length;
+    const wordAt = head.indexOf(WORD_NOTES_LABEL);
+    const end = [ctxAt, wordAt].filter((x) => x > glossAt).sort((a, b) => a - b)[0] ?? head.length;
     for (const line of head.slice(glossAt + GLOSSARY_LABEL.length, end).split("\n")) {
       const m = /^- (.+?) => (.+?)(?: \(or .*\))?(?: — .*)?$/.exec(line.trim());
       if (m) {
