@@ -331,6 +331,23 @@ describe("translating a document", () => {
     expect(words(service).find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
   });
 
+  it("sends only the glossary words that stand in the paragraphs of the request", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    // Room for a paragraph or two around each, so the last one is out of the first request.
+    await sync(service, ["花子は笑った。", ...Array.from({ length: 12 }, (_, i) => `${"長い道を".repeat(i + 3)}歩いた。`), "太郎は走った。"].join("\n\n"));
+    service.workSetEnglish("花子", "Hanako");
+    service.workSetEnglish("太郎", "Taro");
+    await service.workTranslate({ ...model, contextLimit: 1620, maxOutputTokens: 64 });
+    const asked = bodies(lm).map((b) => b.messages[1]!.content);
+    const glossaryOf = (m: string) => m.split("JAPANESE PARAGRAPH")[0]!.split("CONTEXT")[0]!.split("NEXT")[0]!;
+    expect(glossaryOf(asked[0]!)).toContain("=> Hanako");
+    expect(glossaryOf(asked[0]!)).not.toContain("=> Taro");
+    expect(glossaryOf(asked[13]!)).toContain("=> Taro");
+    expect(glossaryOf(asked[13]!)).not.toContain("=> Hanako");
+  });
+
   it("translates paragraph by paragraph, and writes one paragraph again without touching the others", async () => {
     let n = 0;
     const lm = await fakeLmStudio({ paragraph: (_user, source, model) => `EN(${model}): ${fakeEnglish(source)} Hanako Taro ${++n}` });
@@ -346,7 +363,8 @@ describe("translating a document", () => {
     expect(asked).toHaveLength(3);
     expect(asked[0]).toContain("JAPANESE PARAGRAPH TO TRANSLATE:\n花子は笑った。");
     expect(asked[0]).toContain("- 花子 => Hanako");
-    expect(asked[0]!.split("JAPANESE PARAGRAPH")[0]).not.toContain("太郎: a boy"); // its glossary and notes have only its own words
+    // The glossary has the words of every paragraph in the request, the ones around it too.
+    expect(asked[0]!.split("JAPANESE PARAGRAPH")[0]).toContain("太郎: a boy");
     expect(asked[1]).toContain("- 太郎: a boy");
     // A request has the paragraphs before with their translations, and the ones after, whichever side of an old block edge they are.
     expect(asked[0]).not.toContain("CONTEXT");

@@ -798,25 +798,33 @@ export class WorkspaceService {
       // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.
       const before: Pair[] = [];
       const next: { source: string; translation: string | null }[] = [];
+      // The glossary also covers the names of the paragraphs around it that are sent; their lines take room too, and are not checked in the answer.
+      const sent = [...glossary];
+      const extraFor = (text: string): typeof glossary => glossaryFor(w.words, text).filter((g) => !sent.some((s) => s.source === g.source));
+      const lineCost = (g: (typeof glossary)[number]): number => estimateTokens(`${g.source} => ${g.target} ${g.note ?? ""} ${(g.aliases ?? []).join(" ")}`) + 4;
       let b = k - 1;
       let a = k + 1;
       for (let turn = 0; (b >= 0 || a < w.paragraphs.length) && left > 0; turn++) {
         if (turn % 2 === 0 && b >= 0) {
           const p = w.paragraphs[b--]!;
           if (p.translation.trim() === "") continue;
-          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8;
+          const extra = extraFor(p.text);
+          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8 + extra.reduce((n, g) => n + lineCost(g), 0);
           if (cost > left) break;
           left -= cost;
+          sent.push(...extra);
           before.unshift({ source: p.text, translation: p.translation.trim() });
         } else if (a < w.paragraphs.length) {
           const p = w.paragraphs[a++]!;
-          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8;
+          const extra = extraFor(p.text);
+          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8 + extra.reduce((n, g) => n + lineCost(g), 0);
           if (cost > left) break;
           left -= cost;
+          sent.push(...extra);
           next.push({ source: p.text, translation: p.translation.trim() || null });
         }
       }
-      const user = paragraphMessage({ ...bare, before, next }) + complaint;
+      const user = paragraphMessage({ ...bare, glossary: sent, before, next }) + complaint;
       const reply = await this.askModel(
         {
           backend: input.backend,
