@@ -4,6 +4,7 @@ import { ExportDialog } from "./ExportDialog";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar, type Activity } from "./Toolbar";
+import { KnowledgeDrawer } from "./KnowledgeDrawer";
 import { Workspace } from "./Workspace";
 import { api } from "./api";
 import { loadSetup, saveSetup, settingsOf, withSettings, type SetupState } from "./setup";
@@ -206,8 +207,6 @@ export function App() {
               onText={onText}
               editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
               knowledgeRev={snap.knowledge.rev}
-              knowledgeCounts={snap.knowledge}
-              kb={kb}
               onKb={setKb}
               onActivity={setActivity}
             />
@@ -220,6 +219,8 @@ export function App() {
 
         {tab && <SettingsDrawer tab={tab} onTab={setTab} onClose={() => setTab(null)} setup={setup} onSetup={setSetup} provider={provider} />}
       </div>
+
+      <KnowledgeDrawer open={kb.open} request={kb.request} rev={snap?.knowledge.rev ?? 0} counts={snap?.knowledge ?? { terms: 0, notes: 0, suggested: 0 }} onClose={() => setKb({ open: false, request: null })} />
 
       {exporting && <ExportDialog title={project?.title ?? "translation"} onClose={() => setExporting(false)} />}
     </div>

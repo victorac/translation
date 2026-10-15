@@ -377,14 +377,21 @@ export class WorkspaceService {
    * The notes and classes files cannot be deleted. The last deletion can be taken back with `undoRemove`.
    */
   knowledgeDelete(id: string): { removed: boolean } {
-    const entry = this.knowledge.all().find((e) => e.id === id);
-    if (!entry) return { removed: false };
+    return { removed: this.knowledgeDeleteMany([id]).removed > 0 };
+  }
+
+  /** Deletes several files at once; one `undoRemove` takes all of them back. */
+  knowledgeDeleteMany(ids: string[]): { removed: number } {
+    const entries = this.knowledge.all().filter((e) => ids.includes(e.id));
+    if (entries.length === 0) return { removed: 0 };
     const snapshot = this.knowledge.everything();
-    if (entry.kind === "term") this.rejectTerm(id);
-    else this.knowledge.remove([id]);
+    for (const entry of entries) {
+      if (entry.kind === "term") this.rejectTerm(entry.id);
+      else this.knowledge.remove([entry.id]);
+    }
     this.knowledgeChanged();
     this.rememberRemoval(snapshot);
-    return { removed: true };
+    return { removed: entries.length };
   }
 
   /** Marks a topic as rejected and drops the confirmed notes about it and its place in scenes. */
@@ -675,6 +682,45 @@ export class WorkspaceService {
     if (values.length > 1 && def.kind !== "links") throw new UserError("bad_attribute", `${key} takes one value.`);
   }
 
+  /** Gives a topic another kind: attributes the new kind does not have are dropped, and a name made from a reading is cleared when it means nothing for the kind. */
+  private applyKind(x: KnowledgeEntry, kind: string, wasName: boolean): KnowledgeEntry {
+    const target = parseClasses(this.classesText).classes.find((c) => c.name === kind)!;
+    // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
+    if (x.status === "suggested" && x.origin.by === "model" && wasName) x.target = "";
+    x.category = kind;
+    for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
+    x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
+    return x;
+  }
+
+  /**
+   * Edits a topic of the knowledge base directly (the topics' own view, which does not need the word to be in the text open now):
+   * its English name, its note, its kind, or one attribute. The same rules apply as for a word.
+   */
+  knowledgeEdit(input: { id: string; target?: string | undefined; hint?: string | undefined; kind?: string | undefined; attribute?: { key: string; values: string[] } | undefined }): { id: string } {
+    const entry = this.knowledge.all().find((e) => e.id === input.id && e.kind === "term");
+    if (!entry) throw new UserError("no_file", "That topic no longer exists.");
+    if (input.kind !== undefined && input.kind !== entry.category) {
+      if (!parseClasses(this.classesText).classes.some((c) => c.name === input.kind)) throw new UserError("bad_kind", `There is no kind of topic called ${input.kind}.`);
+      const wasName = (entry.category === "character" || entry.category === "family") && input.kind !== "character" && input.kind !== "family";
+      this.knowledge.patch(entry.id, (x) => this.applyKind(x, input.kind!, wasName));
+    }
+    const kind = input.kind ?? entry.category;
+    if (input.attribute) {
+      const { key, values } = input.attribute;
+      this.checkAttribute(kind, key, values);
+      this.knowledge.patch(entry.id, (x) => {
+        if (values.length === 0) delete x.attrs[key];
+        else x.attrs[key] = values;
+        return x;
+      }, [key]);
+    }
+    if (input.target !== undefined) this.knowledge.patch(entry.id, (x) => ({ ...x, target: input.target!.trim() }));
+    if (input.hint !== undefined) this.knowledge.patch(entry.id, (x) => ({ ...x, hint: input.hint!.replace(/\s+/g, " ").trim() }));
+    this.knowledgeChanged();
+    return { id: entry.id };
+  }
+
   /**
    * Sets one attribute of a word: a value from the list for a choice, a topic of the right class for a link, or text.
    * An empty list clears it. It goes to the knowledge base when the word is in it, and stays with the draft when it is not.
@@ -741,14 +787,7 @@ export class WorkspaceService {
     // What a reading suggested as the name of a person means nothing for anything else.
     if (wasName) this.dropSuggestion(name, "english");
     if (entry) {
-      this.knowledge.patch(entry.id, (x) => {
-        // The English name of a suggested person or family was made from how the dictionary reads it, which means nothing for anything else.
-        if (x.status === "suggested" && x.origin.by === "model" && wasName) x.target = "";
-        x.category = kind;
-        for (const k of Object.keys(x.attrs)) if (!target.attributes.some((a) => a.key === k)) delete x.attrs[k];
-        x.attrFlags = x.attrFlags.filter((k) => k in x.attrs);
-        return x;
-      });
+      this.knowledge.patch(entry.id, (x) => this.applyKind(x, kind, wasName));
       this.knowledgeChanged();
     } else {
       name.kind = kind as NameKind;

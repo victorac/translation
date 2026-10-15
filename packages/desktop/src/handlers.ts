@@ -97,6 +97,8 @@ const schemas: Record<CommandName, z.ZodType> = {
   "knowledge.setFile": z.object({ id: id, text: z.string().max(2_000_000) }),
   "knowledge.create": z.object({ type: z.string().min(1).max(100), name: z.string().min(1).max(500) }),
   "knowledge.delete": z.object({ id: id }),
+  "knowledge.deleteMany": z.object({ ids: z.array(id).min(1).max(5000) }),
+  "knowledge.edit": z.object({ id: id, target: z.string().max(500).optional(), hint: z.string().max(2000).optional(), kind: z.string().max(100).optional(), attribute: z.object({ key: z.string().min(1).max(100), values: z.array(z.string().max(500)).max(100) }).optional() }),
   "knowledge.resolve": z.object({ name: z.string().max(500) }),
   "knowledge.confirm": z.object({ ids: z.array(id).max(5000).optional() }),
 };
@@ -154,6 +156,8 @@ export function createHandler(service: WorkspaceService, provider?: ProviderServ
     "knowledge.setFile": (p) => service.knowledgeSetFile(p.id, p.text),
     "knowledge.create": (p) => service.knowledgeCreate(p.type, p.name),
     "knowledge.delete": (p) => service.knowledgeDelete(p.id),
+    "knowledge.deleteMany": (p) => service.knowledgeDeleteMany(p.ids),
+    "knowledge.edit": (p) => service.knowledgeEdit(p),
     "knowledge.resolve": (p) => service.knowledgeResolve(p.name),
     "knowledge.list": (p) => service.knowledgeList(p),
         "knowledge.confirm": (p) => service.knowledgeConfirm(p.ids),

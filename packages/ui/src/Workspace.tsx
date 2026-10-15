@@ -5,21 +5,20 @@ import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
-import { KnowledgeFiles } from "./KnowledgeFiles";
 import { SourceEditor, type Hit } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import { useToast } from "./Toast";
 import type { SetupState } from "./setup";
 
-const WIDTHS_KEY = "ltw.workspace.widths.v2";
+const WIDTHS_KEY = "ltw.workspace.widths.v3";
 const MIN = 0.1;
-const DEFAULT_WIDTHS = [0.28, 0.26, 0.22, 0.24];
+const DEFAULT_WIDTHS = [0.36, 0.32, 0.32];
 
 const loadWidths = (): number[] => {
   try {
     const v = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? "null") as unknown;
-    if (Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === "number" && x >= MIN)) return v as number[];
+    if (Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && x >= MIN)) return v as number[];
   } catch {
     /* storage may be unavailable */
   }
@@ -28,7 +27,7 @@ const loadWidths = (): number[] => {
 
 /**
  * The workspace: the source text, which is edited here and numbered by paragraph; what was read from the whole text (its glossary words
- * and who says each line of speech); and the translation, one box for each paragraph. The knowledge base opens as a pane on the right.
+ * and who says each line of speech); and the translation, one box for each paragraph. The knowledge base opens as a drawer over it.
  */
 export function Workspace({
   setup,
@@ -37,8 +36,6 @@ export function Workspace({
   onText,
   editorKey,
   knowledgeRev,
-  knowledgeCounts,
-  kb,
   onKb,
   onActivity,
 }: {
@@ -49,9 +46,7 @@ export function Workspace({
   /** Changes when another document or project is opened, so the editor starts over. */
   editorKey: string;
   knowledgeRev: number;
-  knowledgeCounts: { terms: number; notes: number; suggested: number };
-  /** Whether the knowledge base pane is showing, and the topic it was asked to open. */
-  kb: { open: boolean; request: { id: string; n: number } | null };
+  /** Asks for the knowledge base to open, on a topic. */
   onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
   /** What the model is doing for the user right now, in words; null when it is idle. */
   onActivity: (what: Activity | null) => void;
@@ -358,9 +353,8 @@ export function Workspace({
   const editorHits: Hit[] = inSync ? hits.map((h, i) => ({ from: h.start, to: h.end, current: i === current })) : [];
 
   // ---- the panes and the handles between them ----
-  const shown = kb.open ? [0, 1, 2, 3] : [0, 1, 2];
-  const total = shown.reduce((sum, i) => sum + widths[i]!, 0);
-  const columns = shown.map((i, n) => `${i === 3 ? `minmax(18rem, ${widths[i]! / total}fr)` : `minmax(0, ${widths[i]! / total}fr)`}${n < shown.length - 1 ? " 8px" : ""}`).join(" ");
+  const total = widths.reduce((sum, x) => sum + x, 0);
+  const columns = widths.map((x, n) => `minmax(0, ${x / total}fr)${n < widths.length - 1 ? " 8px" : ""}`).join(" ");
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<{ left: number; right: number; start: number; widths: number[] } | null>(null);
   const beginDrag = (left: number, right: number) => (e: ReactPointerEvent) => {
@@ -675,22 +669,6 @@ export function Workspace({
           )}
         </section>
 
-        {kb.open && (
-          <>
-            <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the translation and the knowledge base" onPointerDown={beginDrag(2, 3)} />
-            <section className="guided-pane">
-              <h3 className="guided-pane-title">
-                Knowledge base
-                <IconButton variant="ghost" size="1" color="gray" onClick={() => onKb({ open: false, request: null })} aria-label="Close the knowledge base pane">
-                  <Cross2Icon />
-                </IconButton>
-              </h3>
-              <div className="guided-kb">
-                <KnowledgeFiles rev={knowledgeRev} counts={knowledgeCounts} openRequest={kb.request} compact={kb.request !== null} />
-              </div>
-            </section>
-          </>
-        )}
       </div>
     </div>
   );

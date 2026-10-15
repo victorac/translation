@@ -224,3 +224,20 @@ details > summary { cursor: pointer; }
 .english-missing { box-shadow: inset 0 0 0 1px var(--amber-8); }
 .toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }
 .select-add { position: fixed; z-index: 50; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); max-width: 22rem; }
+
+/* The knowledge base drawer: a list on the left, the chosen topic on the right, over the workspace. */
+.drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.28); display: flex; justify-content: flex-end; }
+.drawer { width: min(64rem, 94vw); height: 100%; background: var(--bg); box-shadow: -8px 0 32px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; min-width: 0; }
+.drawer-head { border-bottom: 1px solid var(--gray-6); flex: none; }
+.drawer-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
+.drawer-list { border-right: 1px solid var(--gray-6); min-height: 0; min-width: 0; }
+.drawer-detail { min-height: 0; min-width: 0; overflow: hidden; }
+.drawer-detail-bar { border-bottom: 1px solid var(--gray-6); flex: none; }
+.drawer-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.drawer-bulk { background: var(--accent-3); border-block: 1px solid var(--gray-6); flex: none; }
+.drawer-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0.75rem; }
+.drawer-row:hover { background: var(--gray-3); }
+.drawer-row-active { background: var(--accent-4); }
+.drawer-row-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.5rem; background: none; border: none; padding: 0.3rem 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.drawer-detail .kbf-foot, .drawer-detail .cm-editor { min-height: 0; }
+.drawer-detail > .topic-editor, .drawer-detail .topic-editor { flex: 1; min-height: 0; }

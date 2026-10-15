@@ -177,6 +177,8 @@ export interface CommandMap {
   "knowledge.setFile": { id: string; text: string };
   "knowledge.create": { type: string; name: string };
   "knowledge.delete": { id: string };
+  "knowledge.deleteMany": { ids: string[] };
+  "knowledge.edit": { id: string; target?: string; hint?: string; kind?: string; attribute?: { key: string; values: string[] } };
   "knowledge.resolve": { name: string };
   "knowledge.list": EntryQuery;
   "knowledge.confirm": { ids?: string[] };
@@ -187,7 +189,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "notes.cancel": { canceled: boolean };
   "work.get": Work | null;
@@ -213,6 +215,8 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "knowledge.setFile": KnowledgeFile;
   "knowledge.create": { id: string };
   "knowledge.delete": { removed: boolean };
+  "knowledge.deleteMany": { removed: number };
+  "knowledge.edit": { id: string };
   "knowledge.resolve": { id: string | null; title: string | null };
   "knowledge.list": KnowledgeList;
   "knowledge.confirm": { confirmed: number };

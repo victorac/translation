@@ -362,6 +362,21 @@ describe("translating a document", () => {
     expect(service.workGet()!.lines[0]!.speaker).toBe("太郎");
   });
 
+  it("edits a topic of the knowledge base by itself, with the same rules as a word of the text", () => {
+    const { service } = setup();
+    const { id } = service.knowledgeCreate("character", "山田");
+    service.knowledgeEdit({ id, target: "Yamada", hint: "  a   teacher " });
+    service.knowledgeEdit({ id, attribute: { key: "gender", values: ["female"] } });
+    const entry = () => service.knowledgeList({ kind: "term" }).entries.find((e) => e.id === id)!;
+    expect(entry()).toMatchObject({ target: "Yamada", hint: "a teacher", attrs: { gender: ["female"] } });
+    expect(() => service.knowledgeEdit({ id, attribute: { key: "gender", values: ["robot"] } })).toThrow(/one of/);
+    // A kind without that attribute drops it.
+    service.knowledgeEdit({ id, kind: "place" });
+    expect(entry()).toMatchObject({ category: "place" });
+    expect(entry().attrs["gender"]).toBeUndefined();
+    expect(() => service.knowledgeEdit({ id, kind: "nonsense" })).toThrow(/no kind/);
+  });
+
   it("sends only the glossary words that stand in the paragraphs of the request", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

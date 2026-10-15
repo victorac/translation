@@ -62,6 +62,8 @@ const COMMANDS = new Set([
   "knowledge.setFile",
   "knowledge.create",
   "knowledge.delete",
+  "knowledge.deleteMany",
+  "knowledge.edit",
   "knowledge.resolve",
   "knowledge.list",
   "knowledge.save",
