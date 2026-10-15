@@ -951,7 +951,7 @@ export class WorkspaceService {
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const bare = { glossary, notes, suggestions, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
+      const bare = { glossary, notes, suggestions, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject, different: alternative };
       let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
       if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
       // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.

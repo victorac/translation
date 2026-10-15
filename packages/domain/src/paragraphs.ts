@@ -66,8 +66,10 @@ export interface ParagraphRequest {
   paragraph: string;
   /** The paragraphs after this one, with their translations when they have one. */
   next: readonly { source: string; translation: string | null }[];
-  /** A version the user did not accept, shown only when the model gave it back unchanged. */
+  /** A version the user did not accept, shown only when the model gave it back unchanged, or when an alternative is asked for. */
   rejected?: string | undefined;
+  /** An alternative was asked for: the model is told to write it in a different way from `rejected`. */
+  different?: boolean | undefined;
 }
 
 export function paragraphMessage(r: ParagraphRequest): string {
@@ -88,8 +90,8 @@ export function paragraphMessage(r: ParagraphRequest): string {
   if (r.next.length > 0) parts.push(`${NEXT_LABEL}\n${r.next.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);
   parts.push(`${from} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
-  // Shown a version that was not accepted, the model copies it unless it is told outright to write something else.
-  const how = r.rejected ? ` in a clearly different way from the REJECTED VERSION: other words and another sentence structure, with the same meaning` : "";
+  // For an alternative the model is told outright to write something else: shown the version alone, it copies it.
+  const how = r.rejected && r.different ? ` in a clearly different way from the REJECTED VERSION: other words and another sentence structure, with the same meaning` : "";
   parts.push(`Translate that paragraph into ${r.targetLanguage}${how}. Reply with its translation only, as one paragraph.`);
   return parts.join("\n\n");
 }

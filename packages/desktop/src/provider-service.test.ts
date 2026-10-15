@@ -797,6 +797,21 @@ describe("translating a document", () => {
     expect(service.workGet()!.paragraphs[0]!.translation).toBe("Version 3.");
   });
 
+  it("does not tell the model to write differently when a plain retranslation comes back the same, only for an alternative", async () => {
+    const lm = await fakeLmStudio({ paragraph: () => "Same." });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "花子は笑った。");
+    await service.workTranslate({ ...model });
+    await service.workRetranslate({ ...model, paragraph: 0 });
+    const sent = bodies(lm).map((b) => b.messages[1]!.content);
+    // The same text came back, so the retry shows it as the rejected version, as it always did, and says nothing more.
+    expect(sent.at(-1)).toContain("REJECTED VERSION");
+    expect(sent.at(-1)).not.toContain("clearly different");
+    await service.workRetranslate({ ...model, paragraph: 0, alternative: true });
+    expect(bodies(lm).at(-2)!.messages[1]!.content).toContain("clearly different");
+  });
+
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako Suzuki laughed.", answer: () => "Hanako Suzuki" });
     const { provider, service } = setup();
