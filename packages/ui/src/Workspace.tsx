@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { ArrowDownIcon, ArrowUpIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { estimateTokens, normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
-import type { GuidedName, GuidedState } from "@ltw/domain";
+import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
+import type { Word, Work } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
-import type { PreviewBlock } from "./blockMarkers";
 import { KnowledgeFiles } from "./KnowledgeFiles";
 import { SourceEditor, type Hit } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
@@ -27,8 +26,8 @@ const loadWidths = (): number[] => {
 };
 
 /**
- * The workspace: the source text, which is edited here and shown cut into blocks; what was read from the block being worked on
- * (its glossary words, the narrator and who says each line); and its translation. The knowledge base opens as a pane on the right.
+ * The workspace: the source text, which is edited here and numbered by paragraph; what was read from the whole text (its glossary words
+ * and who says each line of speech); and the translation, one box for each paragraph. The knowledge base opens as a pane on the right.
  */
 export function Workspace({
   setup,
@@ -56,7 +55,7 @@ export function Workspace({
   /** What the model is doing for the user right now, in words; null when it is idle. */
   onActivity: (what: Activity | null) => void;
 }) {
-  const [state, setState] = useState<GuidedState | null>(null);
+  const [work, setWork] = useState<Work | null>(null);
   const [working, setWorking] = useState<"read" | "translate" | null>(null);
   const [activity, setActivity] = useState<Activity | null>(null);
   useEffect(() => onActivity(activity), [activity]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -64,8 +63,8 @@ export function Workspace({
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   // What is in the box of each paragraph of the translation while it is being edited.
   const [drafts, setDrafts] = useState<string[]>([]);
-  // The paragraph of the translation being looked at, whose source is shown.
-  const [partFocus, setPartFocus] = useState<number | null>(null);
+  // The paragraph being worked on: the one the cursor is in, in the source or in the translation.
+  const [cur, setCur] = useState<number | null>(null);
   const [newTerm, setNewTerm] = useState("");
   const [widths, setWidths] = useState<number[]>(loadWidths);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
@@ -75,13 +74,11 @@ export function Workspace({
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
   const [filter, setFilter] = useState("");
-  // The cursor was put in a block by the user; the editor then does not need to scroll to it.
-  const fromCursor = useRef(false);
   const [topics, setTopics] = useState<TopicRef[]>([]);
+  const boxes = useRef<(HTMLDivElement | null)[]>([]);
+  const lineItems = useRef<(HTMLLIElement | null)[]>([]);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
-  const block = state ? state.blocks[state.current] : undefined;
-  const base = block?.interpretation ?? null;
 
   const call = async <T,>(run: () => Promise<{ ok: true; value: T } | { ok: false; error: { message: string } }>): Promise<T | null> => {
     setError(null);
@@ -93,99 +90,78 @@ export function Workspace({
     return r.value;
   };
 
-  const read = async (index: number) => {
-    setWorking("read");
-    setActivity({ what: `Reading block ${index + 1}`, stop: false });
-    const s = await call(() => api.invoke("guided.interpret", { index }));
-    setActivity(null);
-    setWorking(null);
-    if (s) setState(s);
-  };
-
-  /** Makes the blocks from the text in the editor, or brings them up to date with it, and reads every block that has not been read. */
+  /** Brings the work up to date with the text in the editor: its paragraphs, the words found in it and who says each line. */
   const sync = async () => {
     if (text.trim() === "") return;
     setWorking("read");
-    const made = await call(() => api.invoke("guided.sync", { documentId, text, blockSize: setup.blockSize }));
-    if (made) {
-      setState(made);
-      // The blocks are read one after the other in one request; how many are done is asked for while it goes on.
-      const unread = (n: GuidedState) => n.blocks.filter((b) => b.status === "new").length;
-      const left = unread(made);
-      if (left > 0) {
-        setActivity({ what: `Reading the blocks: 0 of ${left}`, stop: false });
-        const poll = setInterval(() => {
-          void api.invoke("guided.get").then((r) => {
-            if (r.ok && r.value) setActivity({ what: `Reading the blocks: ${Math.min(left, left - unread(r.value))} of ${left}`, stop: false });
-          });
-        }, 1000);
-        const all = await call(() => api.invoke("guided.readAll"));
-        clearInterval(poll);
-        if (all) setState(all);
-      }
-    }
+    setActivity({ what: "Reading the text", stop: false });
+    const w = await call(() => api.invoke("work.sync", { documentId, text }));
     setActivity(null);
     setWorking(null);
+    if (w) setWork(w);
   };
 
-  // The blocks always follow the text: made when it first appears, and brought up to date a moment after typing stops. A block whose
-  // text is unchanged keeps its work.
+  // The work always follows the text: made when it first appears, and brought up to date a moment after typing stops. A paragraph whose
+  // text is unchanged keeps its translation.
   useEffect(() => {
-    const timer = setTimeout(() => void sync(), state === null ? 0 : 600);
+    const timer = setTimeout(() => void sync(), work === null ? 0 : 600);
     return () => clearTimeout(timer);
-  }, [text, setup.blockSize, documentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [text, documentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When the glossary changes (a topic edited in the pane on the right), the names listed here follow it.
+  // When the glossary changes (a topic edited in the pane on the right), the words listed here follow it.
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {
       first.current = false;
       return;
     }
-    void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
   }, [knowledgeRev]);
 
-  // What the choices on a name are made from: the kinds of topic and their attributes, and the topics a link can point to.
+  // What the choices on a word are made from: the kinds of topic and their attributes, and the topics a link can point to.
   useEffect(() => {
     void api.invoke("knowledge.files").then((r) => r.ok && setClasses(r.value.classes));
     void api.invoke("knowledge.list", { kind: "term" }).then((r) => r.ok && setTopics(r.value.entries.map((e) => ({ source: e.source, english: e.target, category: e.category }))));
   }, [knowledgeRev]);
 
+  const paragraphs = work?.paragraphs ?? [];
+  const translations = paragraphs.map((p) => p.translation).join("\u0000");
   useEffect(() => {
-    setDrafts(block?.parts ?? []);
-  }, [state?.current, block?.parts.join("\u0000")]); // eslint-disable-line react-hooks/exhaustive-deps
+    setDrafts(paragraphs.map((p) => p.translation));
+  }, [translations]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Everyone who can speak: the people of this block, and every person of the knowledge base, even when the block never says their name.
+  // ---- where things stand in the source ----
+  const inSync = work !== null && normalizeSource(text) === work.source;
+  const places = useMemo(() => paragraphsOf(work?.source ?? ""), [work?.source]);
+  /** Where each line of speech stands in the text, in order. */
+  const lineRanges = useMemo(() => {
+    const at = new Map<number, number>();
+    return (work?.lines ?? []).map((l) => {
+      const p = places[l.paragraph];
+      if (!p) return null;
+      const from = at.get(l.paragraph) ?? 0;
+      const i = p.text.indexOf(l.text, from);
+      if (i < 0) return null;
+      at.set(l.paragraph, i + l.text.length);
+      return { start: p.start + i, end: p.start + i + l.text.length };
+    });
+  }, [work?.lines, places]);
+
+  const words = work?.words ?? [];
+  const sources = topics.map((t) => t.source);
+  // Everyone who can speak: the people of the text, and every person of the knowledge base, even when the text never says their name.
   const people: { source: string; english: string }[] = [
-    ...(base?.names ?? []).filter((n) => n.kind === "character" && n.use !== false),
-    ...topics.filter((t) => t.category === "character" && !(base?.names ?? []).some((n) => n.source === t.source)),
+    ...words.filter((n) => n.kind === "character" && n.use !== false),
+    ...topics.filter((t) => t.category === "character" && !words.some((n) => n.source === t.source)),
   ];
 
-  // The word being looked at: where it stands in the block, for the source pane.
-  const focused = base?.names.find((n) => n.source === focus) ?? null;
-  // Where each line of speech stands in the text, in order.
-  const lineRanges = (() => {
-    let at = 0;
-    return (base?.lines ?? []).map((l) => {
-      const i = (block?.text ?? "").indexOf(l.text, at);
-      if (i < 0) return null;
-      at = i + l.text.length;
-      return { start: i, end: at };
-    });
-  })();
+  // The word or line being looked at: where it stands in the text, for the source pane.
+  const focused = words.find((n) => n.source === focus) ?? null;
   const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
-  const partRange = partFocus !== null && block ? paragraphsOf(block.text)[partFocus] : undefined;
-  const hits = partFocus !== null ? (partRange ? [{ start: partRange.start, end: partRange.end }] : []) : lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && block ? occurrencesOf(block.text, [focused.source, ...focused.aliases], topics.map((t) => t.source)) : [];
+  const hits = lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && work ? occurrencesOf(work.source, [focused.source, ...focused.aliases], sources) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = partFocus !== null ? `Paragraph ${partFocus + 1}` : lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
-  useEffect(() => {
-    setFocus(null);
-    setLineFocus(null);
-    setPartFocus(null);
-    setHit(0);
-  }, [state?.current]);
+  const looking = lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
   const look = (source: string) => {
-    setPartFocus(null);
     setLineFocus(null);
     setFocus((f) => (f === source ? null : source));
     setOpened((o) => {
@@ -196,91 +172,41 @@ export function Workspace({
     setHit(0);
   };
   const lookAtLine = (i: number) => {
-    setPartFocus(null);
     setFocus(null);
     setLineFocus((f) => (f === i ? null : i));
     setHit(0);
   };
   const stopLooking = () => {
-    setPartFocus(null);
     setFocus(null);
     setLineFocus(null);
   };
 
-  // The words of this block's glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
+  // The words of the glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
   const q = filter.trim().toLocaleLowerCase();
   const kindLabel = (kind: string): string => classes.find((c) => c.name === kind)?.label ?? kind;
-  // What a link can point to: the topics of the knowledge base, and the words of this block that are not in it yet.
-  const linkTargets: TopicRef[] = [...topics, ...(base?.names ?? []).filter((n) => n.draft && !topics.some((t) => t.source === n.source)).map((n) => ({ source: n.source, english: n.english, category: n.kind }))];
-  const shownNames = (base?.names ?? []).filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
-  const firstAt = (n: GuidedName): number => occurrencesOf(block?.text ?? "", [n.source, ...n.aliases], topics.map((t) => t.source))[0]?.start ?? Number.MAX_SAFE_INTEGER;
+  // What a link can point to: the topics of the knowledge base, and the words of the text that are not in it yet.
+  const linkTargets: TopicRef[] = [...topics, ...words.filter((n) => n.draft && !topics.some((t) => t.source === n.source)).map((n) => ({ source: n.source, english: n.english, category: n.kind }))];
+  const shownNames = words.filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
+  const firstAt = (n: Word): number => occurrencesOf(work?.source ?? "", [n.source, ...n.aliases], sources)[0]?.start ?? Number.MAX_SAFE_INTEGER;
   const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
   const groups = kinds.map((kind) => ({ kind, names: shownNames.filter((n) => n.kind === kind).sort((a, b) => firstAt(a) - firstAt(b)) })).filter((g) => g.names.length > 0);
   const label = (p: { source: string; english: string }): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
-  const speakers = (base?.lines ?? []).map((l) => l.speaker);
 
-  /** Saves the narrator and speakers as chosen. With `fill`, lines whose speaker is not known yet are worked out by the app. */
-  const choose = async (narrator: string | null, who: (string | null)[], fill: boolean) => {
-    if (!block || !base) return;
-    const s = await call(() => api.invoke("guided.save", { index: block.index, narrator, speakers: who, fill }));
-    if (s) setState(s);
-  };
+  const update = (run: () => Promise<{ ok: true; value: Work } | { ok: false; error: { message: string } }>) => void call(run).then((w) => w && setWork(w));
 
   const addTerm = async () => {
     const word = newTerm.trim();
-    if (!block || word === "") return;
-    const s = await call(() => api.invoke("guided.addName", { index: block.index, source: word }));
-    if (!s) return;
+    if (word === "") return;
+    const w = await call(() => api.invoke("work.addWord", { source: word }));
+    if (!w) return;
     setNewTerm("");
-    setState(s);
-    const name = s.blocks[block.index]?.interpretation?.names.find((n) => n.source === word || n.aliases.includes(word));
-    if (name?.id) onKb({ open: true, request: { id: name.id, n: Date.now() } });
+    setWork(w);
+    const found = w.words.find((n) => n.source === word || n.aliases.includes(word));
+    if (found?.id) onKb({ open: true, request: { id: found.id, n: Date.now() } });
   };
 
-  const go = async (index: number) => {
-    if (!state || index < 0 || index >= state.blocks.length) return;
-    const s = await call(() => api.invoke("guided.go", { index }));
-    if (!s) return;
-    setState(s);
-    if (s.blocks[index]!.status === "new") await read(index);
-  };
-
-  const translate = async () => {
-    if (!state || !block || !model || !base) return;
-    setWorking("translate");
-    const n = block.parts.length;
-    const saying = (done: number) => `Translating block ${block.index + 1} with ${model.name}: paragraph ${Math.min(n, done + 1)} of ${n}`;
-    setActivity({ what: saying(0), stop: true });
-    // The paragraphs are written one after the other in one request; the ones done so far are asked for while it goes on.
-    const poll = setInterval(() => {
-      void api.invoke("guided.get").then((r) => {
-        if (!r.ok || !r.value) return;
-        setState(r.value);
-        setActivity({ what: saying(r.value.blocks[block.index]?.parts.filter((t) => t.trim() !== "").length ?? 0), stop: true });
-      });
-    }, 1000);
-    const s = await call(() =>
-      api.invoke("guided.translate", {
-        index: block.index,
-        backend: setup.backend,
-        modelId: model.name,
-        contextLimit: model.contextLimit,
-        maxOutputTokens: model.maxOutputTokens,
-        temperature: model.temperature,
-        promptId: model.promptId,
-        sourceLanguage: setup.sourceLanguage,
-        targetLanguage: setup.targetLanguage,
-      }),
-    );
-    clearInterval(poll);
-    if (s) setState(s);
-    else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
-    setActivity(null);
-    setWorking(null);
-  };
-
-  const modelInput = (index: number) => ({
-    index,
+  // ---- translating ----
+  const modelInput = () => ({
     backend: setup.backend,
     modelId: model!.name,
     contextLimit: model!.contextLimit,
@@ -290,69 +216,74 @@ export function Workspace({
     sourceLanguage: setup.sourceLanguage,
     targetLanguage: setup.targetLanguage,
   });
+  const done = paragraphs.filter((p) => p.translation.trim() !== "").length;
+
+  /** Translates the paragraphs one after the other. Without `redo` it carries on where it stopped (the paragraphs that have a translation are skipped). */
+  const translate = async (redo: boolean) => {
+    if (!work || !model) return;
+    if (redo && done > 0 && !window.confirm(`Write all ${paragraphs.length} paragraphs again? Translations you wrote or changed are replaced.`)) return;
+    setWorking("translate");
+    const n = paragraphs.length;
+    const saying = (finished: number) => `Translating with ${model.name}: paragraph ${Math.min(n, finished + 1)} of ${n}`;
+    setActivity({ what: saying(redo ? 0 : done), stop: true });
+    // The paragraphs are written one after the other in one request; the ones done so far are asked for while it goes on.
+    const poll = setInterval(() => {
+      void api.invoke("work.get").then((r) => {
+        if (!r.ok || !r.value) return;
+        setWork(r.value);
+        setActivity({ what: saying(r.value.paragraphs.filter((p) => p.translation.trim() !== "").length), stop: true });
+      });
+    }, 1000);
+    const w = await call(() => api.invoke("work.translate", { ...modelInput(), redo }));
+    clearInterval(poll);
+    if (w) setWork(w);
+    else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
+    setActivity(null);
+    setWorking(null);
+  };
 
   /** Translates one paragraph again, keeping the others as they are. */
-  const retranslatePart = async (paragraph: number) => {
-    if (!block || !model) return;
+  const retranslate = async (paragraph: number) => {
+    if (!work || !model) return;
     setWorking("translate");
     setActivity({ what: `Translating paragraph ${paragraph + 1} again with ${model.name}`, stop: true });
-    const s = await call(() => api.invoke("guided.retranslate", { ...modelInput(block.index), paragraph }));
-    if (s) setState(s);
-    else void api.invoke("guided.get").then((r) => r.ok && r.value && setState(r.value));
+    const w = await call(() => api.invoke("work.retranslate", { ...modelInput(), paragraph }));
+    if (w) setWork(w);
+    else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
     setActivity(null);
     setWorking(null);
   };
 
   /** The user's own text for one paragraph is kept when they leave its box. */
   const saveDraft = async (paragraph: number) => {
-    if (!block || (drafts[paragraph] ?? "") === (block.parts[paragraph] ?? "")) return;
-    const s = await call(() => api.invoke("guided.setPart", { index: block.index, paragraph, text: drafts[paragraph] ?? "" }));
-    if (s) setState(s);
+    if (!work || (drafts[paragraph] ?? "") === (paragraphs[paragraph]?.translation ?? "")) return;
+    const w = await call(() => api.invoke("work.setPart", { paragraph, text: drafts[paragraph] ?? "" }));
+    if (w) setWork(w);
   };
 
-  /** Looking at a paragraph of the translation shows the paragraph of the source it was translated from. */
-  const lookAtPart = (k: number) => {
-    setFocus(null);
-    setLineFocus(null);
-    setHit(0);
-    setPartFocus(k);
-  };
-
-  // ---- the source, shown as blocks in the editor ----
-  const view: GuidedState = state ?? { documentId, blocks: [], current: 0 };
-  const inSync = state !== null && state.source !== undefined && normalizeSource(text) === state.source;
-  const starts: number[] = [];
-  {
-    let at = 0;
-    for (const b of view.blocks) {
-      starts.push(at);
-      at += b.text.length;
-    }
-  }
-  const editorBlocks: PreviewBlock[] | null = inSync ? view.blocks.map((b) => ({ index: b.index, text: b.text, estimatedTokens: estimateTokens(b.text), boundaryKind: "paragraph" as const })) : null;
-  const currentRange = inSync && block ? { from: starts[view.current]!, to: starts[view.current]! + block.text.length } : null;
-  const editorHits: Hit[] = inSync && block ? hits.map((h, i) => ({ from: starts[view.current]! + h.start, to: starts[view.current]! + h.end, current: i === current })) : [];
-
-  // Moving to another block with the arrows or the numbers takes the editor there; clicking in the text does not need to.
+  // ---- the cursor: a paragraph in the source and its translation go together ----
   const [reveal, setReveal] = useState<{ at: number; n: number } | null>(null);
-  useEffect(() => {
-    if (fromCursor.current) {
-      fromCursor.current = false;
-      return;
-    }
-    if (inSync && starts[view.current] !== undefined) setReveal({ at: starts[view.current]!, n: Date.now() });
-  }, [view.current]); // eslint-disable-line react-hooks/exhaustive-deps
-  const cursorAt = (position: number) => {
-    if (!inSync) return;
-    let index = 0;
-    starts.forEach((s, i) => {
-      if (s <= position) index = i;
-    });
-    if (index !== view.current) {
-      fromCursor.current = true;
-      void go(index);
-    }
+  const goTo = (k: number, from: "source" | "translation") => {
+    setCur(k);
+    if (from === "translation" && places[k]) setReveal({ at: places[k]!.start, n: Date.now() });
+    if (from === "source") boxes.current[k]?.scrollIntoView({ block: "nearest" });
   };
+  const cursorAt = (position: number) => {
+    if (!inSync || places.length === 0) return;
+    let index = 0;
+    places.forEach((p, i) => {
+      if (p.start <= position) index = i;
+    });
+    goTo(index, "source");
+  };
+  // The lines of speech of the paragraph being worked on are brought into view.
+  useEffect(() => {
+    const at = (work?.lines ?? []).findIndex((l) => l.paragraph === cur);
+    if (at >= 0) lineItems.current[at]?.scrollIntoView({ block: "nearest" });
+  }, [cur]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentRange = inSync && cur !== null && places[cur] ? { from: places[cur]!.start, to: places[cur]!.end } : null;
+  const editorHits: Hit[] = inSync ? hits.map((h, i) => ({ from: h.start, to: h.end, current: i === current })) : [];
 
   // ---- the panes and the handles between them ----
   const shown = kb.open ? [0, 1, 2, 3] : [0, 1, 2];
@@ -387,42 +318,23 @@ export function Workspace({
     }
   };
 
-  const done = view.blocks.filter((b) => b.status === "translated").length;
+  const lines = work?.lines ?? [];
 
   return (
     <div className="guided">
       <Flex align="center" justify="between" gap="3" wrap="wrap" px="3" py="2" className="guided-bar">
-        <Flex align="center" gap="2">
-          <IconButton variant="soft" color="gray" size="1" aria-label="Previous block" onClick={() => void go(view.current - 1)} disabled={view.current === 0 || working !== null}>
-            <ArrowLeftIcon />
-          </IconButton>
-          <Text weight="bold" size="2">
-            {view.blocks.length === 0 ? "No blocks yet" : `Block ${view.current + 1} of ${view.blocks.length}`}
+        <Flex align="center" gap="3" wrap="wrap">
+          <Text size="2" color="gray">
+            {paragraphs.length === 0 ? "No text yet" : `${paragraphs.length} paragraphs · ${done} translated`}
           </Text>
-          <IconButton variant="soft" color="gray" size="1" aria-label="Next block" onClick={() => void go(view.current + 1)} disabled={view.current >= view.blocks.length - 1 || working !== null}>
-            <ArrowRightIcon />
-          </IconButton>
-          {view.blocks.length > 0 && (
-            <Text size="1" color="gray">
-              {done} translated
-            </Text>
-          )}
-        </Flex>
-        <Flex gap="1" wrap="wrap" justify="center" flexGrow="1" aria-label="Blocks" role="group">
-          {view.blocks.map((b) => (
-            <Button
-              key={b.index}
-              size="1"
-              radius="full"
-              variant={b.index === view.current ? "solid" : b.status === "translated" ? "soft" : "outline"}
-              color={b.status === "translated" || b.index === view.current ? "indigo" : "gray"}
-              onClick={() => void go(b.index)}
-              title={`Block ${b.index + 1}: ${b.status === "translated" ? "translated" : b.status === "interpreted" ? "read" : "not read yet"}`}
-              disabled={working !== null}
-            >
-              {b.index + 1}
+          <Button size="2" onClick={() => void translate(false)} disabled={working !== null || !model || paragraphs.length === 0 || done === paragraphs.length}>
+            {working === "translate" ? "Translating…" : done > 0 && done < paragraphs.length ? "Carry on translating" : "Translate"}
+          </Button>
+          {done > 0 && (
+            <Button size="2" variant="soft" color="gray" onClick={() => void translate(true)} disabled={working !== null || !model} title="Write every paragraph again, with the glossary as it is now">
+              Translate everything again
             </Button>
-          ))}
+          )}
         </Flex>
         <Flex align="center" gap="2">
           <Text size="1" color="gray">
@@ -433,14 +345,12 @@ export function Workspace({
       </Flex>
       {error && (
         <Callout.Root color="red" size="1" m="2">
-          <Callout.Text>
-            <Flex align="center" justify="between" gap="3">
-              {error}
-              <Button variant="ghost" size="1" onClick={() => setError(null)}>
-                Dismiss
-              </Button>
-            </Flex>
-          </Callout.Text>
+          <Flex align="center" justify="between" gap="3">
+            <Callout.Text>{error}</Callout.Text>
+            <Button variant="ghost" size="1" onClick={() => setError(null)}>
+              Dismiss
+            </Button>
+          </Flex>
         </Callout.Root>
       )}
 
@@ -469,203 +379,175 @@ export function Workspace({
             </Flex>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} blocks={editorBlocks} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} />
           </div>
         </section>
 
         <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
 
-          <section className="guided-pane">
-            <h3>What was read</h3>
-            {!block ? (
-              <div className="guided-body">
-                <Text as="p" size="2" color="gray">
-                  Paste or type the source text on the left. It is cut into blocks, and what is read from each one shows here.
-                </Text>
-              </div>
-            ) : !base ? (
-              <div className="guided-body">
-                <Text as="p" size="2" color="gray" mb="2">
-                  This block has not been read yet.
-                </Text>
-                <Button onClick={() => void read(block.index)} disabled={working !== null}>
-                  {working === "read" ? "Reading…" : "Read this block"}
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="guided-scroll">
-                  <Flex align="center" gap="2" wrap="wrap">
-                    <Text size="2" color="gray">
-                      {base.narratorWord ? `Told as “${base.narratorWord}”. Narrator` : "Narrator"}
+        <section className="guided-pane">
+          <h3>What was read</h3>
+          {!work ? (
+            <div className="guided-body">
+              <Text as="p" size="2" color="gray">
+                Paste or type the source text on the left. The words in it and who says each line show here.
+              </Text>
+            </div>
+          ) : (
+            <>
+              <div className="guided-scroll">
+                <Heading as="h4" size="2" mb="2">
+                  Glossary of the text{" "}
+                  <Text size="1" color="gray" weight="regular">
+                    {words.length}
+                  </Text>
+                </Heading>
+                {words.length === 0 && (
+                  <Text as="p" size="1" color="gray">
+                    Nothing from the glossary found in the text. Add a word from the text below.
+                  </Text>
+                )}
+                {words.length > 0 && (
+                  <TextField.Root size="2" mb="2" type="search" aria-label="Search the glossary" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)}>
+                    <TextField.Slot>
+                      <MagnifyingGlassIcon />
+                    </TextField.Slot>
+                  </TextField.Root>
+                )}
+                {words.length > 0 && groups.length === 0 && (
+                  <Text as="p" size="1" color="gray">
+                    Nothing matches.
+                  </Text>
+                )}
+                {groups.map((g) => (
+                  <section key={g.kind} className="glossary-group">
+                    <Text as="div" size="1" weight="bold" color="gray" mt="3" mb="1" className="group-title">
+                      {kindLabel(g.kind)} · {g.names.length}
                     </Text>
-                    <Pick label="Narrator" value={base.narrator ?? ""} options={[{ value: "", label: "not set" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]} onChange={(v) => void choose(v === "" ? null : v, speakers, true)} />
-                  </Flex>
-                  {base.narratorWord && base.narrator === null && (
-                    <Text as="p" size="1" color="gray" mt="1">
-                      Who is “{base.narratorWord}” here? It carries on to the next blocks until you change it.
-                    </Text>
-                  )}
-
-                  <Heading as="h4" size="2" mt="4" mb="2">
-                    Glossary in this block{" "}
-                    <Text size="1" color="gray" weight="regular">
-                      {base.names.length}
-                    </Text>
-                  </Heading>
-                  {base.names.length === 0 && (
-                    <Text as="p" size="1" color="gray">
-                      Nothing from the glossary found in this block. Add a word from the text below.
-                    </Text>
-                  )}
-                  {base.names.length > 0 && (
-                    <TextField.Root size="2" mb="2" type="search" aria-label="Search the glossary in this block" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)}>
-                      <TextField.Slot>
-                        <MagnifyingGlassIcon />
-                      </TextField.Slot>
-                    </TextField.Root>
-                  )}
-                  {base.names.length > 0 && groups.length === 0 && (
-                    <Text as="p" size="1" color="gray">
-                      Nothing matches.
-                    </Text>
-                  )}
-                  {groups.map((g) => (
-                    <section key={g.kind} className="glossary-group">
-                      <Text as="div" size="1" weight="bold" color="gray" mt="3" mb="1" className="group-title">
-                        {kindLabel(g.kind)} · {g.names.length}
-                      </Text>
-                      <ul className="guided-glossary">
-                        {g.names.map((n) => (
-                          <NameRow
-                            key={n.source}
-                            name={n}
-                            classes={classes}
-                            topics={linkTargets}
-                            expanded={opened.has(n.source)}
-                            focused={focus === n.source}
-                            onToggle={() => look(n.source)}
-                            onUse={(use) => void call(() => api.invoke("guided.setUse", { source: n.source, use })).then((s) => s && setState(s))}
-                            onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
-                            onEnglish={(english) => void call(() => api.invoke("guided.setEnglish", { source: n.source, english })).then((s) => s && setState(s))}
-                            onHint={(hint) => void call(() => api.invoke("guided.setHint", { source: n.source, hint })).then((s) => s && setState(s))}
-                            onKind={(kind) => void call(() => api.invoke("guided.setKind", { source: n.source, kind })).then((s) => s && setState(s))}
-                            onAttribute={(key, values) => void call(() => api.invoke("guided.setAttribute", { source: n.source, key, values })).then((s) => s && setState(s))}
-                          />
-                        ))}
-                      </ul>
-                    </section>
-                  ))}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void addTerm();
-                    }}
-                  >
-                    <Flex gap="2" mt="2">
-                      <TextField.Root size="2" style={{ flex: 1 }} aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
-                      <Button size="2" variant="soft" type="submit" disabled={newTerm.trim() === ""}>
-                        Add
-                      </Button>
-                    </Flex>
-                  </form>
-
-                  <Heading as="h4" size="2" mt="5" mb="2">
-                    Who says each line
-                  </Heading>
-                  {base.lines.length === 0 && (
-                    <Text as="p" size="1" color="gray">
-                      There are no lines of speech in this block.
-                    </Text>
-                  )}
-                  <ul className="guided-lines">
-                    {base.lines.map((l, i) => (
-                      <li key={i}>
-                        <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title={`Show where it is in the text: ${l.text}`} className="line-text">
-                          <Text truncate size="2">
-                            {l.text}
-                          </Text>
-                        </Button>
-                        <Pick
-                          size="1"
-                          label={`Speaker of line ${i + 1}`}
-                          value={l.speaker ?? ""}
-                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
-                          onChange={(v) => void choose(base.narrator, speakers.map((s, n) => (n === i ? (v === "" ? null : v) : s)), false)}
+                    <ul className="guided-glossary">
+                      {g.names.map((n) => (
+                        <NameRow
+                          key={n.source}
+                          name={n}
+                          classes={classes}
+                          topics={linkTargets}
+                          expanded={opened.has(n.source)}
+                          focused={focus === n.source}
+                          onToggle={() => look(n.source)}
+                          onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
+                          onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
+                          onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
+                          onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
+                          onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
+                          onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
                         />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
-                  <Button onClick={() => void translate()} disabled={working !== null || !model}>
-                    {working === "translate" ? "Translating…" : block.status === "translated" ? "Translate again" : "Translate"}
-                  </Button>
-                  <Button variant="soft" color="gray" onClick={() => void choose(base.narrator, speakers, true)} disabled={working !== null} title="Work out who says the lines still set to not known, from the names and the narrator">
-                    Guess the speakers
-                  </Button>
-                  <Button variant="ghost" color="gray" onClick={() => void read(block.index)} disabled={working !== null} title="Read the block again">
-                    Read again
-                  </Button>
-                </Flex>
-              </>
-            )}
-          </section>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addTerm();
+                  }}
+                >
+                  <Flex gap="2" mt="2">
+                    <TextField.Root size="2" style={{ flex: 1 }} aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
+                    <Button size="2" variant="soft" type="submit" disabled={newTerm.trim() === ""}>
+                      Add
+                    </Button>
+                  </Flex>
+                </form>
 
+                <Heading as="h4" size="2" mt="5" mb="2">
+                  Who says each line{" "}
+                  <Text size="1" color="gray" weight="regular">
+                    {lines.length}
+                  </Text>
+                </Heading>
+                {lines.length === 0 && (
+                  <Text as="p" size="1" color="gray">
+                    There are no lines of speech in the text.
+                  </Text>
+                )}
+                <ul className="guided-lines">
+                  {lines.map((l, i) => (
+                    <li key={i} ref={(el) => void (lineItems.current[i] = el)} className={l.paragraph === cur ? "line-current" : undefined}>
+                      <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title={`Paragraph ${l.paragraph + 1}. Show where it is in the text: ${l.text}`} className="line-text">
+                        <Text truncate size="2">
+                          {l.text}
+                        </Text>
+                      </Button>
+                      <Pick
+                        size="1"
+                        label={`Speaker of line ${i + 1}`}
+                        value={l.speaker ?? ""}
+                        options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
+                        onChange={(v) => update(() => api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }))}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
+                <Button variant="soft" color="gray" onClick={() => update(() => api.invoke("work.guessSpeakers"))} disabled={working !== null || lines.length === 0} title="Work out who says the lines still set to not known, from the words and the conversation">
+                  Guess the speakers
+                </Button>
+              </Flex>
+            </>
+          )}
+        </section>
 
         <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1, 2)} />
 
-          <section className="guided-pane">
-            <h3>Translation</h3>
-            {!block ? (
-              <div className="guided-body">
-                <Text as="p" size="2" color="gray">
-                  The translation of the block you are working on appears here.
-                </Text>
-              </div>
-            ) : block.parts.some((t) => t.trim() !== "") || block.status === "translated" ? (
-              <>
-                <div className="guided-parts">
-                  {block.parts.map((_, k) => (
-                    <div key={k} className={partFocus === k ? "part part-focus" : "part"}>
+        <section className="guided-pane">
+          <h3>Translation</h3>
+          {!work ? (
+            <div className="guided-body">
+              <Text as="p" size="2" color="gray">
+                The translation appears here, one box for each paragraph.
+              </Text>
+            </div>
+          ) : (
+            <>
+              <div className="guided-parts">
+                {paragraphs.map((p, k) => (
+                  <div key={k} ref={(el) => void (boxes.current[k] = el)} className={cur === k ? "part part-focus" : "part"}>
+                    <Text size="1" color="gray" className="part-n" aria-hidden>
+                      {k + 1}
+                    </Text>
+                    <div className="part-body">
                       <TextArea
                         className="part-text"
                         variant="surface"
                         aria-label={`Translation of paragraph ${k + 1}`}
                         placeholder="…"
                         value={drafts[k] ?? ""}
-                        onFocus={() => lookAtPart(k)}
+                        onFocus={() => goTo(k, "translation")}
                         onChange={(e) => setDrafts((d) => d.map((t, i) => (i === k ? e.target.value : t)))}
                         onBlur={() => void saveDraft(k)}
                         spellCheck={false}
                       />
-                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslatePart(k)}>
-                        <ReloadIcon />
-                      </IconButton>
+                      {p.issue && (
+                        <Text as="p" size="1" color="amber" role="status">
+                          {p.issue}
+                        </Text>
+                      )}
                     </div>
-                  ))}
-                </div>
-                {(block.warning || block.error) && (
-                  <Text as="p" size="1" color={block.error ? "red" : "amber"} mx="3" role="status">
-                    {block.error ?? block.warning}
-                  </Text>
-                )}
-                <Flex gap="2" p="3" wrap="wrap" className="guided-foot">
-                  <Button onClick={() => void go(block.index + 1)} disabled={block.index >= view.blocks.length - 1 || working !== null}>
-                    {block.index >= view.blocks.length - 1 ? "Last block" : "Next block"}
-                    {block.index < view.blocks.length - 1 && <ArrowRightIcon />}
-                  </Button>
-                </Flex>
-              </>
-            ) : (
-              <div className="guided-body">
-                <Text as="p" size="2" color={block.error ? "red" : "gray"}>
-                  {working === "translate" ? "Translating…" : block.error ? block.error : "The translation appears here once you translate the block."}
-                </Text>
+                    <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslate(k)}>
+                      <ReloadIcon />
+                    </IconButton>
+                  </div>
+                ))}
               </div>
-            )}
-          </section>
-
+              {work.error && (
+                <Text as="p" size="1" color="red" mx="3" role="status">
+                  {work.error}
+                </Text>
+              )}
+            </>
+          )}
+        </section>
 
         {kb.open && (
           <>

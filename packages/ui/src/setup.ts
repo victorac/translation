@@ -1,4 +1,4 @@
-import type { Backend, BlockSize, ModelSetting, ProjectSettings, PromptPreset } from "@ltw/domain";
+import type { Backend, ModelSetting, ProjectSettings, PromptPreset } from "@ltw/domain";
 
 /** Everything the user has chosen: the working text and how to translate it. */
 export interface SetupState {
@@ -10,7 +10,6 @@ export interface SetupState {
   models: ModelSetting[];
   /** The user's own translation styles. */
   prompts: PromptPreset[];
-  blockSize: BlockSize;
 }
 
 export const newModel = (name: string, promptId = "standard"): ModelSetting => ({
@@ -29,14 +28,12 @@ export const initialSetup: SetupState = {
   backend: "provider",
   models: [],
   prompts: [],
-  blockSize: "normal",
 };
 
 /** The choices that belong to the project (the same fields, in the same order, as the project saves them). */
 export const settingsOf = (s: SetupState): ProjectSettings => ({
   sourceLanguage: s.sourceLanguage,
   targetLanguage: s.targetLanguage,
-  blockSize: s.blockSize,
   models: s.models,
   glossary: [],
   prompts: s.prompts,
@@ -69,7 +66,6 @@ export function loadSetup(): SetupState {
         ...(s.backend === "practice" || s.backend === "provider" ? { backend: s.backend } : {}),
         ...(Array.isArray(s.models) ? { models: s.models.map((m) => ({ ...newModel(String(m.name ?? "")), ...m })) } : {}),
         ...(Array.isArray(s.prompts) ? { prompts: s.prompts } : {}),
-        ...(s.blockSize === "small" || s.blockSize === "normal" || s.blockSize === "large" ? { blockSize: s.blockSize } : {}),
       };
     }
   } catch {

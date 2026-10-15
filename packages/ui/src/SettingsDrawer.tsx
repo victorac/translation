@@ -8,12 +8,10 @@ import {
 import {
   Flex,
   IconButton,
-  SegmentedControl,
   Tabs,
   Text,
   TextField,
 } from "@radix-ui/themes";
-import type { BlockSize } from "@ltw/domain";
 import {
   Connection,
 } from "./Connection";
@@ -24,7 +22,9 @@ import {
   newModel,
   type SetupState,
 } from "./setup";
-import type { useProvider } from "./useProvider";
+import type {
+  useProvider,
+} from "./useProvider";
 
 export type SettingsTab = "server" | "text" | "styles";
 
@@ -104,16 +104,6 @@ export function SettingsDrawer({
                   <TextField.Root size="2" value={setup.targetLanguage} onChange={(e) => set({ targetLanguage: e.target.value })} />
                 </Field>
               </Flex>
-              <Field label="Block size" hint="Smaller blocks need less context and fail in smaller pieces. Larger blocks keep more together. A model with a small context can still force smaller blocks.">
-                <SegmentedControl.Root value={setup.blockSize} onValueChange={(v) => set({ blockSize: v as BlockSize })}>
-                  <SegmentedControl.Item value="small">Smaller</SegmentedControl.Item>
-                  <SegmentedControl.Item value="normal">Normal</SegmentedControl.Item>
-                  <SegmentedControl.Item value="large">Larger</SegmentedControl.Item>
-                </SegmentedControl.Root>
-              </Field>
-              <Text size="1" color="gray">
-                The text is cut into blocks of this size. You can see where, in the source, as you type.
-              </Text>
             </Flex>
           </Tabs.Content>
 

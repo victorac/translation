@@ -1,15 +1,16 @@
+import {
+  workFromBlocks,
+  type LegacyBlocks,
+} from "./legacy.js";
 import type {
-  GuidedState,
-} from "./guided.js";
+  Work,
+} from "./work.js";
 import type {
   KnowledgeEntry,
 } from "./entries.js";
 import {
   z,
 } from "zod";
-import type {
-  BlockSize,
-} from "./defaults.js";
 import type {
   PromptPreset,
 } from "./prompts.js";
@@ -37,7 +38,6 @@ export const MAX_PROJECT_BYTES = 256 * 1024 * 1024;
 export interface ProjectSettings {
   sourceLanguage: string;
   targetLanguage: string;
-  blockSize: BlockSize;
   models: ModelSetting[];
   /** Only projects from before the knowledge base have a glossary here; it is brought over once when they are opened. */
   glossary: GlossaryEntry[];
@@ -66,7 +66,7 @@ export interface ProjectFile {
   /** The project's names, hints and notes. Missing in projects saved before the knowledge store existed. */
   knowledge?: { entries: KnowledgeEntry[]; classes?: string };
   /** The blocks of each document's translation, with what was confirmed and translated so far. */
-  guided?: GuidedState[];
+  work?: Work[];
   activeDocumentId: string;
   documents: ProjectDocument[];
 }
@@ -97,28 +97,27 @@ const entrySchema = z.object({
   updatedAt: iso,
 });
 
-const guidedSchema = z.object({
+const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), guessed: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
+
+const workSchema = z.object({
   documentId: id,
-  source: z.string().max(2_000_000).optional(),
-  current: count,
+  source: z.string().max(5_000_000),
+  words: z.array(wordSchema).max(5000),
+  lines: z.array(z.object({ paragraph: count, text: str, speaker: z.string().max(200).nullable() })).max(100_000),
+  paragraphs: z.array(z.object({ text: str, translation: str, issue: z.string().max(5000).nullable().optional() })).max(200_000),
+  error: z.string().max(5000).nullable().optional(),
+});
+
+/** What older projects kept for each document: its text cut into blocks. Read only, to bring the work over. */
+const legacySchema = z.object({
+  documentId: id,
   blocks: z
     .array(
       z.object({
-        index: count,
         text: str,
         translation: str,
         parts: z.array(str).max(10_000).default([]),
-        status: z.enum(["new", "interpreted", "translated"]),
-        error: z.string().max(5000).nullable(),
-        warning: z.string().max(5000).nullable().optional(),
-        interpretation: z
-          .object({
-            names: z.array(z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), guessed: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() })).max(500),
-            narrator: z.string().max(200).nullable(),
-            narratorWord: z.string().max(20).nullable(),
-            lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000),
-          })
-          .nullable(),
+        interpretation: z.object({ names: z.array(wordSchema).max(500), lines: z.array(z.object({ text: str, speaker: z.string().max(200).nullable() })).max(5000) }).nullable(),
       }),
     )
     .max(20_000),
@@ -137,7 +136,6 @@ const modelSettingSchema = z.object({
 const settingsSchema = z.object({
   sourceLanguage: z.string().max(200),
   targetLanguage: z.string().max(200),
-  blockSize: z.enum(["small", "normal", "large"]),
   models: z.array(modelSettingSchema).max(24),
   glossary: z.array(z.object({ source: z.string().max(2000), target: z.string().max(2000), note: z.string().max(2000).optional(), aliases: z.array(z.string().max(2000)).max(50).optional() })).max(10_000),
   notes: z.string().max(20_000).optional(),
@@ -160,8 +158,9 @@ const fileSchema = z.object({
   project: projectHead,
   settings: settingsSchema.optional(),
   knowledge: z.object({ entries: z.array(entrySchema).max(50_000), classes: z.string().max(200_000).optional() }).optional(),
-  // One block record per document. A file from before documents had their own had just one.
-  guided: z.union([guidedSchema, z.array(guidedSchema).max(200)]).transform((g) => (Array.isArray(g) ? g : [g])).optional(),
+  work: z.array(workSchema).max(200).optional(),
+  // Older projects kept the work block by block: one record per document (the first release had just one).
+  guided: z.union([legacySchema, z.array(legacySchema).max(200)]).transform((g) => (Array.isArray(g) ? g : [g])).optional(),
   activeDocumentId: id,
   documents: z.array(documentSchema).min(1).max(200),
 });
@@ -231,7 +230,14 @@ export function parseProject(text: string): ParsedProject {
   } else {
     const shape = fileSchema.safeParse(json);
     if (!shape.success) return invalid(shape.error.issues);
-    file = shape.data as unknown as ProjectFile;
+    const { guided, work, ...rest } = shape.data;
+    file = { ...rest, ...(work ? { work } : {}) } as unknown as ProjectFile;
+    // Work saved block by block is brought over, for the documents that have no work of the new kind.
+    const brought = (guided ?? []).flatMap((g) => {
+      const doc = file.documents.find((d) => d.id === g.documentId);
+      return doc && !(work ?? []).some((w) => w.documentId === g.documentId) ? [workFromBlocks(g as LegacyBlocks, doc.draft)] : [];
+    });
+    if (brought.length > 0) file.work = [...(file.work ?? []), ...brought];
   }
 
   const problems: string[] = [];
@@ -253,7 +259,7 @@ export function buildProjectFile(input: {
   version: number;
   settings?: ProjectSettings | null;
   knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined };
-  guided?: GuidedState[];
+  work?: Work[];
   activeDocumentId: string;
   documents: ProjectDocument[];
 }): ProjectFile {
@@ -263,7 +269,7 @@ export function buildProjectFile(input: {
     project: { id: input.id, title: input.title, createdAt: input.createdAt, updatedAt: input.updatedAt, version: input.version },
     ...(input.settings ? { settings: input.settings } : {}),
     ...(input.knowledge && input.knowledge.entries.length > 0 ? { knowledge: { entries: input.knowledge.entries, ...(input.knowledge.classes !== undefined ? { classes: input.knowledge.classes } : {}) } } : {}),
-    ...(input.guided && input.guided.length > 0 ? { guided: input.guided } : {}),
+    ...(input.work && input.work.length > 0 ? { work: input.work } : {}),
     activeDocumentId: input.activeDocumentId,
     documents: input.documents,
   };

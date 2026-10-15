@@ -10,24 +10,16 @@ import {
   type ProjectFile,
 } from "./project.js";
 import type {
-  GuidedState,
-} from "./guided.js";
+  Work,
+} from "./work.js";
 
-const guided: GuidedState = {
+const work: Work = {
   documentId: "d1",
   source: "一つ目。\n二つ目。",
-  current: 0,
-  blocks: [
-    {
-      index: 0,
-      text: "一つ目。\n二つ目。",
-      interpretation: { names: [{ source: "魔王", english: "Demon King", kind: "character", aliases: [], reading: "maou", known: true, hint: "villain" }], narrator: null, narratorWord: null, lines: [] },
-      translation: "One.\n\nTwo.",
-      parts: ["One.", "Two."],
-      status: "translated",
-      error: null,
-    },
-  ],
+  words: [{ source: "魔王", english: "Demon King", kind: "character", aliases: [], reading: "maou", known: true, hint: "villain" }],
+  lines: [{ paragraph: 1, text: "「はい」", speaker: "魔王" }],
+  paragraphs: [{ text: "一つ目。", translation: "One." }, { text: "二つ目。", translation: "Two.", issue: "something to look at" }],
+  error: null,
 };
 
 const makeFile = (): ProjectFile =>
@@ -40,7 +32,7 @@ const makeFile = (): ProjectFile =>
       version: 3,
       activeDocumentId: "d1",
       documents: [{ id: "d1", title: "Chapter 1", createdAt: "2026-01-01T00:00:00Z", draft: "一つ目。\n二つ目。" }],
-      guided: [guided],
+      work: [work],
     }),
   );
 
@@ -51,16 +43,16 @@ const errorOf = (f: unknown) => {
 };
 
 describe("project file", () => {
-  it("round-trips exactly, including Unicode and the translation of each paragraph", () => {
+  it("round-trips exactly, including Unicode, the words, who says the lines and the translation of each paragraph", () => {
     const f = makeFile();
     const r = load(f);
     expect(r.ok && r.file).toEqual(f);
-    expect(r.ok && r.file.guided?.[0]?.blocks[0]?.parts).toEqual(["One.", "Two."]);
+    expect(r.ok && r.file.work?.[0]?.paragraphs.map((p) => p.translation)).toEqual(["One.", "Two."]);
   });
 
   it("is plain JSON with the documented fields only", () => {
     const text = serializeProject(makeFile());
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["activeDocumentId", "documents", "format", "guided", "project", "schemaVersion"]);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["activeDocumentId", "documents", "format", "project", "schemaVersion", "work"]);
     expect(text).not.toMatch(/apiKey|Bearer|\/Users\//);
   });
 
@@ -78,26 +70,44 @@ describe("project file", () => {
     expect(e.details.join(" ")).toMatch(/documents\.0\.draft/);
   });
 
-  it("reads a block saved before its paragraphs were translated one by one as one with no paragraphs yet", () => {
-    const f = JSON.parse(serializeProject(makeFile()));
-    delete f.guided[0].blocks[0].parts;
+  it("brings work saved block by block over: the words, the translation of each paragraph and who says the lines", () => {
+    const text = "「遅いですよ」と花子は言った。\n\n「ごめん」と太郎は言った。\n\n二人は歩いた。";
+    const word = (source: string, english: string) => ({ source, english, kind: "character", aliases: [], reading: "", known: false, draft: true });
+    const f = JSON.parse(serializeProject({ ...makeFile(), documents: [{ id: "d1", title: "Chapter 1", createdAt: "2026-01-01T00:00:00Z", draft: text }] }));
+    delete f.work;
+    f.guided = {
+      documentId: "d1",
+      source: text,
+      current: 0,
+      blocks: [
+        {
+          index: 0,
+          text,
+          translation: "",
+          parts: ["Late, said Hanako.", "Sorry, said Taro.", ""],
+          status: "interpreted",
+          error: null,
+          interpretation: { names: [word("花子", "Hanako"), word("太郎", "Taro")], narrator: "太郎", narratorWord: "ぼく", lines: [{ text: "「遅いですよ」", speaker: "花子" }, { text: "「ごめん」", speaker: "花子" }] },
+        },
+      ],
+    };
     const r = parseProject(JSON.stringify(f));
-    expect(r.ok && r.file.guided?.[0]?.blocks[0]?.parts).toEqual([]);
+    const w = r.ok ? r.file.work![0]! : null;
+    expect(w?.paragraphs).toEqual([{ text: "「遅いですよ」と花子は言った。", translation: "Late, said Hanako." }, { text: "「ごめん」と太郎は言った。", translation: "Sorry, said Taro." }, { text: "二人は歩いた。", translation: "" }]);
+    expect(w?.words.map((x) => `${x.source}=${x.english}`)).toEqual(["花子=Hanako", "太郎=Taro"]);
+    // What the user set for a line stays (the second line was set to 花子, whom the rules would not have chosen).
+    expect(w?.lines.map((l) => l.speaker)).toEqual(["花子", "花子"]);
+    expect(r.ok && "guided" in r.file).toBe(false);
   });
 
-  it("reads a single block record (older files) as a list", () => {
-    const f = JSON.parse(serializeProject(makeFile()));
-    f.guided = f.guided[0];
-    const r = parseProject(JSON.stringify(f));
-    expect(r.ok && r.file.guided).toHaveLength(1);
-  });
-
-  it("ignores what older files kept about model runs", () => {
+  it("ignores what older files kept about model runs and block sizes", () => {
     const f = JSON.parse(serializeProject(makeFile()));
     f.documents[0].versions = [{ source: { exactText: "x" }, runs: [] }];
     f.providerLabel = "http://localhost:1234/v1";
+    f.settings = { sourceLanguage: "Japanese", targetLanguage: "English", blockSize: "large", models: [], glossary: [], prompts: [] };
     const r = parseProject(JSON.stringify(f));
     expect(r.ok && Object.keys(r.file.documents[0]!).sort()).toEqual(["createdAt", "draft", "id", "title"]);
+    expect(r.ok && r.file.settings).toEqual({ sourceLanguage: "Japanese", targetLanguage: "English", models: [], glossary: [], prompts: [] });
   });
 });
 
@@ -130,7 +140,6 @@ describe("documents and settings", () => {
     f.settings = {
       sourceLanguage: "Japanese",
       targetLanguage: "English",
-      blockSize: "large",
       models: [{ name: "qwen", contextLimit: 4096, maxOutputTokens: 1536, temperature: 0.2, promptId: "standard", useGlossary: true }],
       glossary: [{ source: "魔王", target: "Demon King", note: "villain" }],
       prompts: [{ id: "mine", name: "Mine", description: "", template: "Translate." }],
@@ -138,7 +147,7 @@ describe("documents and settings", () => {
     const r = load(f);
     expect(r.ok && r.file.settings).toEqual(f.settings);
     const bad = structuredClone(f);
-    (bad.settings as { blockSize: string }).blockSize = "huge";
+    (bad.settings as unknown as { sourceLanguage: number }).sourceLanguage = 5;
     expect(errorOf(bad)?.code).toBe("invalid");
   });
 

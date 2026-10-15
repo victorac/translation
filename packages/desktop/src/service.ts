@@ -2,19 +2,18 @@ import {
   allPrompts,
   glossaryFor,
   glossaryHits,
-  labelLines,
-  type Carry,
+  labelDocument,
+  readWords,
+  syncParagraphs,
+  findQuotes,
   nameGuess,
-  interpretPassage,
-  lastLines,
   notesFor,
   STANDARD_PROMPT,
-  type GuidedName,
-  type GuidedState,
-  type GuidedModelInput,
-  type GuidedStartInput,
-  type Interpretation,
-  type KnownName,
+  type Word,
+  type Work,
+  type WorkLine,
+  type KnownWord,
+  type ModelInput,
   type NameKind,
   entriesFromLegacy,
   applyFile,
@@ -29,8 +28,6 @@ import {
   parseClasses,
   resolveName,
   titleOf,
-  BLOCK_SIZES,
-  chunkSource,
   DEFAULTS,
   estimateTokens,
   newId,
@@ -42,8 +39,6 @@ import {
   type Pair,
   answerOf,
   missingNames,
-  joinParts,
-  paragraphsOf,
   targetVariants,
   validatePrompt,
   type Backend,
@@ -152,7 +147,6 @@ export class WorkspaceService {
     const next: ProjectSettings = {
       sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
-      blockSize: input.blockSize,
       models: input.models,
       glossary: input.glossary,
       notes: input.notes ?? "",
@@ -204,8 +198,8 @@ export class WorkspaceService {
       this.docs.splice(index, 1);
       if (this.activeDocId === documentId) this.activeDocId = this.docs[Math.min(index, this.docs.length - 1)]!.id;
     }
-    this.guidedByDoc.delete(documentId);
-    if (this.guided?.documentId === documentId) this.guided = null;
+    this.workByDoc.delete(documentId);
+    if (this.work?.documentId === documentId) this.work = null;
     this.notify("state");
     return this.snapshot();
   }
@@ -230,25 +224,25 @@ export class WorkspaceService {
   // ---- saving and loading ----
 
   /** Everything a project file needs: every document, the shared settings, the knowledge base and the work on each document. */
-  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; classes: string }; guided: GuidedState[] } {
+  exportProject(): { documents: ProjectDocument[]; activeDocumentId: string; settings: ProjectSettings | null; knowledge: { entries: KnowledgeEntry[]; classes: string }; work: Work[] } {
     return {
       documents: this.docs.map((d) => ({ id: d.id, title: d.title, createdAt: d.createdAt, draft: d.draft })),
       activeDocumentId: this.activeDocId,
       settings: this.settings ? structuredClone(this.settings) : null,
       knowledge: { entries: this.knowledge.everything(), classes: this.classesText },
-      guided: [...this.guidedByDoc.values(), ...(this.guided ? [this.guided] : [])].map((g) => structuredClone(g)),
+      work: [...this.workByDoc.values(), ...(this.work ? [this.work] : [])].map((g) => structuredClone(g)),
     };
   }
 
   /** Replaces the open workspace with a saved project (already checked and settled by the caller). */
-  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; guided?: GuidedState[] | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined } | undefined }): void {
+  restore(project: { documents: ProjectDocument[]; activeDocumentId: string; work?: Work[] | undefined; settings?: ProjectSettings | undefined; knowledge?: { entries: KnowledgeEntry[]; classes?: string | undefined } | undefined }): void {
     if (this.busy) throw new UserError("busy", "Stop what the model is doing first.");
     this.clear();
     this.docs = project.documents.map((d) => ({ id: d.id, title: d.title, createdAt: d.createdAt, draft: d.draft }));
     this.activeDocId = this.docs.some((d) => d.id === project.activeDocumentId) ? project.activeDocumentId : this.docs[0]!.id;
     this.settings = project.settings ? structuredClone(project.settings) : null;
-    this.guided = null;
-    this.guidedByDoc = new Map((project.guided ?? []).map((g) => [g.documentId, structuredClone(g)] as const));
+    this.work = null;
+    this.workByDoc = new Map((project.work ?? []).map((g) => [g.documentId, structuredClone(g)] as const));
     this.classesText = project.knowledge?.classes === undefined || isOldDefaultClasses(project.knowledge.classes) ? DEFAULT_CLASSES_TEXT : project.knowledge.classes;
     if (project.knowledge) this.knowledge.load(dropLooseNotes(project.knowledge.entries as KnowledgeEntry[]));
     else if (this.settings && (this.settings.glossary.length > 0 || this.settings.notes || this.settings.knowledge)) {
@@ -271,8 +265,8 @@ export class WorkspaceService {
     this.docs = [newDoc("Document 1")];
     this.activeDocId = this.docs[0]!.id;
     this.settings = null;
-    this.guided = null;
-    this.guidedByDoc.clear();
+    this.work = null;
+    this.workByDoc.clear();
     this.knowledge.load([]);
     this.classesText = DEFAULT_CLASSES_TEXT;
     this.epoch++;
@@ -294,11 +288,11 @@ export class WorkspaceService {
 
   // ---- internals ----
 
-  /** The left rail's list: each document with how far its translation has got (blocks translated, of all its blocks). */
+  /** The left rail's list: each document with how far its translation has got (paragraphs translated, of all its paragraphs). */
   private documentViews(): DocumentView[] {
     return this.docs.map((d) => {
-      const work = this.guided?.documentId === d.id ? this.guided : this.guidedByDoc.get(d.id);
-      return { id: d.id, title: d.title, done: work?.blocks.filter((b) => b.status === "translated").length ?? 0, total: work?.blocks.length ?? 0, hasText: d.draft.trim() !== "" };
+      const work = this.work?.documentId === d.id ? this.work : this.workByDoc.get(d.id);
+      return { id: d.id, title: d.title, done: work?.paragraphs.filter((p) => p.translation.trim() !== "").length ?? 0, total: work?.paragraphs.length ?? 0, hasText: d.draft.trim() !== "" };
     });
   }
 
@@ -406,252 +400,186 @@ export class WorkspaceService {
     this.notify("state");
   }
 
-  // ---- step by step translation ----
+  // ---- the work on a document ----
 
-  /** The block work of the open document. The other documents' work is kept beside it and comes back when they are opened. */
-  private guided: GuidedState | null = null;
-  private guidedByDoc = new Map<string, GuidedState>();
+  /** The work on the open document. The other documents' work is kept beside it and comes back when they are opened. */
+  private work: Work | null = null;
+  private workByDoc = new Map<string, Work>();
+  /** Counts the readings of the text, so that one that finishes after a newer one started is dropped. */
+  private readings = 0;
 
-  /** Makes the block work of this document the one being worked on. */
+  /** Makes the work of this document the one being worked on. */
   private useDocument(documentId: string): void {
-    if (this.guided && this.guided.documentId === documentId) return;
-    if (this.guided) this.guidedByDoc.set(this.guided.documentId, this.guided);
-    this.guided = this.guidedByDoc.get(documentId) ?? null;
-    this.guidedByDoc.delete(documentId);
+    if (this.work && this.work.documentId === documentId) return;
+    if (this.work) this.workByDoc.set(this.work.documentId, this.work);
+    this.work = this.workByDoc.get(documentId) ?? null;
+    this.workByDoc.delete(documentId);
   }
 
-  guidedGet(): GuidedState | null {
+  workGet(): Work | null {
     this.useDocument(this.activeDocId);
-    return this.guided ? this.guidedView() : null;
+    return this.work ? this.workView() : null;
   }
 
   /**
-   * The state with every block's names taken from the glossary as it is now, so a topic edited or deleted in the knowledge pane
-   * shows right away: its English form, kind, aliases and gender. A name whose topic is gone is no longer listed.
+   * The work with every word taken from the glossary as it is now, so a topic edited or deleted in the knowledge pane shows right
+   * away: its English form, kind, aliases and gender. A word whose topic is gone is no longer listed.
    */
-  private guidedView(): GuidedState {
-    const g = this.guided!;
+  private workView(): Work {
+    const w = this.work!;
     const terms = this.knowledge.all().filter((e) => e.kind === "term");
-    for (const b of g.blocks) {
-      this.fitParts(b);
-      if (!b.interpretation) continue;
-      // Every word of the glossary that stands in the block is listed, including ones added to the glossary after the block was read.
-      for (const e of glossaryHits(b.text, terms)) {
-        if (!b.interpretation.names.some((n) => n.source === e.source)) b.interpretation.names.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed", draft: false });
-      }
-      const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
-      b.interpretation.names = b.interpretation.names.flatMap((n) => {
-        const e = terms.find((t) => t.source === n.source);
-        if (e) {
-          const gender = (e.attrs["gender"] ?? [])[0];
-          const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
-          return [{ ...n, draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
-        }
-        // A word that is not in the knowledge base yet is a draft: it stays as the user left it. One that was in it and was deleted is gone.
-        if (!n.draft) return [];
-        const { id: _id, ...draft } = n;
-        const gender = (draft.attrs?.["gender"] ?? [])[0];
-        return [{ ...draft, refersTo: (draft.attrs?.["refers to"] ?? [])[0] ?? null, gender: gender === "female" || gender === "male" ? gender : null }];
-      });
-      const narratorEntry = b.interpretation.narrator ? terms.find((t) => t.source === b.interpretation!.narrator) : undefined;
-      if (narratorEntry && narratorEntry.category !== "character") b.interpretation.narrator = null;
-      if (b.interpretation.narrator && !b.interpretation.names.some((n) => n.source === b.interpretation!.narrator) && b.interpretation.narratorWord) {
-        const e = terms.find((t) => t.source === b.interpretation!.narrator);
-        if (!e) b.interpretation.narrator = null;
-      }
+    // Every word of the glossary that stands in the text is listed, including ones added to the glossary after the text was read.
+    for (const e of glossaryHits(w.source, terms)) {
+      if (!w.words.some((n) => n.source === e.source)) w.words.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed", draft: false });
     }
-    return g;
+    const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
+    w.words = w.words.flatMap((n) => {
+      const e = terms.find((t) => t.source === n.source);
+      if (e) {
+        const gender = (e.attrs["gender"] ?? [])[0];
+        const nicknames = terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).includes(e.source)).map((t) => t.source);
+        return [{ ...n, draft: false, id: e.id, hint: e.hint, refersTo: (e.attrs["refers to"] ?? [])[0] ?? null, attrs: e.attrs, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames])], gender: gender === "female" || gender === "male" ? gender : null, known: e.status === "confirmed" }];
+      }
+      // A word that is not in the knowledge base yet is a draft: it stays as the user left it. One that was in it and was deleted is gone.
+      if (!n.draft) return [];
+      const { id: _id, ...draft } = n;
+      const gender = (draft.attrs?.["gender"] ?? [])[0];
+      return [{ ...draft, refersTo: (draft.attrs?.["refers to"] ?? [])[0] ?? null, gender: gender === "female" || gender === "male" ? gender : null }];
+    });
+    for (const l of w.lines) if (l.speaker && !w.words.some((n) => n.source === l.speaker)) l.speaker = null;
+    return w;
   }
 
-  /**
-   * A block's translation is kept paragraph by paragraph: one entry for each paragraph of its source. A block saved as one piece of
-   * text (before this) has its paragraphs matched up when their number is the same, and otherwise the whole text is kept in the first.
-   */
-  private fitParts(b: GuidedState["blocks"][number]): void {
-    const n = paragraphsOf(b.text).length;
-    if (b.parts.length === n) return;
-    const old = b.parts.length === 0 && b.translation.trim() !== "" ? paragraphsOf(b.translation).map((p) => p.text) : b.parts;
-    b.parts = Array.from({ length: n }, (_, i) => (old.length === n ? old[i]! : i === 0 ? joinParts(old) : ""));
-  }
-
-  private guidedBlock(index: number) {
-    const block = this.guided?.blocks[index];
-    if (!this.guided || !block) throw new UserError("no_block", "That block does not exist. Start again from the text.");
-    return block;
-  }
-
-  private guidedChanged(): void {
+  private workChanged(): void {
     this.notify("state");
   }
 
-  /** Splits the text into blocks to go through one at a time. */
-  guidedStart(input: GuidedStartInput): GuidedState {
-    const text = normalizeSource(input.text);
-    if (text.trim() === "") throw new UserError("no_text", "Paste some text first.");
-    const limits = BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
-    const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });
-    this.guided = {
-      documentId: input.documentId,
-      source: text,
-      current: 0,
-      blocks: chunks.map((c, index) => ({ index, text: text.slice(c.startOffset, c.endOffset), interpretation: null, translation: "", parts: [], status: "new" as const, error: null })),
-    };
-    this.guidedChanged();
-    return this.guidedView();
-  }
-
-  /**
-   * Makes the blocks from the text in the editor, or brings them up to date with it. Nothing changes when the text is the same. When it is not, the text is
-   * split again and a block whose text is unchanged keeps what was read, set and translated; the others start again.
-   */
-  guidedSync(input: GuidedStartInput): GuidedState | null {
-    this.useDocument(input.documentId);
-    const text = normalizeSource(input.text);
-    if (text.trim() === "") return this.guided ? this.guidedView() : null;
-    if (!this.guided) return this.guidedStart(input);
-    if (this.guided.source === text) return this.guidedView();
-    const old = this.guided;
-    const limits = BLOCK_SIZES[input.blockSize] ?? BLOCK_SIZES.normal;
-    const chunks = chunkSource(text, { targetTokens: limits.targetTokens, maxTokens: limits.maxTokens });
-    const kept = new Map(old.blocks.map((b) => [b.text, b]));
-    const blocks = chunks.map((c, index) => {
-      const body = text.slice(c.startOffset, c.endOffset);
-      const same = kept.get(body);
-      return same ? { ...same, index } : { index, text: body, interpretation: null, translation: "", parts: [], status: "new" as const, error: null };
-    });
-    const here = old.blocks[old.current]?.text;
-    this.guided = { documentId: old.documentId, source: text, current: Math.max(0, blocks.findIndex((b) => b.text === here)), blocks };
-    this.guidedChanged();
-    return this.guidedView();
-  }
-
-  /** Reads every block that has not been read yet, in order, so the glossary holds the words of the whole text. */
-  async guidedReadAll(): Promise<GuidedState> {
-    const g = this.guided;
-    if (!g) throw new UserError("no_block", "Start from the text first.");
-    const was = g.current;
-    for (const b of [...g.blocks]) if (!b.interpretation) await this.guidedInterpret(b.index);
-    g.current = was;
-    this.guidedChanged();
-    return this.guidedView();
-  }
-
-  guidedGo(index: number): GuidedState {
-    this.guidedBlock(index);
-    this.guided!.current = index;
-    this.guidedChanged();
-    return this.guided!;
-  }
-
-  guidedClear(): null {
-    this.guided = null;
-    this.guidedByDoc.clear();
-    this.guidedChanged();
-    return null;
-  }
-
-  /** The names in the glossary, in the form the reading of a block starts from. */
-  private knownNames(): KnownName[] {
+  /** The words of the glossary, and the draft words of the work so far (still not in the knowledge base), as reading starts from them. */
+  private knownWords(): KnownWord[] {
     const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
     const terms = this.knowledge.all().filter((e) => e.kind === "term");
     // A topic that refers to a person (山田 for 山田太郎) is one of that person's names, so the rules that look for who speaks or is spoken to see it.
     const nicknames = (e: KnowledgeEntry) => terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).some((r) => r === e.source)).map((t) => t.source);
-    return terms
-      .map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
+    const known: KnownWord[] = terms.map((e) => ({ source: e.source, english: e.target, kind: (kinds.includes(e.category as NameKind) ? e.category : "term") as NameKind, aliases: [...new Set([...e.aliases, ...nicknames(e)])], gender: ((e.attrs["gender"] ?? [])[0] === "female" || (e.attrs["gender"] ?? [])[0] === "male" ? e.attrs["gender"]![0] : null) as "female" | "male" | null }));
+    for (const n of this.work?.words ?? []) {
+      if (n.draft && !known.some((g) => g.source === n.source)) known.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}), ...(n.hint ? { hint: n.hint } : {}), ...(n.use === false ? { use: false } : {}), ...(n.guessed ? { guessed: true } : {}) });
+    }
+    return known;
   }
 
-  /** The conversation going on where the block before ended: who said its last line, and who they were talking with. */
-  private carryFor(index: number): Carry | null {
-    const prev = this.guided!.blocks[index - 1];
-    const lines = prev?.interpretation?.lines ?? [];
-    const lastParagraph = (prev?.text ?? "").split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
-    const last = lines.at(-1);
-    // Only when that block ended on a line of speech whose speaker is known.
-    if (!prev || !lastParagraph.trim().startsWith("「") || !last?.speaker) return null;
-    const other = [...lines].reverse().find((l) => l.speaker && l.speaker !== last.speaker)?.speaker ?? null;
-    return { before: last.speaker, other };
-  }
-
-  /** Reads one block: who is named, who is telling it, who says each line. Words that are not in the knowledge base are drafts, added when they are used. */
-  async guidedInterpret(index: number): Promise<GuidedState> {
-    const block = this.guidedBlock(index);
-    // The glossary, and the draft words of the blocks before this one (still not in the knowledge base), so that the narrator and a
-    // conversation can carry on across blocks and what the user fixed on a draft is not lost.
-    const glossary = this.knownNames();
-    for (const b of this.guided!.blocks.slice(0, index)) {
-      for (const n of b.interpretation?.names ?? []) {
-        if (n.draft && n.use !== false && !glossary.some((g) => g.source === n.source)) glossary.push({ source: n.source, english: n.english, kind: n.kind, aliases: n.aliases, gender: n.gender ?? null, draft: true, ...(n.attrs ? { attrs: n.attrs } : {}) });
-      }
+  /** The speakers set before, by line, for a text: a line keeps its speaker when its words are the same and it is the same time they are said. */
+  private presetFor(old: readonly WorkLine[], text: string): (string | null)[] {
+    const said = new Map<string, string | null>();
+    const seen = new Map<string, number>();
+    for (const l of old) {
+      const n = seen.get(l.text) ?? 0;
+      seen.set(l.text, n + 1);
+      said.set(`${l.text}#${n}`, l.speaker);
     }
-    // A name the user deleted from the glossary is not offered again.
-    const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
-    const candidates = (await findCandidateNames(block.text)).filter((c) => !rejected.has(c));
-    const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
-    // The narrator carries on from the nearest block read before this one.
-    const earlier = this.guided!.blocks.slice(0, index).reverse().find((b) => b.interpretation);
-    const found = interpretPassage({ passage: block.text, candidates, readings, glossary, narrator: earlier?.interpretation?.narrator ?? null, carry: this.carryFor(index) });
-    // Given names found alone became aliases of a known person: keep that in the glossary too.
-    for (const n of found.names.filter((x) => x.known && x.aliases.length > 0)) {
-      const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
-      if (e && n.aliases.some((a) => !e.aliases.includes(a))) this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: [...new Set([...e.aliases, ...n.aliases])], attrs: e.attrs, text: "", about: null });
-    }
-    block.interpretation = found;
-    if (block.status === "new") block.status = "interpreted";
-    this.guided!.current = index;
-    this.knowledgeChanged();
-    this.guidedChanged();
-    return this.guidedView();
+    const counted = new Map<string, number>();
+    return findQuotes(text).map((q) => {
+      const n = counted.get(q.text) ?? 0;
+      counted.set(q.text, n + 1);
+      return said.get(`${q.text}#${n}`) ?? null;
+    });
   }
 
   /**
-   * The narrator and who says each line, as the user set them. The names are the glossary's. With `fill`, lines whose speaker is
-   * not known yet are worked out from the names, the narrator and the conversation carried on from the block before.
+   * Brings the work on a document up to date with its text: the paragraphs (one whose text is unchanged keeps its translation, the others
+   * start again), the words found in it (what was set on a draft word stays) and who says each line (what was set stays).
+   * Nothing changes when the text is the same.
    */
-  guidedSave(index: number, narrator: string | null, speakers: (string | null)[], fill = false): GuidedState {
-    const block = this.guidedBlock(index);
-    this.guidedView();
-    const interp = block.interpretation;
-    if (interp) {
-      // A person the user picks from the knowledge base who is not written in this block joins its glossary, so the model gets their name and details.
-      for (const who of [narrator, ...speakers]) {
-        if (!who || interp.names.some((n) => n.source === who)) continue;
-        const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === who);
-        if (entry) interp.names.push({ source: who, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
-      }
-      interp.narrator = narrator;
-      const fresh = fill ? labelLines(block.text, interp.names, narrator, interp.narratorWord, this.carryFor(index), speakers) : [];
-      interp.lines = interp.lines.map((l, i) => ({ ...l, speaker: speakers[i] ?? (fill && fresh[i]?.text === l.text ? (fresh[i]?.speaker ?? null) : null) }));
+  async workSync(input: { documentId: string; text: string }): Promise<Work | null> {
+    this.useDocument(input.documentId);
+    const text = normalizeSource(input.text);
+    if (text.trim() === "") return this.work ? this.workView() : null;
+    if (this.work && this.work.source === text) return this.workView();
+    const token = ++this.readings;
+    const glossary = this.knownWords();
+    // A word the user deleted from the glossary is not offered again.
+    const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
+    const candidates = (await findCandidateNames(text)).filter((c) => !rejected.has(c));
+    const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
+    this.useDocument(input.documentId);
+    if (token !== this.readings) return this.work ? this.workView() : null; // the text changed again while it was being read
+    const old = this.work;
+    const words = readWords({ text, candidates, readings, glossary });
+    for (const w of words) if (old?.words.find((o) => o.source === w.source)?.use === false) w.use = false;
+    // Given names found alone became aliases of a known person: keep that in the glossary too.
+    for (const n of words.filter((x) => x.known && x.aliases.length > 0)) {
+      const e = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
+      if (e && n.aliases.some((a) => !e.aliases.includes(a))) this.knowledge.save({ id: e.id, kind: "term", source: e.source, target: e.target, hint: e.hint, category: e.category, aliases: [...new Set([...e.aliases, ...n.aliases])], attrs: e.attrs, text: "", about: null });
     }
-    this.guidedChanged();
-    return this.guidedView();
+    this.work = {
+      documentId: input.documentId,
+      source: text,
+      words,
+      lines: labelDocument(text, words, this.presetFor(old?.lines ?? [], text)),
+      paragraphs: syncParagraphs(old?.paragraphs ?? [], text),
+      error: null,
+    };
+    this.knowledgeChanged();
+    this.workChanged();
+    return this.workView();
   }
 
-  /** A word of the block being worked on: its topic when it has one, and the name as listed in the block. */
-  private wordOf(source: string): { name: GuidedName; entry: KnowledgeEntry | undefined } {
-    this.guidedView();
-    const block = this.guided?.blocks[this.guided.current];
-    const name = block?.interpretation?.names.find((n) => n.source === source);
-    if (!name) throw new UserError("no_entry", "That word is not in this block any more.");
+  private need(): Work {
+    this.useDocument(this.activeDocId);
+    if (!this.work) throw new UserError("no_text", "Paste some text first.");
+    return this.work;
+  }
+
+  /** Says who says a line. A person picked from the knowledge base who is not written in the text joins its words, so the model gets their name and details. */
+  workSetSpeaker(line: number, speaker: string | null): Work {
+    const w = this.need();
+    this.workView();
+    if (!w.lines[line]) throw new UserError("no_line", "That line does not exist.");
+    if (speaker && !w.words.some((n) => n.source === speaker)) {
+      const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === speaker);
+      if (!entry) throw new UserError("no_entry", "That person is not in the glossary.");
+      w.words.push({ source: speaker, english: entry.target, kind: "character", aliases: [...entry.aliases], reading: "", known: entry.status === "confirmed", draft: false });
+    }
+    w.lines[line]!.speaker = speaker;
+    this.workChanged();
+    return this.workView();
+  }
+
+  /** Works out who says the lines whose speaker is not known yet, from the words and the conversation. What is set stays. */
+  workGuessSpeakers(): Work {
+    const w = this.need();
+    this.workView();
+    const fresh = labelDocument(w.source, w.words, w.lines.map((l) => l.speaker));
+    w.lines = w.lines.map((l, i) => (l.speaker === null && fresh[i]?.text === l.text ? { ...l, speaker: fresh[i]!.speaker } : l));
+    this.workChanged();
+    return this.workView();
+  }
+
+  /** A word of the work: its topic when it has one, and the word as listed. */
+  private wordOf(source: string): { name: Word; entry: KnowledgeEntry | undefined } {
+    const w = this.need();
+    this.workView();
+    const name = w.words.find((n) => n.source === source);
+    if (!name) throw new UserError("no_entry", "That word is not in the text any more.");
     return { name, entry: this.knowledge.all().find((t) => t.kind === "term" && t.source === source) };
   }
 
   /** What a value for an attribute must be, as the classes say. Throws a plain message when it is not. */
   private checkAttribute(kind: string, key: string, values: string[]): void {
-    const draftsHere = this.guided?.blocks[this.guided.current]?.interpretation?.names.filter((n) => n.draft) ?? [];
+    const drafts = this.work?.words.filter((n) => n.draft) ?? [];
     const def = parseClasses(this.classesText).classes.find((c) => c.name === kind)?.attributes.find((a) => a.key === key);
     if (!def) throw new UserError("bad_attribute", `${key} is not an attribute of this kind of topic.`);
     if (def.kind === "choice" && values.some((v) => !(def.choices ?? []).includes(v))) throw new UserError("bad_attribute", `${key} is one of: ${(def.choices ?? []).join(", ")}.`);
     const target = (def.kind === "link" || def.kind === "links") ? def.target : undefined;
-    const isTopic = (v: string) => this.knowledge.all().some((t) => t.kind === "term" && t.source === v && (!target || t.category === target)) || draftsHere.some((n) => n.source === v && (!target || n.kind === target));
+    const isTopic = (v: string) => this.knowledge.all().some((t) => t.kind === "term" && t.source === v && (!target || t.category === target)) || drafts.some((n) => n.source === v && (!target || n.kind === target));
     if ((def.kind === "link" || def.kind === "links") && values.some((v) => !isTopic(v))) throw new UserError("bad_attribute", `${key} must be a topic of the kind ${def.target ?? "any"}.`);
     if (values.length > 1 && def.kind !== "links") throw new UserError("bad_attribute", `${key} takes one value.`);
   }
 
   /**
-   * Sets one attribute of a word of the block: a value from the list for a choice, a topic of the right class for a link, or text.
-   * An empty list clears it. It goes to the knowledge base when the word is in it, and stays with the block's draft when it is not.
+   * Sets one attribute of a word: a value from the list for a choice, a topic of the right class for a link, or text.
+   * An empty list clears it. It goes to the knowledge base when the word is in it, and stays with the draft when it is not.
    */
-  guidedSetAttribute(source: string, key: string, values: string[]): GuidedState {
+  workSetAttribute(source: string, key: string, values: string[]): Work {
     const { name, entry } = this.wordOf(source);
     this.checkAttribute(entry?.category ?? name.kind, key, values);
     if (entry) {
@@ -667,12 +595,12 @@ export class WorkspaceService {
       else attrs[key] = values;
       name.attrs = attrs;
     }
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
   /** The English name of a word, as the user writes it. */
-  guidedSetEnglish(source: string, english: string): GuidedState {
+  workSetEnglish(source: string, english: string): Work {
     const { name, entry } = this.wordOf(source);
     if (entry) {
       this.knowledge.patch(entry.id, (x) => {
@@ -684,12 +612,12 @@ export class WorkspaceService {
       name.english = english.trim();
       delete name.guessed;
     }
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
   /** The note to the model about a word: said next to the glossary line, with or without an English name. */
-  guidedSetHint(source: string, hint: string): GuidedState {
+  workSetHint(source: string, hint: string): Work {
     const { name, entry } = this.wordOf(source);
     const text = hint.replace(/\s+/g, " ").trim();
     if (entry) {
@@ -699,12 +627,12 @@ export class WorkspaceService {
       });
       this.knowledgeChanged();
     } else name.hint = text;
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
   /** Changes what kind of topic a word is. Attributes the new kind does not have are dropped. */
-  guidedSetKind(source: string, kind: string): GuidedState {
+  workSetKind(source: string, kind: string): Work {
     const { name, entry } = this.wordOf(source);
     const target = parseClasses(this.classesText).classes.find((c) => c.name === kind);
     if (!target) throw new UserError("bad_kind", `There is no kind of topic called ${kind}.`);
@@ -729,30 +657,28 @@ export class WorkspaceService {
       for (const k of Object.keys(attrs)) if (!target.attributes.some((a) => a.key === k)) delete attrs[k];
       name.attrs = attrs;
     }
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
-  /** Use or ignore a word in this block. An ignored word is not sent with the block and is not added to the knowledge base. */
-  guidedSetUse(source: string, use: boolean): GuidedState {
+  /** Use or ignore a word. An ignored word is not sent and is not added to the knowledge base. */
+  workSetUse(source: string, use: boolean): Work {
     const { name } = this.wordOf(source);
     if (use) delete name.use;
     else name.use = false;
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
-  /** Adds a word from the text to this block, as a draft unless the knowledge base has it. */
-  async guidedAddName(index: number, source: string): Promise<GuidedState> {
-    const block = this.guidedBlock(index);
+  /** Adds a word from the text, as a draft unless the knowledge base has it. */
+  async workAddWord(source: string): Promise<Work> {
+    const w = this.need();
     const word = source.trim();
     if (word === "") throw new UserError("no_name", "Type the word as it is written in the text.");
-    if (!block.interpretation) await this.guidedInterpret(index);
-    const interp = block.interpretation!;
     // Only a topic of that very word counts: a word that is an alias of another topic can have a translation of its own.
     const existing = this.knowledge.all().find((e) => e.kind === "term" && e.source === word);
-    if (!interp.names.some((n) => n.source === word)) {
-      if (existing) interp.names.push({ source: word, english: existing.target, kind: "term", aliases: [], reading: "", known: existing.status === "confirmed", draft: false });
+    if (!w.words.some((n) => n.source === word)) {
+      if (existing) w.words.push({ source: word, english: existing.target, kind: "term", aliases: [], reading: "", known: existing.status === "confirmed", draft: false });
       else {
         const readings = await readNames([word]);
         const guess = nameGuess(word, readings[word]);
@@ -761,17 +687,17 @@ export class WorkspaceService {
         // A word the user adds is a term, unless it ends like a family, a place or an organization. People are found by the dictionary;
         // one it missed is changed to a person from the row. A word that stands for a person is a term as well.
         const asTerm = owner !== undefined || guess.kind === "character";
-        interp.names.push({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], reading: guess.reading, known: false, draft: true, attrs: owner ? { "refers to": [owner.source] } : {} });
+        w.words.push({ source: word, english: asTerm ? "" : guess.english, kind: asTerm ? "term" : guess.kind, aliases: [], reading: guess.reading, known: false, draft: true, attrs: owner ? { "refers to": [owner.source] } : {} });
       }
     }
-    this.guidedChanged();
-    return this.guidedView();
+    this.workChanged();
+    return this.workView();
   }
 
-  /** The words the user is using in a block enter the knowledge base: drafts are added, and suggestions are accepted. Ignored words do nothing. */
-  private commitWords(interp: Interpretation): void {
+  /** The words the user is using enter the knowledge base: drafts are added, and suggestions are accepted. Ignored words do nothing. */
+  private commitWords(words: Word[]): void {
     const at = new Date().toISOString();
-    for (const n of interp.names) {
+    for (const n of words) {
       if (n.use === false) continue;
       const entry = this.knowledge.all().find((t) => t.kind === "term" && t.source === n.source);
       if (entry) {
@@ -786,71 +712,64 @@ export class WorkspaceService {
     this.knowledgeChanged();
   }
 
-  /** The user's own correction of the translation of one paragraph of a block. */
-  guidedSetPart(index: number, paragraph: number, text: string): GuidedState {
-    const block = this.guidedBlock(index);
-    this.guidedView();
-    if (paragraph < 0 || paragraph >= block.parts.length) throw new UserError("no_paragraph", "That paragraph does not exist.");
-    block.parts[paragraph] = text.trim();
-    this.afterParts(block, null);
-    return this.guidedView();
-  }
-
-  /** The block's translation follows its paragraphs' translations; the block is translated when every paragraph has one. */
-  private afterParts(block: ReturnType<WorkspaceService["guidedBlock"]>, warning: string | null): void {
-    block.translation = joinParts(block.parts);
-    if (block.parts.length > 0 && block.parts.every((p) => p.trim() !== "")) block.status = "translated";
-    else if (block.status === "translated") block.status = "interpreted";
-    block.error = null;
-    block.warning = warning;
-    this.guidedChanged();
+  /** The user's own text for the translation of one paragraph. */
+  workSetPart(paragraph: number, text: string): Work {
+    const w = this.need();
+    if (!w.paragraphs[paragraph]) throw new UserError("no_paragraph", "That paragraph does not exist.");
+    w.paragraphs[paragraph]!.translation = text.trim();
+    w.paragraphs[paragraph]!.issue = null;
+    this.workChanged();
+    return this.workView();
   }
 
   /** The translation style the model's settings name, filled in with the languages. */
-  private styleOf(input: GuidedModelInput): { text: string } {
+  private styleOf(input: ModelInput): { text: string } {
     const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
     return { text: renderPrompt(style, input.sourceLanguage, input.targetLanguage) };
   }
 
   /**
-   * Translates one paragraph of a block. The model gets what applies to the paragraph (its glossary words, notes and who speaks),
-   * the source around it as far as the context has room, and the translation so far with an empty place for it. The answer is
-   * taken from between markers; if it leaves out a glossary name of the paragraph, or gives back the text that was rejected, the
-   * model is asked once more.
+   * Translates one paragraph. The model gets what applies to the paragraph (its glossary words, notes and who says its lines), the
+   * paragraphs around it as far as the context has room (the ones before with their translations, the ones after so that it knows where
+   * the story goes), and the paragraph. The answer is checked: if it leaves out a glossary name of the paragraph, gives back the text that was
+   * rejected, or is several paragraphs, the model is asked once more.
    */
-  private async translateParagraph(input: GuidedModelInput & { index: number }, k: number, system: string, abort: AbortController, old?: string): Promise<{ text: string; issue: string | null } | null> {
-    const block = this.guidedBlock(input.index);
-    const interp = block.interpretation!;
-    const sources = paragraphsOf(block.text).map((p) => p.text);
-    const paragraph = sources[k]!;
-    const glossary = glossaryFor(interp, paragraph);
-    const notes = notesFor(interp, paragraph);
-    const previousBlock = input.index > 0 ? this.guided!.blocks[input.index - 1] : undefined;
-    const previous: Pair | null = k === 0 && previousBlock && previousBlock.status === "translated" ? { source: lastLines(previousBlock.text, 3, 500), translation: lastLines(previousBlock.translation, 3, 500) } : null;
+  private async translateParagraph(input: ModelInput, k: number, system: string, abort: AbortController, old?: string): Promise<{ text: string; issue: string | null } | null> {
+    const w = this.work!;
+    const paragraph = w.paragraphs[k]!.text;
+    const glossary = glossaryFor(w.words, paragraph);
+    const notes = notesFor(w.words, w.lines, { index: k, text: paragraph });
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-    // What comes before: the end of the block before, then this block's paragraphs that are translated already.
-    const pairs: Pair[] = [
-      ...(previous ? [previous] : []),
-      ...sources.slice(0, k).flatMap((source, j) => (block.parts[j]?.trim() ? [{ source, translation: block.parts[j]!.trim() }] : [])),
-    ];
-    const following = sources.slice(k + 1).map((source, i) => ({ source, translation: block.parts[k + 1 + i]?.trim() || null }));
     let reject: string | undefined;
     let complaint = "";
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      // As much context as fits: the paragraphs before (their translations) and after (so the model knows where the story goes). When it
-      // does not all fit, the farthest ones are dropped, from the longer side first.
-      let p = pairs.length;
-      let q = following.length;
-      let user = "";
-      for (;;) {
-        user = paragraphMessage({ glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, before: pairs.slice(pairs.length - p), paragraph, next: following.slice(0, q), rejected: reject }) + complaint;
-        if (estimateTokens(system) + estimateTokens(user) + input.maxOutputTokens + DEFAULTS.messageOverheadTokens <= input.contextLimit) break;
-        if (p === 0 && q === 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${estimateTokens(system) + estimateTokens(user)} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size, or use smaller blocks.`);
-        if (q > 0 && q >= p) q--;
-        else p--;
+      const bare = { glossary, notes, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject };
+      let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
+      if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
+      // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.
+      const before: Pair[] = [];
+      const next: { source: string; translation: string | null }[] = [];
+      let b = k - 1;
+      let a = k + 1;
+      for (let turn = 0; (b >= 0 || a < w.paragraphs.length) && left > 0; turn++) {
+        if (turn % 2 === 0 && b >= 0) {
+          const p = w.paragraphs[b--]!;
+          if (p.translation.trim() === "") continue;
+          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8;
+          if (cost > left) break;
+          left -= cost;
+          before.unshift({ source: p.text, translation: p.translation.trim() });
+        } else if (a < w.paragraphs.length) {
+          const p = w.paragraphs[a++]!;
+          const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8;
+          if (cost > left) break;
+          left -= cost;
+          next.push({ source: p.text, translation: p.translation.trim() || null });
+        }
       }
+      const user = paragraphMessage({ ...bare, before, next }) + complaint;
       const reply = await this.askModel(
         {
           backend: input.backend,
@@ -861,7 +780,7 @@ export class WorkspaceService {
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          practiceReply: () => [`Practice translation of paragraph ${k + 1} of block ${input.index + 1}.`, ...glossary.map((g) => targetVariants(g.target)[0]).filter((t): t is string => !!t)].join(" "),
+          practiceReply: () => [`Practice translation of paragraph ${k + 1}.`, ...glossary.map((g) => targetVariants(g.target)[0]).filter((t): t is string => !!t)].join(" "),
         },
         abort,
       );
@@ -889,65 +808,59 @@ export class WorkspaceService {
   }
 
   /**
-   * Translates a block paragraph by paragraph, each one with what the user confirmed, saving each as it is done so that the
-   * paragraphs written so far show while the rest are being written, and so that stopping keeps them.
+   * Translates the paragraphs one after the other, each with what the user confirmed, saving each as it is done so that the paragraphs written
+   * so far show while the rest are being written, and so that stopping keeps them. Without `redo` the paragraphs that have a translation are skipped,
+   * so translating again carries on where it stopped; with `redo` the ones from `from` on are written again.
    */
-  async guidedTranslate(input: GuidedModelInput & { index: number }): Promise<GuidedState> {
-    const block = this.guidedBlock(input.index);
-    if (!block.interpretation) await this.guidedInterpret(input.index);
-    this.guidedView();
-    const interp = block.interpretation!;
+  async workTranslate(input: ModelInput & { from?: number; redo?: boolean }): Promise<Work> {
+    const w = this.need();
+    this.workView();
     const abort = this.beginSideRequest();
-    const issues: string[] = [];
     try {
-      this.commitWords(interp);
-      this.guidedView();
-      const style = this.styleOf(input);
-      const system = paragraphSystem(style.text, input.sourceLanguage, input.targetLanguage);
-      block.parts = block.parts.map(() => "");
-      block.translation = "";
-      block.status = "interpreted";
-      block.error = null;
-      block.warning = null;
-      this.guidedChanged();
-      for (let k = 0; k < block.parts.length; k++) {
+      this.commitWords(w.words);
+      this.workView();
+      const system = paragraphSystem(this.styleOf(input).text, input.sourceLanguage, input.targetLanguage);
+      const start = Math.max(0, input.from ?? 0);
+      w.error = null;
+      if (input.redo) for (let k = start; k < w.paragraphs.length; k++) w.paragraphs[k] = { text: w.paragraphs[k]!.text, translation: "" };
+      this.workChanged();
+      for (let k = start; k < w.paragraphs.length; k++) {
+        if (w.paragraphs[k]!.translation.trim() !== "") continue;
         const done = await this.translateParagraph(input, k, system, abort);
         if (done === null) break; // stopped: what is written so far stays
-        block.parts[k] = done.text;
-        if (done.issue) issues.push(done.issue);
-        this.afterParts(block, issues.length > 0 ? issues.join(" ") : null);
+        w.paragraphs[k] = { text: w.paragraphs[k]!.text, translation: done.text, issue: done.issue };
+        this.workChanged();
       }
     } catch (e) {
-      this.afterParts(block, issues.length > 0 ? issues.join(" ") : null);
-      block.error = e instanceof UserError ? e.message : "The translation failed.";
+      w.error = e instanceof UserError ? e.message : "The translation failed.";
+      this.workChanged();
       throw e;
     } finally {
       this.analysisAbort = null;
     }
-    return this.guidedView();
+    return this.workView();
   }
 
-  /** Translates one paragraph of a block again, keeping the others as they are. The old text is not shown to the model unless it is given back. */
-  async guidedRetranslate(input: GuidedModelInput & { index: number; paragraph: number }): Promise<GuidedState> {
-    const block = this.guidedBlock(input.index);
-    if (!block.interpretation) await this.guidedInterpret(input.index);
-    this.guidedView();
-    if (input.paragraph < 0 || input.paragraph >= block.parts.length) throw new UserError("no_paragraph", "That paragraph does not exist.");
+  /** Translates one paragraph again, keeping the others as they are. The old text is not shown to the model unless it is given back. */
+  async workRetranslate(input: ModelInput & { paragraph: number }): Promise<Work> {
+    const w = this.need();
+    this.workView();
+    if (!w.paragraphs[input.paragraph]) throw new UserError("no_paragraph", "That paragraph does not exist.");
     const abort = this.beginSideRequest();
     try {
-      this.commitWords(block.interpretation!);
-      this.guidedView();
-      const style = this.styleOf(input);
-      const system = paragraphSystem(style.text, input.sourceLanguage, input.targetLanguage);
-      const old = block.parts[input.paragraph] ?? "";
+      this.commitWords(w.words);
+      this.workView();
+      const system = paragraphSystem(this.styleOf(input).text, input.sourceLanguage, input.targetLanguage);
+      const old = w.paragraphs[input.paragraph]!.translation;
       const done = await this.translateParagraph(input, input.paragraph, system, abort, old.trim() === "" ? undefined : old);
-      if (done === null) return this.guidedView();
-      block.parts[input.paragraph] = done.text;
-      this.afterParts(block, done.issue);
+      if (done === null) return this.workView();
+      w.paragraphs[input.paragraph] = { text: w.paragraphs[input.paragraph]!.text, translation: done.text, issue: done.issue };
+      w.error = null;
+      this.workChanged();
     } finally {
       this.analysisAbort = null;
     }
-    return this.guidedView();
+    return this.workView();
   }
 
   // ---- suggested notes ----

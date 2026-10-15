@@ -294,56 +294,51 @@ describe("accepting suggestions", () => {
   });
 });
 
-describe("translating step by step", () => {
+describe("translating a document", () => {
   const model = { backend: "provider" as const, modelId: "qwen2.5-7b-instruct", contextLimit: 4096, maxOutputTokens: 512, temperature: 0.2, sourceLanguage: "Japanese", targetLanguage: "English" };
   const bodies = (lm: { seen: Seen[] }) => lm.seen.filter((x) => x.method === "POST").map((x) => JSON.parse(x.body) as { messages: { content: string }[] });
+  const sync = (service: WorkspaceService, text: string) => service.workSync({ documentId: service.snapshot().activeDocumentId, text });
+  const words = (service: WorkspaceService) => service.workGet()!.words;
+  const translated = (service: WorkspaceService) => service.workGet()!.paragraphs.map((p) => p.translation);
 
-  it("reads a block for the user, adds the words that are used when it is translated, and leaves out the ones that are ignored", async () => {
+  it("reads the text for words, adds the ones that are used when it is translated, and leaves out the ones that are ignored", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    const text = "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n「おはよう」";
-    const started = service.guidedStart({ documentId: docId, text: `${text}\n\n${"あ".repeat(10)}`, blockSize: "small" });
-    expect(started.blocks.length).toBeGreaterThan(0);
-
-    const read = await service.guidedInterpret(0);
-    expect(read.blocks[0]!.status).toBe("interpreted");
+    const read = (await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n「おはよう」"))!;
+    expect(read.paragraphs.map((p) => p.text)).toEqual(["花子は笑った。", "「おはよう」と太郎は言った。", "「おはよう」"]);
     // The words found are drafts: nothing is in the knowledge base yet.
-    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
-    expect(names().filter((n) => n.source === "花子" || n.source === "太郎")).toMatchObject([{ draft: true }, { draft: true }]);
+    expect(words(service).filter((n) => n.source === "花子" || n.source === "太郎")).toMatchObject([{ draft: true }, { draft: true }]);
     expect(service.knowledgeList({ kind: "term" }).entries).toEqual([]);
     // The user writes the English names, and ignores one word.
-    service.guidedSetEnglish("花子", "Hanako");
-    service.guidedSetEnglish("太郎", "Taro");
-    service.guidedSetUse("太郎", false);
-    expect(names().find((n) => n.source === "太郎")).toMatchObject({ english: "Taro", use: false });
-    const done = await service.guidedTranslate({ ...model, index: 0 });
-    expect(done.blocks[0]).toMatchObject({ status: "translated", error: null });
-    expect(done.blocks[0]!.translation).toContain("EN(qwen2.5-7b-instruct)");
+    service.workSetEnglish("花子", "Hanako");
+    service.workSetEnglish("太郎", "Taro");
+    service.workSetUse("太郎", false);
+    expect(words(service).find((n) => n.source === "太郎")).toMatchObject({ english: "Taro", use: false });
+    const done = await service.workTranslate({ ...model });
+    expect(done.error).toBeNull();
+    expect(done.paragraphs.every((p) => p.translation.startsWith("EN(qwen2.5-7b-instruct)"))).toBe(true);
 
     const first = bodies(lm)[0]!.messages[1]!.content;
     expect(first).toContain("=> Hanako");
     expect(first).not.toContain("=> Taro"); // ignored
-    expect(first).not.toContain("CONTEXT"); // nothing before the first block
+    expect(first).not.toContain("CONTEXT"); // nothing before the first paragraph
     // The word that was used is in the knowledge base now, accepted; the ignored one is not.
     expect(service.knowledgeList({ kind: "term" }).entries.map((e) => `${e.source}:${e.target}:${e.status}`)).toEqual(["花子:Hanako:confirmed"]);
-    expect(names().find((n) => n.source === "花子")).toMatchObject({ draft: false, known: true });
-    expect(names().find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
+    expect(words(service).find((n) => n.source === "花子")).toMatchObject({ draft: false, known: true });
+    expect(words(service).find((n) => n.source === "太郎")).toMatchObject({ draft: true, use: false });
   });
 
-  it("translates a block paragraph by paragraph, and writes one paragraph again without touching the others", async () => {
+  it("translates paragraph by paragraph, and writes one paragraph again without touching the others", async () => {
     let n = 0;
     const lm = await fakeLmStudio({ paragraph: (_user, source, model) => `EN(${model}): ${fakeEnglish(source)} Hanako Taro ${++n}` });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n二人は歩いた。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    service.guidedSetEnglish("花子", "Hanako");
-    service.guidedSetHint("太郎", "a boy");
-    const done = await service.guidedTranslate({ ...model, index: 0 });
-    const block = done.blocks[0]!;
+    await sync(service, "花子は笑った。\n\n「おはよう」と太郎は言った。\n\n二人は歩いた。");
+    service.workSetEnglish("花子", "Hanako");
+    service.workSetHint("太郎", "a boy");
+    const done = await service.workTranslate({ ...model });
+    const parts = done.paragraphs.map((p) => p.translation);
     // One request for each paragraph, and the paragraph's own words in it.
     const asked = bodies(lm).map((b) => b.messages[1]!.content);
     expect(asked).toHaveLength(3);
@@ -351,46 +346,57 @@ describe("translating step by step", () => {
     expect(asked[0]).toContain("- 花子 => Hanako");
     expect(asked[0]!.split("JAPANESE PARAGRAPH")[0]).not.toContain("太郎: a boy"); // its glossary and notes have only its own words
     expect(asked[1]).toContain("- 太郎: a boy");
-    // A request has the paragraphs before with their translations, and the one after; never the whole block.
+    // A request has the paragraphs before with their translations, and the ones after, whichever side of an old block edge they are.
     expect(asked[0]).not.toContain("CONTEXT");
     expect(asked[0]).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 「おはよう」と太郎は言った。\n\nJAPANESE: 二人は歩いた。");
-    expect(asked[1]).toContain(`CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 花子は笑った。\nENGLISH: ${block.parts[0]}`);
+    expect(asked[1]).toContain(`CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 花子は笑った。\nENGLISH: ${parts[0]}`);
     expect(asked[2]).not.toContain("NEXT");
-    expect(block.parts).toHaveLength(3);
-    expect(block.parts.every((p) => p.startsWith("EN(qwen2.5-7b-instruct)"))).toBe(true);
-    expect(block).toMatchObject({ status: "translated", translation: block.parts.join("\n\n") });
-    // The system message is the paragraph task, not the translate-a-block instruction.
+    expect(parts.every((p) => p.startsWith("EN(qwen2.5-7b-instruct)"))).toBe(true);
+    // The system message is the paragraph task.
     expect(bodies(lm)[0]!.messages[0]!.content).toContain("one paragraph at a time");
 
     // The user's own text for a paragraph is kept.
-    const mine = service.guidedSetPart(0, 2, "  My own version. ");
-    expect(mine.blocks[0]!.parts[2]).toBe("My own version.");
-    expect(mine.blocks[0]!.translation.endsWith("My own version.")).toBe(true);
+    expect(service.workSetPart(2, "  My own version. ").paragraphs[2]!.translation).toBe("My own version.");
 
     // Writing the second paragraph again: the others stay, the old text is not shown, and the paragraph after it is given with its translation.
-    const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 1 });
+    const again = await service.workRetranslate({ ...model, paragraph: 1 });
     const sent = bodies(lm).at(-1)!.messages[1]!.content;
     expect(sent).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 二人は歩いた。\nENGLISH: My own version.");
-    expect(sent).not.toContain(block.parts[1]!);
+    expect(sent).not.toContain(parts[1]!);
     expect(sent).not.toContain("REJECTED");
-    expect(again.blocks[0]!.parts[0]).toBe(block.parts[0]);
-    expect(again.blocks[0]!.parts[2]).toBe("My own version.");
+    expect(again.paragraphs[0]!.translation).toBe(parts[0]);
+    expect(again.paragraphs[2]!.translation).toBe("My own version.");
+  });
+
+  it("carries on where it stopped, and writes the paragraphs from one on again when asked", async () => {
+    let n = 0;
+    const lm = await fakeLmStudio({ paragraph: (_user, source) => `${fakeEnglish(source)} ${++n}` });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "一つ目。\n\n二つ目。\n\n三つ目。");
+    service.workSetPart(1, "Mine.");
+    await service.workTranslate({ ...model });
+    expect(bodies(lm)).toHaveLength(2); // the paragraph that has a translation is skipped
+    expect(translated(service)[1]).toBe("Mine.");
+    await service.workTranslate({ ...model, redo: true, from: 1 });
+    expect(bodies(lm)).toHaveLength(4);
+    expect(translated(service)[1]).not.toBe("Mine.");
+    expect(translated(service)[0]).toMatch(/ 1$/); // the first was not written again
   });
 
   it("asks again, showing the rejected version, when the model gives the same text back", async () => {
     const lm = await fakeLmStudio({ paragraph: () => "Hanako laughed." });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
-    await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "花子は笑った。");
+    await service.workTranslate({ ...model });
     const before = bodies(lm).length;
-    const done = await service.guidedRetranslate({ ...model, index: 0, paragraph: 0 });
+    const done = await service.workRetranslate({ ...model, paragraph: 0 });
     const sent = bodies(lm).slice(before).map((b) => b.messages[1]!.content);
     expect(sent).toHaveLength(2);
     expect(sent[0]).not.toContain("REJECTED VERSION");
     expect(sent[1]).toContain("REJECTED VERSION");
-    expect(done.blocks[0]!.warning).toMatch(/same text again/);
+    expect(done.paragraphs[0]!.issue).toMatch(/same text again/);
   });
 
   it("asks again when the model writes about more than the paragraph, and joins the lines if it still does", async () => {
@@ -398,17 +404,16 @@ describe("translating step by step", () => {
     const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("was several paragraphs") ? (calls++, "Only the paragraph, Hanako.") : "First. Hanako\n\nSecond.\n\nThird.") });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
-    const done = await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "花子は笑った。");
+    const done = await service.workTranslate({ ...model });
     expect(calls).toBe(1);
-    expect(done.blocks[0]!.parts).toEqual(["Only the paragraph, Hanako."]);
-    expect(done.blocks[0]!.warning ?? null).toBeNull();
+    expect(done.paragraphs[0]).toMatchObject({ translation: "Only the paragraph, Hanako." });
+    expect(done.paragraphs[0]!.issue ?? null).toBeNull();
     const stubborn = await fakeLmStudio({ paragraph: () => "First. Hanako\n\nSecond." });
     provider.save({ baseUrl: stubborn.baseUrl, allowRemote: false });
-    const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 0 });
-    expect(again.blocks[0]!.parts).toEqual(["First. Hanako Second."]);
-    expect(again.blocks[0]!.warning).toMatch(/several paragraphs, which were joined/);
+    const again = await service.workRetranslate({ ...model, paragraph: 0 });
+    expect(again.paragraphs[0]!.translation).toBe("First. Hanako Second.");
+    expect(again.paragraphs[0]!.issue).toMatch(/several paragraphs, which were joined/);
   });
 
   it("asks again when the glossary name of the paragraph is left out, and says so if it still is", async () => {
@@ -416,73 +421,52 @@ describe("translating step by step", () => {
     const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("does not use these exact names") ? "Hanako laughed." : (calls++, "She laughed.")) });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "花子は笑った。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    service.guidedSetEnglish("花子", "Hanako");
-    const done = await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "花子は笑った。");
+    service.workSetEnglish("花子", "Hanako");
+    const done = await service.workTranslate({ ...model });
     expect(calls).toBe(1);
-    expect(done.blocks[0]!.parts).toEqual(["Hanako laughed."]);
-    expect(done.blocks[0]!.warning ?? null).toBeNull();
+    expect(done.paragraphs[0]).toMatchObject({ translation: "Hanako laughed." });
+    expect(done.paragraphs[0]!.issue ?? null).toBeNull();
     const stubborn = await fakeLmStudio({ paragraph: () => "She laughed." });
     provider.save({ baseUrl: stubborn.baseUrl, allowRemote: false });
-    const again = await service.guidedRetranslate({ ...model, index: 0, paragraph: 0 });
-    expect(again.blocks[0]!.warning).toMatch(/does not use the glossary names: 花子 => Hanako/);
+    const again = await service.workRetranslate({ ...model, paragraph: 0 });
+    expect(again.paragraphs[0]!.issue).toMatch(/does not use the glossary names: 花子 => Hanako/);
   });
 
-  it("gives a later block the end of the block before it, source and translation", async () => {
+  it("asks for each paragraph once, in order, and gives each as much of what is around it as the context has room for", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    const long = Array.from({ length: 40 }, (_, i) => `これは${i}番目の文です。`).join("\n\n");
-    const started = service.guidedStart({ documentId: docId, text: long, blockSize: "small" });
-    if (started.blocks.length < 2) return; // the text fits in one block with this size; nothing to overlap
-    await service.guidedTranslate({ ...model, index: 0 });
-    const asked = bodies(lm).length;
-    await service.guidedTranslate({ ...model, index: 1 });
-    const prev = service.guidedGet()!.blocks[0]!;
-    // The first paragraph of the second block has nothing before it in its own block: it gets the end of the block before.
-    const second = bodies(lm)[asked]!.messages[1]!.content;
-    expect(second).toContain("CONTEXT");
-    expect(second).toContain(prev.text.split("\n").filter(Boolean).at(-1)!);
-  });
-
-  it("asks for each paragraph once, in order, even in a long block", async () => {
-    const lm = await fakeLmStudio();
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    const paragraphs = Array.from({ length: 30 }, (_, i) => `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`);
-    service.guidedStart({ documentId: docId, text: paragraphs.join("\n"), blockSize: "large" });
-    const before = bodies(lm).length;
-    // The context is small: the source around each paragraph is cut down to what fits.
-    const done = await service.guidedTranslate({ ...model, contextLimit: 1800, maxOutputTokens: 300, index: 0 });
-    const sent = bodies(lm).slice(before).map((b) => b.messages[1]!.content);
-    expect(sent).toHaveLength(30);
+    const paragraphs = Array.from({ length: 80 }, (_, i) => `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`);
+    await sync(service, paragraphs.join("\n"));
+    const done = await service.workTranslate({ ...model, contextLimit: 1800, maxOutputTokens: 300 });
+    const sent = bodies(lm).map((b) => b.messages[1]!.content);
+    expect(sent).toHaveLength(80);
     expect(sent.map((u) => /PARAGRAPH TO TRANSLATE:\n(.*)\n/.exec(u)![1])).toEqual(paragraphs);
     expect(sent.every((u) => u.length < 4000)).toBe(true);
-    expect(done.blocks[0]!.parts).toHaveLength(30);
-    expect(done.blocks[0]!.warning ?? null).toBe(null);
+    // In the middle of the text there is context on both sides; there is no edge where a block used to end.
+    const middle = sent[40]!;
+    expect(middle).toContain(paragraphs[39]!);
+    expect(middle).toContain(paragraphs[41]!);
+    expect(middle).not.toContain(paragraphs[0]!); // only what fits
+    expect(done.paragraphs).toHaveLength(80);
   });
 
   it("translates a bare 山 as its own word: it has its own entry, and the request says it applies only when it stands alone", async () => {
     const lm = await fakeLmStudio({ paragraph: (_user, source) => `EN ${fakeEnglish(source)} Yamada Taro Yamada` });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山、お待たせしました」", blockSize: "normal" });
-    const read = await service.guidedInterpret(0);
-    expect(read.blocks[0]!.interpretation!.names.find((n) => n.source === "山田太郎")!.english).toBe("Yamada Taro");
-    // Using the block puts 山田太郎 in the knowledge base. 山 is already a way to write his name; it still gets a translation of its own.
-    await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "ぼくは山田太郎という。\n「山、お待たせしました」");
+    expect(words(service).find((n) => n.source === "山田太郎")!.english).toBe("Yamada Taro");
+    // Using the word puts 山田太郎 in the knowledge base. 山 is already a way to write his name; it still gets a translation of its own.
+    await service.workTranslate({ ...model });
     const taro = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
     service.knowledgeSetFile(taro.id, service.knowledgeFile(taro.id).text.replace("aliases:", "aliases: 山"));
-    const added = await service.guidedAddName(0, "山");
-    expect(added.blocks[0]!.interpretation!.names.find((n) => n.source === "山")).toMatchObject({ draft: true, kind: "term" });
-    service.guidedSetEnglish("山", "Yamada");
+    const added = await service.workAddWord("山");
+    expect(added.words.find((n) => n.source === "山")).toMatchObject({ draft: true, kind: "term" });
+    service.workSetEnglish("山", "Yamada");
 
-    await service.guidedTranslate({ ...model, index: 0 });
+    await service.workTranslate({ ...model, redo: true });
     const sent = bodies(lm).slice(-2).map((b) => b.messages[1]!.content).join("\n");
     expect(sent).toContain("- 山田太郎 => Yamada Taro");
     expect(sent).not.toContain("山田太郎 / 山");
@@ -494,41 +478,36 @@ describe("translating step by step", () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "ぼくは山田太郎という。\n「山、お待たせしました」", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "ぼくは山田太郎という。\n「山、お待たせしました」");
+    await service.workTranslate({ ...model });
     const entry = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山田太郎")!;
     service.knowledgeSetFile(entry.id, service.knowledgeFile(entry.id).text.replace("aliases:", "aliases: 山"));
 
     // Adding a word that is one of his aliases makes a draft that stands for him.
-    const added = await service.guidedAddName(0, "山");
-    const draft = () => service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === "山")!;
+    await service.workAddWord("山");
+    const draft = () => words(service).find((n) => n.source === "山")!;
     expect(draft()).toMatchObject({ draft: true, kind: "term", refersTo: "山田太郎", attrs: { "refers to": ["山田太郎"] } });
     expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "山")).toBe(false);
-    service.guidedSetEnglish("山", "Yamada");
-    await service.guidedTranslate({ ...model, index: 0 });
+    service.workSetEnglish("山", "Yamada");
+    await service.workTranslate({ ...model, redo: true });
     expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("- 山: a name for Yamada Taro; when it stands on its own, not as part of 山田太郎");
     // Now it is in the knowledge base, with the link.
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "山")!.attrs["refers to"]).toEqual(["山田太郎"]);
 
     // It can be untied and tied again.
-    expect(service.guidedSetAttribute("山", "refers to", []).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe(null);
-    expect(service.guidedSetAttribute("山", "refers to", ["山田太郎"]).blocks[0]!.interpretation!.names.find((n) => n.source === "山")!.refersTo).toBe("山田太郎");
-    void added;
+    expect(service.workSetAttribute("山", "refers to", []).words.find((n) => n.source === "山")!.refersTo).toBe(null);
+    expect(service.workSetAttribute("山", "refers to", ["山田太郎"]).words.find((n) => n.source === "山")!.refersTo).toBe("山田太郎");
   });
 
   it("makes a word the user adds a term, unless it looks like a name", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "田は花子に会った。魔法使いだ。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    const kind = async (w: string) => (await service.guidedAddName(0, w)).blocks[0]!.interpretation!.names.find((n) => n.source === w)?.kind;
+    await sync(service, "田は花子に会った。魔法使いだ。");
+    const kind = async (w: string) => (await service.workAddWord(w)).words.find((n) => n.source === w)?.kind;
     expect(await kind("田")).toBe("term"); // one kanji: not a name
     expect(await kind("掃除当番")).toBe("term"); // a word the user adds is a term, even when it could be read as a name
-    expect((await service.guidedAddName(0, "掃除当番")).blocks[0]!.interpretation!.names.find((n) => n.source === "掃除当番")!.english).toBe("");
+    expect(words(service).find((n) => n.source === "掃除当番")!.english).toBe("");
     expect(await kind("魔法使い")).toBe("term");
     expect(await kind("桜台学園")).toBe("organization"); // ends like one
   });
@@ -537,162 +516,149 @@ describe("translating step by step", () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "花子は鈴木家の人だ。花子は笑った。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
-    expect(names().map((n) => n.source)).toEqual(expect.arrayContaining(["花子", "鈴木家"]));
+    await sync(service, "花子は鈴木家の人だ。花子は笑った。");
+    expect(words(service).map((n) => n.source)).toEqual(expect.arrayContaining(["花子", "鈴木家"]));
 
     // The class lists what can be chosen: a gender from its list, a family from the families.
     const files = service.knowledgeFiles();
     expect(files.classes.find((c) => c.name === "character")!.attributes).toEqual(expect.arrayContaining([{ key: "gender", kind: "choice", choices: ["male", "female", "other", "unknown"] }, { key: "family", kind: "link", target: "family" }]));
-    // On the drafts: a family can be a draft of the same block.
-    service.guidedSetAttribute("花子", "gender", ["female"]);
-    service.guidedSetAttribute("花子", "family", ["鈴木家"]);
-    service.guidedSetAttribute("花子", "age", ["15"]); // text
-    expect(names().find((n) => n.source === "花子")).toMatchObject({ draft: true, gender: "female", attrs: { gender: ["female"], family: ["鈴木家"], age: ["15"] } });
+    service.workSetAttribute("花子", "gender", ["female"]);
+    service.workSetAttribute("花子", "family", ["鈴木家"]);
+    service.workSetAttribute("花子", "age", ["15"]); // text
+    expect(words(service).find((n) => n.source === "花子")).toMatchObject({ draft: true, gender: "female", attrs: { gender: ["female"], family: ["鈴木家"], age: ["15"] } });
     expect(service.knowledgeList({ kind: "term" }).entries).toEqual([]);
 
     // Only what the class allows.
-    expect(() => service.guidedSetAttribute("花子", "gender", ["purple"])).toThrow(/is one of/);
-    expect(() => service.guidedSetAttribute("花子", "family", ["花子"])).toThrow(/must be a topic/);
-    expect(() => service.guidedSetAttribute("花子", "nonsense", ["x"])).toThrow(/not an attribute/);
-    expect(() => service.guidedSetAttribute("花子", "gender", ["male", "female"])).toThrow(/takes one value/);
+    expect(() => service.workSetAttribute("花子", "gender", ["purple"])).toThrow(/is one of/);
+    expect(() => service.workSetAttribute("花子", "family", ["花子"])).toThrow(/must be a topic/);
+    expect(() => service.workSetAttribute("花子", "nonsense", ["x"])).toThrow(/not an attribute/);
+    expect(() => service.workSetAttribute("花子", "gender", ["male", "female"])).toThrow(/takes one value/);
 
     // Used, the word goes to the knowledge base with its attributes; after that the same choices edit the topic itself.
-    await service.guidedTranslate({ ...model, index: 0 });
+    await service.workTranslate({ ...model });
     const hanako = service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "花子")!;
     expect(hanako).toMatchObject({ status: "confirmed", attrs: { gender: ["female"], family: ["鈴木家"], age: ["15"] } });
-    service.guidedSetAttribute("花子", "gender", ["male"]);
+    service.workSetAttribute("花子", "gender", ["male"]);
     expect(service.knowledgeFile(hanako.id).text).toContain("gender: male\n");
     expect(service.knowledgeFile(hanako.id).text).toContain("family: [[鈴木家]]");
 
     // Cleared, and the kind changed: attributes the new kind does not have are dropped.
-    service.guidedSetAttribute("花子", "family", []);
-    expect(names().find((n) => n.source === "花子")!.attrs!["family"]).toBeUndefined();
-    service.guidedSetKind("花子", "term");
-    expect(names().find((n) => n.source === "花子")).toMatchObject({ kind: "term", attrs: {} });
-    expect(() => service.guidedSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
+    service.workSetAttribute("花子", "family", []);
+    expect(words(service).find((n) => n.source === "花子")!.attrs!["family"]).toBeUndefined();
+    service.workSetKind("花子", "term");
+    expect(words(service).find((n) => n.source === "花子")).toMatchObject({ kind: "term", attrs: {} });
+    expect(() => service.workSetKind("花子", "nonsense")).toThrow(/no kind of topic/);
   });
 
   it("clears the English name a person or family got from its reading when it is changed to another kind, but not one the user wrote", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "鈴木花子は山田太郎に会った。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    const english = (source: string) => service.guidedGet()!.blocks[0]!.interpretation!.names.find((n) => n.source === source)!.english;
+    await sync(service, "鈴木花子は山田太郎に会った。");
+    const english = (source: string) => words(service).find((n) => n.source === source)!.english;
     expect(english("鈴木花子")).toBe("Suzuki Hanako");
-    service.guidedSetKind("鈴木花子", "term");
+    service.workSetKind("鈴木花子", "term");
     expect(english("鈴木花子")).toBe(""); // made from a reading, which means nothing for a term
     // Written by the user, it stays.
-    service.guidedSetEnglish("山田太郎", "Taro");
-    service.guidedSetKind("山田太郎", "term");
+    service.workSetEnglish("山田太郎", "Taro");
+    service.workSetKind("山田太郎", "term");
     expect(english("山田太郎")).toBe("Taro");
   });
 
-  it("lists every glossary word that stands in a block, also ones added to the glossary later, and lets the user write the English name of a draft", async () => {
+  it("lists every glossary word that stands in the text, also ones added to the glossary later, and lets the user write the English name of a draft", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "鈴木花子は魔法の杖を持っていた。", blockSize: "normal" });
-    await service.guidedInterpret(0);
-    const names = () => service.guidedGet()!.blocks[0]!.interpretation!.names;
-    expect(names().some((n) => n.source === "魔法")).toBe(false);
+    await sync(service, "鈴木花子は魔法の杖を持っていた。");
+    expect(words(service).some((n) => n.source === "魔法")).toBe(false);
 
-    // A word added to the glossary afterwards, from anywhere, shows up in the block by itself.
+    // A word added to the glossary afterwards, from anywhere, shows up by itself.
     const magic = service.knowledgeCreate("term", "魔法").id;
     service.knowledgeSetFile(magic, service.knowledgeFile(magic).text.replace(/english:.*/, "english: magic"));
-    expect(names().find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true, draft: false });
-    // A word that is not in this block is not listed.
+    expect(words(service).find((n) => n.source === "魔法")).toMatchObject({ english: "magic", kind: "term", known: true, draft: false });
+    // A word that is not in the text is not listed.
     const dragon = service.knowledgeCreate("term", "竜").id;
     service.knowledgeSetFile(dragon, service.knowledgeFile(dragon).text.replace(/english:.*/, "english: dragon"));
-    expect(names().some((n) => n.source === "竜")).toBe(false);
+    expect(words(service).some((n) => n.source === "竜")).toBe(false);
 
     // The user writes the English name of a draft; it is not in the knowledge base until it is used.
-    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ draft: true, known: false });
-    service.guidedSetEnglish("鈴木花子", "  Hanako Suzuki ");
-    expect(names().find((n) => n.source === "鈴木花子")).toMatchObject({ english: "Hanako Suzuki", draft: true });
+    expect(words(service).find((n) => n.source === "鈴木花子")).toMatchObject({ draft: true, known: false });
+    service.workSetEnglish("鈴木花子", "  Hanako Suzuki ");
+    expect(words(service).find((n) => n.source === "鈴木花子")).toMatchObject({ english: "Hanako Suzuki", draft: true });
     expect(service.knowledgeList({ kind: "term" }).entries.some((e) => e.source === "鈴木花子")).toBe(false);
-    await service.guidedTranslate({ ...model, index: 0 });
+    await service.workTranslate({ ...model });
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
   });
 
-  it("follows a change in the source: a block whose text is the same keeps what was done, and the others start again", async () => {
+  it("says who speaks each line, lets the user change it, and works out the rest", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    const paragraph = (i: number) => `これは${i}番目の長い段落で、少し言葉が多めに書かれています。`;
-    const text = Array.from({ length: 40 }, (_, i) => paragraph(i)).join("\n");
-    const start = { documentId: docId, text, blockSize: "small" as const };
-    const first = service.guidedStart(start);
-    expect(first.blocks.length).toBeGreaterThan(2);
-    await service.guidedReadAll();
-    expect(service.guidedGet()!.blocks.every((b) => b.interpretation)).toBe(true);
-    await service.guidedTranslate({ ...model, index: 0 });
+    await sync(service, "「遅いですよ」と花子は言った。\n\n「ごめん」と太郎は言った。\n\n「いいえ」\n\n「本当に？」");
+    // Two people are named; the lines that stand alone are said in turn.
+    const speakers = () => service.workGet()!.lines.map((l) => l.speaker);
+    expect(speakers()).toEqual(["花子", "太郎", "花子", "太郎"]);
+    service.workSetSpeaker(2, "太郎");
+    expect(speakers()[2]).toBe("太郎");
+    // A person of the knowledge base who is not written in the text can be picked, and joins the words.
+    const sato = service.knowledgeCreate("character", "佐藤").id;
+    service.knowledgeSetFile(sato, service.knowledgeFile(sato).text.replace(/english:.*/, "english: Sato"));
+    service.workSetSpeaker(3, "佐藤");
+    expect(speakers()[3]).toBe("佐藤");
+    expect(words(service).some((n) => n.source === "佐藤")).toBe(true);
+    service.workSetSpeaker(3, null);
+    expect(service.workGuessSpeakers().lines.map((l) => l.speaker)[3]).toBe("花子"); // after the line the user gave to 太郎
+    // The speakers are sent with the paragraph they speak in.
+    service.workSetEnglish("花子", "Hanako");
+    await service.workTranslate({ ...model });
+    expect(bodies(lm)[0]!.messages[1]!.content).toContain("The line 「遅いですよ」 is said by Hanako.");
+  });
+
+  it("follows a change in the text: a paragraph that is the same keeps its translation, and the others start again", async () => {
+    const lm = await fakeLmStudio();
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const text = "一つ目。\n\n二つ目。\n\n三つ目。";
+    await sync(service, text);
+    await service.workTranslate({ ...model });
+    const before = translated(service);
 
     // The same text changes nothing.
-    expect(service.guidedSync(start)!.blocks[0]!.status).toBe("translated");
-    // Text added at the end: the blocks before it keep their work.
-    const longer = service.guidedSync({ ...start, text: `${text}\n${paragraph(99)}` })!;
-    expect(longer.blocks[0]).toMatchObject({ status: "translated" });
-    expect(longer.blocks.length).toBeGreaterThanOrEqual(first.blocks.length);
-    expect(longer.blocks.at(-1)!.status).toBe("new");
-    // The first paragraph changed: that block starts again.
-    const edited = service.guidedSync({ ...start, text: text.replace(paragraph(0), "全く違う文。") })!;
-    expect(edited.blocks[0]).toMatchObject({ status: "new", translation: "", interpretation: null });
-    expect(service.guidedSync({ documentId: docId, text: "", blockSize: "small" })!.blocks.length).toBe(edited.blocks.length); // an empty editor leaves it alone
+    expect((await sync(service, text))!.paragraphs.map((p) => p.translation)).toEqual(before);
+    // A paragraph added in the middle, and one changed: the others keep their translation.
+    const next = await sync(service, "一つ目。\n\n新しい。\n\n二つ目。\n\n全く違う。");
+    expect(next!.paragraphs.map((p) => p.translation)).toEqual([before[0], "", before[1], ""]);
+    // An empty editor leaves the work alone.
+    expect((await sync(service, ""))!.paragraphs).toHaveLength(4);
   });
 
-  it("makes the blocks from the text when there are none yet, and a different text replaces them all", async () => {
-    const lm = await fakeLmStudio();
-    const { provider, service } = setup();
-    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
-    const docId = service.snapshot().activeDocumentId;
-    expect(service.guidedSync({ documentId: docId, text: "", blockSize: "normal" })).toBe(null);
-    const one = service.guidedSync({ documentId: docId, text: "太郎は笑った。", blockSize: "normal" })!;
-    expect(one.blocks.map((b) => b.text)).toEqual(["太郎は笑った。"]);
-    await service.guidedReadAll();
-    expect(service.guidedGet()!.blocks[0]!.interpretation).not.toBe(null);
-    // Another text: nothing of the old blocks is left, and what was read is read again.
-    const two = service.guidedSync({ documentId: docId, text: "花子は泣いた。", blockSize: "normal" })!;
-    expect(two.blocks.map((b) => b.text)).toEqual(["花子は泣いた。"]);
-    expect(two.blocks[0]).toMatchObject({ status: "new", interpretation: null, translation: "" });
-  });
-
-  it("keeps the block work of each document, so switching documents loses nothing, and counts it in the document list", async () => {
+  it("keeps the work on each document, so switching documents loses nothing, and counts it in the document list", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const first = service.snapshot().activeDocumentId;
-    service.guidedSync({ documentId: first, text: "太郎は笑った。", blockSize: "normal" });
-    await service.guidedReadAll();
-    await service.guidedTranslate({ ...model, index: 0 });
+    await service.workSync({ documentId: first, text: "太郎は笑った。" });
+    await service.workTranslate({ ...model });
 
-    // Another document has its own blocks; the first one's work is kept aside.
+    // Another document has its own work; the first one's work is kept aside.
     const second = service.createDocument("Second").activeDocumentId;
-    expect(service.guidedSync({ documentId: second, text: "花子は泣いた。", blockSize: "normal" })!.blocks.map((b) => b.text)).toEqual(["花子は泣いた。"]);
-    expect(service.snapshot().documents.map((d) => `${d.done}/${d.total}`)).toEqual(["1/1", "0/1"]);
+    expect((await service.workSync({ documentId: second, text: "花子は泣いた。\n花子は笑った。" }))!.paragraphs.map((p) => p.text)).toEqual(["花子は泣いた。", "花子は笑った。"]);
+    expect(service.snapshot().documents.map((d) => `${d.done}/${d.total}`)).toEqual(["1/1", "0/2"]);
 
     // Coming back, the translation is there.
-    const back = service.guidedSync({ documentId: first, text: "太郎は笑った。", blockSize: "normal" })!;
-    expect(back.blocks[0]).toMatchObject({ status: "translated" });
-    expect(service.exportProject().guided.map((g) => g.documentId).sort()).toEqual([first, second].sort());
+    const back = (await service.workSync({ documentId: first, text: "太郎は笑った。" }))!;
+    expect(back.paragraphs[0]!.translation).not.toBe("");
+    expect(service.exportProject().work.map((g) => g.documentId).sort()).toEqual([first, second].sort());
 
     // Deleting a document takes its work with it.
     service.deleteDocument(second);
-    expect(service.exportProject().guided.map((g) => g.documentId)).toEqual([first]);
+    expect(service.exportProject().work.map((g) => g.documentId)).toEqual([first]);
   });
 
-  it("is kept in the project and can be started over", async () => {
+  it("is kept in the project", async () => {
     const { service } = setup();
-    const docId = service.snapshot().activeDocumentId;
-    service.guidedStart({ documentId: docId, text: "短い文。", blockSize: "normal" });
-    expect(service.exportProject().guided.map((g) => g.blocks.length)).toEqual([1]);
-    service.guidedClear();
-    expect(service.guidedGet()).toBe(null);
+    expect(service.workGet()).toBe(null);
+    await sync(service, "短い文。");
+    expect(service.exportProject().work.map((g) => g.paragraphs.length)).toEqual([1]);
   });
 });

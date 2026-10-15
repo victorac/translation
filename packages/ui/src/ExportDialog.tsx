@@ -1,37 +1,37 @@
 import { useEffect, useState } from "react";
 import { Button, Callout, Dialog, Flex, SegmentedControl, Text } from "@radix-ui/themes";
-import type { GuidedState } from "@ltw/domain";
+import type { Work } from "@ltw/domain";
 import { api } from "./api";
 
 type What = "translation" | "both";
 type Kind = "txt" | "md";
 
-/** The text of the export: the translation of every block, or each block's source with its translation under it. */
-export function exportText(state: GuidedState, what: What, kind: Kind): string {
-  const parts = state.blocks.map((b) => {
-    const translation = b.translation.trim() === "" ? "[not translated yet]" : b.translation.trim();
+/** The text of the export: the translation of every paragraph, or each paragraph's source with its translation under it. */
+export function exportText(work: Work, what: What, kind: Kind): string {
+  const parts = work.paragraphs.map((p) => {
+    const translation = p.translation.trim() === "" ? "[not translated yet]" : p.translation.trim();
     if (what === "translation") return translation;
-    return kind === "md" ? `> ${b.text.trim().split(/\r?\n/).join("\n> ")}\n\n${translation}` : `${b.text.trim()}\n\n${translation}`;
+    return kind === "md" ? `> ${p.text}\n\n${translation}` : `${p.text}\n\n${translation}`;
   });
   return `${parts.join(what === "both" && kind === "txt" ? "\n\n----\n\n" : "\n\n")}\n`;
 }
 
 /** Saves the translation as a text file. */
 export function ExportDialog({ title, onClose }: { title: string; onClose: () => void }) {
-  const [state, setState] = useState<GuidedState | null>(null);
+  const [state, setState] = useState<Work | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [what, setWhat] = useState<What>("translation");
   const [kind, setKind] = useState<Kind>("txt");
 
   useEffect(() => {
-    void api.invoke("guided.get").then((r) => {
+    void api.invoke("work.get").then((r) => {
       if (r.ok) setState(r.value);
       setLoaded(true);
     });
   }, []);
 
-  const total = state?.blocks.length ?? 0;
-  const translated = state?.blocks.filter((b) => b.translation.trim() !== "").length ?? 0;
+  const total = state?.paragraphs.length ?? 0;
+  const translated = state?.paragraphs.filter((p) => p.translation.trim() !== "").length ?? 0;
 
   const save = () => {
     if (!state) return;
@@ -53,15 +53,15 @@ export function ExportDialog({ title, onClose }: { title: string; onClose: () =>
             Loading…
           </Text>
         ) : total === 0 ? (
-          <Dialog.Description size="2">There is nothing to export yet. Paste the source text and translate its blocks first.</Dialog.Description>
+          <Dialog.Description size="2">There is nothing to export yet. Paste the source text and translate it first.</Dialog.Description>
         ) : (
           <Flex direction="column" gap="4" mt="3">
             <Dialog.Description size="2" color="gray">
-              {translated} of {total} blocks are translated.
+              {translated} of {total} paragraphs are translated.
             </Dialog.Description>
             {translated < total && (
               <Callout.Root color="amber" size="1">
-                <Callout.Text>Blocks that are not translated yet are marked “[not translated yet]” in the file.</Callout.Text>
+                <Callout.Text>Paragraphs that are not translated yet are marked “[not translated yet]” in the file.</Callout.Text>
               </Callout.Root>
             )}
             <Flex direction="column" gap="1">

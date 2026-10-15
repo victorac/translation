@@ -14,12 +14,10 @@ import { useWorkspace } from "./useWorkspace";
 function Banner({ color, children, actions }: { color: "amber" | "red" | "blue"; children: React.ReactNode; actions?: React.ReactNode }) {
   return (
     <Callout.Root color={color} size="1" role="alert" mx="3" my="1">
-      <Callout.Text>
-        <Flex align="center" justify="between" gap="3" wrap="wrap">
-          <span>{children}</span>
-          <Flex gap="2">{actions}</Flex>
-        </Flex>
-      </Callout.Text>
+      <Flex align="center" justify="between" gap="3" wrap="wrap">
+        <Callout.Text>{children}</Callout.Text>
+        <Flex gap="2">{actions}</Flex>
+      </Flex>
     </Callout.Root>
   );
 }
@@ -130,7 +128,7 @@ export function App() {
             </>
           }
         >
-          Unsaved work from last time ({project.recovery.blocks} blocks, {project.recovery.documents} {project.recovery.documents === 1 ? "document" : "documents"}).
+          Unsaved work from last time ({project.recovery.paragraphs} paragraphs, {project.recovery.documents} {project.recovery.documents === 1 ? "document" : "documents"}).
         </Banner>
       )}
       {project?.openProblem && (

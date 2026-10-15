@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon, Cross2Icon } from "@radix-ui/react-icons";
 import { Badge, Button, Flex, IconButton, Switch, Text, TextField } from "@radix-ui/themes";
-import type { AttributeDef, GuidedName } from "@ltw/domain";
+import type { AttributeDef, Word } from "@ltw/domain";
 import { Pick } from "./Pick";
 
 export interface ClassInfo {
@@ -59,7 +59,7 @@ export function NameRow({
   onKind,
   onAttribute,
 }: {
-  name: GuidedName;
+  name: Word;
   classes: ClassInfo[];
   topics: TopicRef[];
   expanded: boolean;

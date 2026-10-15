@@ -19,11 +19,8 @@ import type {
   GlossaryEntry,
 } from "./glossary.js";
 import type {
-  BlockSize,
-} from "./defaults.js";
-import type {
-  GuidedState,
-} from "./guided.js";
+  Work,
+} from "./work.js";
 
 /** What the window and the background process say to each other. Types only; no code. */
 
@@ -36,7 +33,7 @@ export interface ModelSetting {
   name: string;
   /** The context size the model is loaded with. Not discoverable, so the user confirms it. */
   contextLimit: number;
-  /** The most text the model may produce for one block. */
+  /** The most text the model may produce for one paragraph. */
   maxOutputTokens: number;
   temperature: number;
   /** Which translation style to use (a built-in one or one of `StartJobInput.prompts`). */
@@ -47,8 +44,8 @@ export interface ModelSetting {
 
 export type Backend = "provider" | "practice";
 
-/** Which model translates a block in the step-by-step way, and how. */
-export interface GuidedModelInput {
+/** Which model translates, and how. */
+export interface ModelInput {
   backend: Backend;
   modelId: string;
   contextLimit: number;
@@ -58,12 +55,6 @@ export interface GuidedModelInput {
   promptId?: string;
   sourceLanguage: string;
   targetLanguage: string;
-}
-
-export interface GuidedStartInput {
-  documentId: string;
-  text: string;
-  blockSize: BlockSize;
 }
 
 /** The files of the knowledge base, for the file list. */
@@ -129,7 +120,7 @@ export interface ConnectionTestResult {
   models: string[];
 }
 
-/** The choices that decide how blocks are translated. Sent whenever they change, so the project keeps them. */
+/** The choices that decide how the text is translated. Sent whenever they change, so the project keeps them. */
 export interface SyncSettingsInput {
   sourceLanguage: string;
   targetLanguage: string;
@@ -140,7 +131,6 @@ export interface SyncSettingsInput {
   knowledge?: string | undefined;
   /** The user's own translation styles (the built-in ones are always available). */
   prompts: PromptPreset[];
-  blockSize: BlockSize;
 }
 
 export interface CommandMap {
@@ -159,23 +149,24 @@ export interface CommandMap {
   "project.discardRecovery": undefined;
   "project.dismissProblem": undefined;
   "notes.cancel": undefined;
-  "guided.get": undefined;
-  "guided.go": { index: number };
-  "guided.sync": GuidedStartInput;
-  "guided.readAll": undefined;
-  "guided.interpret": { index: number };
-  "guided.save": { index: number; narrator: string | null; speakers: (string | null)[]; fill?: boolean };
-  "guided.addName": { index: number; source: string };
-  "guided.setAttribute": { source: string; key: string; values: string[] };
-  "guided.setKind": { source: string; kind: string };
-  "guided.setEnglish": { source: string; english: string };
-  "guided.setHint": { source: string; hint: string };
-  "guided.setUse": { source: string; use: boolean };
-  "guided.translate": GuidedModelInput & { index: number };
-  /** The user's own text for the translation of one paragraph of a block. */
-  "guided.setPart": { index: number; paragraph: number; text: string };
-  /** Translates one paragraph of a block again, keeping the others. */
-  "guided.retranslate": GuidedModelInput & { index: number; paragraph: number };
+  "work.get": undefined;
+  /** Brings the work on a document up to date with its text: the paragraphs, the words and who says each line. */
+  "work.sync": { documentId: string; text: string };
+  "work.setSpeaker": { line: number; speaker: string | null };
+  /** Works out who says the lines whose speaker is not known yet. */
+  "work.guessSpeakers": undefined;
+  "work.addWord": { source: string };
+  "work.setAttribute": { source: string; key: string; values: string[] };
+  "work.setKind": { source: string; kind: string };
+  "work.setEnglish": { source: string; english: string };
+  "work.setHint": { source: string; hint: string };
+  "work.setUse": { source: string; use: boolean };
+  /** Translates the paragraphs one after the other. Without `redo`, the ones that have a translation are skipped. */
+  "work.translate": ModelInput & { from?: number; redo?: boolean };
+  /** The user's own text for the translation of one paragraph. */
+  "work.setPart": { paragraph: number; text: string };
+  /** Translates one paragraph again, keeping the others. */
+  "work.retranslate": ModelInput & { paragraph: number };
   "knowledge.files": undefined;
   "knowledge.file": { id: string };
   "knowledge.setFile": { id: string; text: string };
@@ -191,24 +182,22 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "guided.get" | "guided.go" | "guided.sync" | "guided.readAll" | "guided.interpret" | "guided.save" | "guided.addName" | "guided.setAttribute" | "guided.setKind" | "guided.setEnglish" | "guided.setHint" | "guided.setUse" | "guided.translate" | "guided.setPart" | "guided.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.guessSpeakers" | "work.addWord" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "notes.cancel": { canceled: boolean };
-  "guided.get": GuidedState | null;
-  "guided.go": GuidedState;
-  "guided.sync": GuidedState | null;
-  "guided.readAll": GuidedState;
-  "guided.interpret": GuidedState;
-  "guided.save": GuidedState;
-  "guided.addName": GuidedState;
-  "guided.setAttribute": GuidedState;
-  "guided.setKind": GuidedState;
-  "guided.setEnglish": GuidedState;
-  "guided.setHint": GuidedState;
-  "guided.setUse": GuidedState;
-  "guided.translate": GuidedState;
-  "guided.setPart": GuidedState;
-  "guided.retranslate": GuidedState;
+  "work.get": Work | null;
+  "work.sync": Work | null;
+  "work.setSpeaker": Work;
+  "work.guessSpeakers": Work;
+  "work.addWord": Work;
+  "work.setAttribute": Work;
+  "work.setKind": Work;
+  "work.setEnglish": Work;
+  "work.setHint": Work;
+  "work.setUse": Work;
+  "work.translate": Work;
+  "work.setPart": Work;
+  "work.retranslate": Work;
   "knowledge.files": KnowledgeFiles;
   "knowledge.file": KnowledgeFile;
   "knowledge.setFile": KnowledgeFile;
@@ -232,7 +221,7 @@ export interface ProjectView {
   dirty: boolean;
   lastSavedAt: string | null;
   /** Unsaved work from an earlier session, waiting for the user to restore or discard it. */
-  recovery: { updatedAt: string; blocks: number; documents: number } | null;
+  recovery: { updatedAt: string; paragraphs: number; documents: number } | null;
   /** The last file the user tried to open could not be opened. */
   openProblem: { message: string; canOpenBackup: boolean } | null;
   /** Something worth knowing (for example the project used a different server address). */

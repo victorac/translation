@@ -148,7 +148,7 @@ export class ProjectService {
   }
 
   private recoveryView(file: ProjectFile): NonNullable<ProjectView["recovery"]> {
-    return { updatedAt: file.project.updatedAt, blocks: (file.guided ?? []).reduce((n, g) => n + g.blocks.length, 0), documents: file.documents.length };
+    return { updatedAt: file.project.updatedAt, paragraphs: (file.work ?? []).reduce((n, w) => n + w.paragraphs.length, 0), documents: file.documents.length };
   }
 
   // ---- commands ----
@@ -296,7 +296,7 @@ export class ProjectService {
       activeDocumentId: file.activeDocumentId,
       ...(file.settings ? { settings: file.settings } : {}),
       ...(file.knowledge ? { knowledge: file.knowledge } : {}),
-      ...(file.guided ? { guided: file.guided } : {}),
+      ...(file.work ? { work: file.work } : {}),
       documents: file.documents,
     });
     // A name that is only the file's name (or the word Untitled) is not a name the user gave, so renaming the file renames the project.
@@ -323,7 +323,7 @@ export class ProjectService {
       version: this.changes,
       settings: state.settings,
       knowledge: state.knowledge,
-      guided: state.guided,
+      work: state.work,
       activeDocumentId: state.activeDocumentId,
       documents: state.documents,
     });

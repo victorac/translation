@@ -111,9 +111,3 @@ export function missingNames(glossary: readonly GlossaryItem[], source: string, 
   });
 }
 
-/** The text of a block's translation: the paragraphs that have one, one after the other with a blank line between. */
-export const joinParts = (parts: readonly string[]): string =>
-  parts
-    .map((p) => p.trim())
-    .filter((p) => p !== "")
-    .join("\n\n");

@@ -161,12 +161,6 @@ export function related(a: string, b: string): boolean {
   return common.length >= 2 && common.length >= Math.min(sa.size, [...new Set([...b])].length) * 0.6;
 }
 
-/** Is a passage told in the first person? The word the narrator uses for "I" outside of quotations, or null. */
-export function firstPersonInNarration(text: string): string | null {
-  const narration = text.replace(/「[^」]*」/g, "").replace(/『[^』]*』/g, "");
-  return ["ぼく", "僕", "私", "わたし", "俺", "おれ", "オレ", "あたし", "わたくし"].find((w) => narration.includes(w)) ?? null;
-}
-
 export interface Speaker {
   id: string;
   /** The English name shown to the model. */

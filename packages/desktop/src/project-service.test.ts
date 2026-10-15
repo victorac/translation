@@ -66,11 +66,10 @@ const until = async (cond: () => boolean, ms = 4000) => {
 const writeSomething = async (p: ProjectService, text = PARAS.join("\n\n")) => {
   const documentId = p.workspace.snapshot().activeDocumentId;
   p.workspace.setDraft(documentId, text);
-  p.workspace.guidedSync({ documentId, text, blockSize: "normal" });
-  await p.workspace.guidedInterpret(0);
-  PARAS.forEach((_, i) => p.workspace.guidedSetPart(0, i, `Translation ${i + 1}`));
+  await p.workspace.workSync({ documentId, text });
+  PARAS.forEach((_, i) => p.workspace.workSetPart(i, `Translation ${i + 1}`));
 };
-const partsOf = (p: ProjectService) => p.workspace.guidedGet()?.blocks[0]?.parts;
+const partsOf = (p: ProjectService) => p.workspace.workGet()?.paragraphs.map((x) => x.translation);
 
 describe("saving and reopening", () => {
   it("lets the user name the project, keeps that name when it is saved and reopened, and otherwise follows the file's name", async () => {
@@ -107,29 +106,43 @@ describe("saving and reopening", () => {
     await b.open(false);
     expect(b.workspace.snapshot().draftText).toBe(PARAS.join("\n\n"));
     expect(partsOf(b)).toEqual(["Translation 1", "Translation 2", "Translation 3"]);
-    expect(b.workspace.guidedGet()!.blocks[0]).toMatchObject({ status: "translated", translation: "Translation 1\n\nTranslation 2\n\nTranslation 3" });
+    expect(b.workspace.workGet()!.paragraphs.map((p) => p.text)).toEqual(PARAS);
     expect(b.view()).toMatchObject({ dirty: false, title: "My novel" });
   });
 
-  it("opens a block saved as one piece of translation, matching it to the paragraphs when their number is the same and keeping all of it otherwise", async () => {
+  it("opens work saved block by block (by an earlier version): the words, the translation of each paragraph and who says the lines", async () => {
     const { dir, answers, make } = env();
     const a = make();
     await writeSomething(a);
     answers.save = join(dir, "old.ltw.json");
     await a.save(false);
     const file = JSON.parse(readFileSync(join(dir, "old.ltw.json"), "utf8"));
-    const open = async (translation: string) => {
+    const text = PARAS.join("\n\n");
+    const block = (parts: string[], translation: string) => ({
+      index: 0,
+      text,
+      translation,
+      parts,
+      status: "translated",
+      error: null,
+      interpretation: { names: [{ source: "太郎", english: "Taro", kind: "character", aliases: [], reading: "", known: false, draft: true, hint: "a boy" }], narrator: null, narratorWord: null, lines: [] },
+    });
+    const open = async (b: ReturnType<typeof block>) => {
       const old = structuredClone(file);
-      old.guided[0].blocks[0].translation = translation;
-      delete old.guided[0].blocks[0].parts;
+      delete old.work;
+      old.guided = [{ documentId: old.documents[0].id, source: text, current: 0, blocks: [b] }];
       writeFileSync(join(dir, "single.ltw.json"), JSON.stringify(old));
-      const b = make({ recoveryPath: join(dir, `r${Math.random()}.json`) });
+      const p = make({ recoveryPath: join(dir, `r${Math.random()}.json`) });
       answers.open = join(dir, "single.ltw.json");
-      await b.open(false);
-      return partsOf(b);
+      await p.open(false);
+      return p.workspace.workGet()!;
     };
-    expect(await open("One.\n\nTwo.\n\nThree.")).toEqual(["One.", "Two.", "Three."]);
-    expect(await open("The whole translation, as it was written.")).toEqual(["The whole translation, as it was written.", "", ""]);
+    const per = await open(block(["One.", "Two.", "Three."], "One.\n\nTwo.\n\nThree."));
+    expect(per.paragraphs.map((p) => p.translation)).toEqual(["One.", "Two.", "Three."]);
+    expect(per.words).toMatchObject([{ source: "太郎", english: "Taro", hint: "a boy", draft: true }]);
+    // A block saved as one piece of translation has it matched to the paragraphs when their number is the same, and kept whole in the first otherwise.
+    expect((await open(block([], "One.\n\nTwo.\n\nThree."))).paragraphs.map((p) => p.translation)).toEqual(["One.", "Two.", "Three."]);
+    expect((await open(block([], "The whole translation, as it was written."))).paragraphs.map((p) => p.translation)).toEqual(["The whole translation, as it was written.", "", ""]);
   });
 
   it("adds the extension, reuses the path on the next save, and keeps the previous version as .bak", async () => {
@@ -142,7 +155,7 @@ describe("saving and reopening", () => {
     const first = readFileSync(path, "utf8");
     expect(existsSync(`${path}.bak`)).toBe(false);
 
-    a.workspace.guidedSetPart(0, 0, "changed");
+    a.workspace.workSetPart(0, "changed");
     expect(a.view().dirty).toBe(true);
     answers.save = undefined; // a dialog now would cancel: the second save must not need one
     await a.save(false);
@@ -182,7 +195,7 @@ describe("saving and reopening", () => {
     answers.save = join(dir, "d.ltw.json");
     await a.save(false);
     expect(a.view().dirty).toBe(false);
-    a.workspace.guidedSetPart(0, 1, "x");
+    a.workspace.workSetPart(1, "x");
     expect(a.view().dirty).toBe(true);
   });
 
@@ -195,7 +208,7 @@ describe("saving and reopening", () => {
     const good = readFileSync(join(dir, "good.ltw.json"), "utf8");
 
     writeFileSync(join(dir, "not-a-folder"), "x");
-    a.workspace.guidedSetPart(0, 0, "edited after");
+    a.workspace.workSetPart(0, "edited after");
     answers.save = join(dir, "not-a-folder", "nope.ltw.json");
     await expect(a.save(true)).rejects.toMatchObject({ code: "save_failed", message: expect.stringContaining("Save As") });
     expect(a.view()).toMatchObject({ dirty: true, path: join(dir, "good.ltw.json") });
@@ -215,8 +228,8 @@ describe("recovery after the app closes unexpectedly", () => {
     copyFileSync(recoveryPath, crashCopy);
 
     const b = make({ recoveryPath: crashCopy });
-    expect(b.view().recovery).toMatchObject({ blocks: 1, documents: 1 });
-    expect(b.workspace.guidedGet()).toBeNull();
+    expect(b.view().recovery).toMatchObject({ paragraphs: 3, documents: 1 });
+    expect(b.workspace.workGet()).toBeNull();
     b.restoreRecovery();
     expect(partsOf(b)).toEqual(["Translation 1", "Translation 2", "Translation 3"]);
     expect(b.view()).toMatchObject({ dirty: true, recovery: null });
@@ -238,7 +251,7 @@ describe("recovery after the app closes unexpectedly", () => {
     await writeSomething(a);
     answers.save = join(dir, "later.ltw.json");
     await a.save(false);
-    a.workspace.guidedSetPart(0, 0, "unsaved edit");
+    a.workspace.workSetPart(0, "unsaved edit");
     await until(() => existsSync(recoveryPath));
     const stale = join(dir, "stale.ltw.json");
     copyFileSync(recoveryPath, stale);
@@ -283,7 +296,7 @@ describe("files that cannot be opened safely", () => {
     await writeSomething(a);
     e.answers.save = join(e.dir, "p.ltw.json");
     await a.save(false);
-    a.workspace.guidedSetPart(0, 0, "second version");
+    a.workspace.workSetPart(0, "second version");
     await a.save(false);
     return { ...e, path: join(e.dir, "p.ltw.json"), a };
   };
@@ -295,7 +308,7 @@ describe("files that cannot be opened safely", () => {
     const b = make({ recoveryPath: join(dir, "rb.json") });
     answers.open = path;
     await b.open(false);
-    expect(b.workspace.guidedGet()).toBeNull();
+    expect(b.workspace.workGet()).toBeNull();
     expect(b.view().openProblem).toMatchObject({ canOpenBackup: true });
 
     await b.open(true);
@@ -338,7 +351,7 @@ describe("files that cannot be opened safely", () => {
     expect(b.view().openProblem?.message).toMatch(/could not be read/);
     b.dismissProblem();
     expect(b.view().openProblem).toBeNull();
-    expect(b.workspace.guidedGet()).toBeNull();
+    expect(b.workspace.workGet()).toBeNull();
   });
 
   it("a failed open leaves the current workspace alone", async () => {
@@ -364,7 +377,7 @@ describe("other rules", () => {
     await until(() => existsSync(recoveryPath));
     a.newProject();
     expect(a.workspace.snapshot().draftText).toBe("");
-    expect(a.workspace.guidedGet()).toBeNull();
+    expect(a.workspace.workGet()).toBeNull();
     expect(a.view()).toMatchObject({ title: "Untitled", dirty: false, path: null });
     expect(existsSync(recoveryPath)).toBe(false);
   });
@@ -391,7 +404,6 @@ describe("settings in saved projects", () => {
   const settings = {
     sourceLanguage: "Japanese",
     targetLanguage: "English",
-    blockSize: "normal" as const,
     models: [model("alpha")],
     glossary: [],
     notes: "",
@@ -417,7 +429,7 @@ describe("documents in saved projects", () => {
   it("saves every document with its text and work and the project's shared settings, and reopens them", async () => {
     const { dir, answers, make } = env();
     const a = make();
-    a.workspace.syncSettings({ sourceLanguage: "Japanese", targetLanguage: "English", blockSize: "normal", models: [model("alpha")], glossary: [], notes: "", prompts: [] });
+    a.workspace.syncSettings({ sourceLanguage: "Japanese", targetLanguage: "English", models: [model("alpha")], glossary: [], notes: "", prompts: [] });
     await writeSomething(a);
     const first = a.workspace.snapshot().activeDocumentId;
     a.workspace.createDocument("Chapter 2");
@@ -431,7 +443,7 @@ describe("documents in saved projects", () => {
     await b.open(false);
     const snap = b.workspace.snapshot();
     expect(snap.documents.map((d) => [d.title, d.total > 0, d.hasText])).toEqual([["Document 1", true, true], ["Chapter 2", false, true]]);
-    expect(snap.documents[0]).toMatchObject({ done: 1, total: 1 });
+    expect(snap.documents[0]).toMatchObject({ done: 3, total: 3 });
     expect(snap.activeDocumentId).toBe(first);
     expect(snap.settings?.models.map((m) => m.name)).toEqual(["alpha"]);
     expect(partsOf(b)).toEqual(["Translation 1", "Translation 2", "Translation 3"]);
@@ -439,7 +451,7 @@ describe("documents in saved projects", () => {
     expect(b.view().dirty).toBe(false);
   });
 
-  it("text typed but not yet cut into blocks counts as work: it can be saved, makes the project unsaved, and survives a crash", async () => {
+  it("text typed but not yet read counts as work: it can be saved, makes the project unsaved, and survives a crash", async () => {
     const { dir, recoveryPath, answers, make } = env();
     const a = make();
     expect(a.view().dirty).toBe(false);
@@ -450,7 +462,7 @@ describe("documents in saved projects", () => {
     copyFileSync(recoveryPath, crashCopy);
 
     const b = make({ recoveryPath: crashCopy });
-    expect(b.view().recovery).toMatchObject({ blocks: 0, documents: 1 });
+    expect(b.view().recovery).toMatchObject({ paragraphs: 0, documents: 1 });
     b.restoreRecovery();
     expect(b.workspace.snapshot().draftText).toBe("長い文章を書いている途中。");
 
@@ -500,7 +512,7 @@ describe("documents in saved projects", () => {
   it("a new project starts with one empty document and forgets the old settings", async () => {
     const { make } = env();
     const a = make();
-    a.workspace.syncSettings({ sourceLanguage: "Japanese", targetLanguage: "English", blockSize: "normal", models: [model("alpha")], glossary: [], notes: "", prompts: [] });
+    a.workspace.syncSettings({ sourceLanguage: "Japanese", targetLanguage: "English", models: [model("alpha")], glossary: [], notes: "", prompts: [] });
     await writeSomething(a);
     a.workspace.createDocument();
     a.newProject();
@@ -529,7 +541,7 @@ describe("names, hints and notes in saved projects", () => {
     // An older project kept them in its settings.
     const old = JSON.parse(readFileSync(join(dir, "kb.ltw.json"), "utf8"));
     delete old.knowledge;
-    old.settings = { sourceLanguage: "Japanese", targetLanguage: "English", blockSize: "normal", models: [], glossary: [{ source: "勇者", target: "Hero" }], notes: "Keep honorifics.", prompts: [] };
+    old.settings = { sourceLanguage: "Japanese", targetLanguage: "English", models: [], glossary: [{ source: "勇者", target: "Hero" }], notes: "Keep honorifics.", prompts: [] };
     writeFileSync(join(dir, "old.ltw.json"), JSON.stringify(old));
     const c = make({ recoveryPath: join(dir, "r2.json") });
     answers.open = join(dir, "old.ltw.json");

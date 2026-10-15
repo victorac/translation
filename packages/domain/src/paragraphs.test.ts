@@ -5,7 +5,6 @@ import {
 } from "vitest";
 import {
   answerOf,
-  joinParts,
   missingNames,
   paragraphMessage,
   paragraphsOf,
@@ -79,7 +78,4 @@ describe("paragraphs", () => {
   it("finds the paragraphs with their place in the text", () => {
     expect(paragraphsOf("a\n\n  b ")).toEqual([{ start: 0, end: 1, text: "a" }, { start: 5, end: 6, text: "b" }]);
   });
-  it("joins the translated ones with a blank line", () => {
-    expect(joinParts(["A.", " ", "B. "])).toBe("A.\n\nB.");
   });
-});

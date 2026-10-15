@@ -1,8 +1,13 @@
 import {
+  chunkSource,
+} from "./chunker.js";
+import {
+  paragraphsOf,
+} from "./paragraphs.js";
+import {
   splitSentences,
   addressedIn,
   findQuotes,
-  firstPersonInNarration,
   nameFromReadings,
   romanize,
   speakerByForm,
@@ -11,14 +16,15 @@ import {
 } from "./steps.js";
 
 /**
- * The step-by-step way of translating: for each block the program reads out who is named, who is telling it and who says
- * each line, the user checks that, and only then is the block translated with it. Everything here is decided by rules
- * and the dictionary, never by guessing.
+ * The work on a document: the text is read once for its words (names and terms) and for who says each line of speech, the user
+ * checks that, and then the paragraphs are translated one after the other. Everything here is decided by rules and the
+ * dictionary, never by guessing.
  */
 
 export type NameKind = "character" | "family" | "place" | "organization" | "term";
 
-export interface GuidedName {
+/** A word of the text that has a translation of its own: a name, a place, a term. */
+export interface Word {
   source: string;
   /** The name in the translation. Empty when it is not known and the user has to write it. */
   english: string;
@@ -28,11 +34,11 @@ export interface GuidedName {
   reading: string;
   /** True when the name is already in the project's glossary and accepted. */
   known: boolean;
-  /** True for a word found in the text that is not in the knowledge base yet: it is added when it is used. */
+  /** True for a word found in the text that is not in the knowledge base yet: it is added when the text is translated. */
   draft?: boolean;
   /** True while the English name is the app's own guess (made from a reading), until the user writes one. */
   guessed?: boolean;
-  /** False when the user chose to ignore this word in this block: it is not sent and not added. */
+  /** False when the user chose to ignore this word: it is not sent and not added to the knowledge base. */
   use?: boolean;
   /** The glossary topic this is, when it has been made one. */
   id?: string;
@@ -48,57 +54,34 @@ export interface GuidedName {
 
 export type Gender = "female" | "male";
 
-export interface GuidedLine {
+/** One line of speech (a 「…」 quotation) and who says it. */
+export interface WorkLine {
+  /** The paragraph it stands in (counted from 0). */
+  paragraph: number;
   text: string;
-  /** The source of the name that says it, or null when it is not known. */
+  /** The source of the word of the person who says it, or null when it is not known. */
   speaker: string | null;
 }
 
-export interface Interpretation {
-  names: GuidedName[];
-  /** The source of the name of the one telling the story, when told as "I". */
-  narrator: string | null;
-  /** The word the narrator uses for "I" in this block, if the block is told that way. */
-  narratorWord: string | null;
-  lines: GuidedLine[];
-}
-
-/** A name that is already in the glossary, or a draft word carried over from an earlier block. */
-export interface KnownName {
-  /** True for a draft word of an earlier block: it is still not in the knowledge base. */
-  draft?: boolean;
-  attrs?: Record<string, string[]>;
-  source: string;
-  english: string;
-  kind: NameKind;
-  aliases: string[];
-  gender?: Gender | null;
-}
-
-export type GuidedStatus = "new" | "interpreted" | "translated";
-
-export interface GuidedBlock {
-  index: number;
+/** One paragraph (non-empty line) of the source and its translation. */
+export interface WorkParagraph {
   text: string;
-  interpretation: Interpretation | null;
-  /** The translation as one text: the paragraphs' translations one after the other. */
+  /** Empty until it is translated. */
   translation: string;
-  /** The translation of each paragraph of the source text (non-empty line), in order; empty where there is none yet. */
-  parts: string[];
-  status: GuidedStatus;
-  /** Why the last attempt to translate it failed. */
-  error: string | null;
-  /** Something to look at in the translation, such as paragraphs that seem to be missing. */
-  warning?: string | null;
+  /** Something to look at in the translation, such as a glossary name it does not use. */
+  issue?: string | null;
 }
 
-export interface GuidedState {
+/** Everything about one document's translation. */
+export interface Work {
   documentId: string;
-  /** The text the blocks were made from, so a change in the source is noticed. */
-  source?: string;
-  blocks: GuidedBlock[];
-  /** The block the user is working on. */
-  current: number;
+  /** The text the work was made from, so a change in the source is noticed. */
+  source: string;
+  words: Word[];
+  lines: WorkLine[];
+  paragraphs: WorkParagraph[];
+  /** Why the last attempt to translate failed. */
+  error?: string | null;
 }
 
 const ORGANIZATION = /(学園|学院|学校|高校|大学|会社|協会|組合|騎士団|教団|軍|党)$/;
@@ -171,40 +154,47 @@ export function nameGuess(source: string, reading: readonly string[] | undefined
 
 const namesOf = (n: { source: string; aliases: readonly string[] }): string[] => [n.source, ...n.aliases];
 
-/** The line that ended the block before was said by `before`, and `other` is the one they were talking with. */
+/** A word that is already in the glossary, or a draft word the user has been working on: reading starts from it. */
+export interface KnownWord {
+  source: string;
+  english: string;
+  kind: NameKind;
+  aliases: string[];
+  gender?: Gender | null;
+  /** True for a draft word: it is still not in the knowledge base. */
+  draft?: boolean;
+  attrs?: Record<string, string[]>;
+  /** What the user set on a draft word, kept when the text is read again. */
+  hint?: string;
+  use?: boolean;
+  guessed?: boolean;
+}
+
+export interface ReadInput {
+  /** The whole text. */
+  text: string;
+  /** Names found in the text without a model. */
+  candidates: readonly string[];
+  readings: Readonly<Record<string, readonly string[]>>;
+  glossary: readonly KnownWord[];
+}
+
+/** The conversation going on at the end of the part before: its last line was said by `before`, and `other` is the one they were talking with. */
 export interface Carry {
   before: string;
   other: string | null;
 }
 
-export interface InterpretInput {
-  passage: string;
-  /** Names found in the passage without a model. */
-  candidates: readonly string[];
-  readings: Readonly<Record<string, readonly string[]>>;
-  glossary: readonly KnownName[];
-  /** The conversation going on at the end of the block before this one, if there is one. */
-  carry?: Carry | null;
-  /** Who told the block before this one (the source of the name), so the narrator carries on until the user says it changed. */
-  narrator?: string | null;
-}
-
-/** Who says each line of the passage, for the people in `names` and the narrator. */
-export function labelLines(passage: string, names: readonly GuidedName[], narrator: string | null, narratorWord: string | null, carry: Carry | null = null, preset: readonly (string | null)[] = []): GuidedLine[] {
+/** Who says each line of a passage, for the people in `words`. A conversation carried on from before the passage is given in `carry`. */
+export function labelLines(passage: string, words: readonly Word[], carry: Carry | null = null, preset: readonly (string | null)[] = []): { text: string; speaker: string | null; start: number }[] {
   const quotes = findQuotes(passage);
-  const speakers: Speaker[] = names
-    .filter((n) => n.kind === "character")
+  const speakers: Speaker[] = words
+    .filter((n) => n.kind === "character" && n.use !== false)
     .map((n) => ({ id: n.source, label: n.english || n.source, names: namesOf(n) }));
-  if (narrator) {
-    const known = speakers.find((s) => s.id === narrator);
-    if (known) {
-      if (narratorWord) known.names = [...known.names, narratorWord];
-    } else speakers.push({ id: narrator, label: narrator, names: narratorWord ? [narrator, narratorWord] : [narrator] });
-  }
-  const unlabeled = quotes.map((q) => ({ text: q.text, speaker: null as string | null }));
-  // A conversation carried on from the block before: its last line was said by `before`, and the other one speaks next.
+  const unlabeled = quotes.map((q) => ({ text: q.text, speaker: null as string | null, start: q.start }));
+  // A conversation carried on from before: its last line was said by `before`, and the other one speaks next.
   const turn = carry && carry.other && speakers.some((s) => s.id === carry.before) && speakers.some((s) => s.id === carry.other) ? { before: carry.before, pair: [carry.before, carry.other] as const } : null;
-  if (speakers.length < 2 && !turn) return unlabeled;
+  if (speakers.length < 2 && !turn) return unlabeled.map((l, i) => ({ ...l, speaker: preset[i] ?? null }));
   // What the user already set stays, and the rules work from it.
   let who: (string | null)[] = quotes.map((q, i) => preset[i] ?? speakerByForm(passage, q, speakers, quotes));
   // A line that names one of two people as spoken to is said by the other.
@@ -214,19 +204,67 @@ export function labelLines(passage: string, names: readonly GuidedName[], narrat
     if (left.length === 1) who[i] = left[0]!.id;
   });
   who = takeTurns(passage, quotes, who, speakers, turn);
-  return quotes.map((q, i) => ({ text: q.text, speaker: who[i] ?? null }));
+  return quotes.map((q, i) => ({ text: q.text, speaker: who[i] ?? null, start: q.start }));
 }
 
-/** Reads a block into what the user is shown to check. */
-export function interpretPassage(input: InterpretInput): Interpretation {
-  const { passage } = input;
-  const names: GuidedName[] = [];
-  const taken = (s: string) => names.some((n) => namesOf(n).includes(s));
+/**
+ * Who says each line of the whole text. The rules (who is named beside a line, two people taking turns) work on a stretch of text
+ * with a few people in it, so the text is gone through in stretches, each with the conversation that was going on at the end of the one
+ * before. What the user already set (`preset`, by line) stays.
+ */
+export function labelDocument(text: string, words: readonly Word[], preset: readonly (string | null)[] = []): WorkLine[] {
+  const paragraphs = paragraphsOf(text);
+  const paragraphAt = (offset: number): number => {
+    let lo = 0;
+    let hi = paragraphs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (paragraphs[mid]!.start <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return Math.max(0, lo);
+  };
+  const sources = words.map((w) => w.source);
+  const out: WorkLine[] = [];
+  let carry: Carry | null = null;
+  for (const chunk of chunkSource(text, { targetTokens: 600, maxTokens: 900 })) {
+    const passage = text.slice(chunk.startOffset, chunk.endOffset);
+    // The people of this stretch: those it writes, and the two of a conversation that carries on into it.
+    const here = words.filter((w) => w.kind === "character" && (occurrencesOf(passage, namesOf(w), sources).length > 0 || w.source === carry?.before || w.source === carry?.other));
+    const lines = labelLines(passage, here, carry, preset.slice(out.length));
+    for (const l of lines) out.push({ paragraph: paragraphAt(chunk.startOffset + l.start), text: l.text, speaker: l.speaker });
+    // Only when the stretch ended on a line of speech whose speaker is known does its conversation carry on.
+    const last = lines.at(-1);
+    const lastParagraph = passage.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
+    carry = last?.speaker && lastParagraph.trim().startsWith("「") ? { before: last.speaker, other: [...lines].reverse().find((l) => l.speaker && l.speaker !== last.speaker)?.speaker ?? null } : null;
+  }
+  return out;
+}
 
+/** Reads the text into the words the user is shown to check. */
+export function readWords(input: ReadInput): Word[] {
+  const passage = input.text;
+  const names: Word[] = [];
+  const taken = (s: string) => names.some((n) => namesOf(n).includes(s));
+  const from = (k: KnownWord): Word => ({
+    source: k.source,
+    english: k.english,
+    kind: k.kind,
+    aliases: [...k.aliases],
+    reading: readingLetters(input.readings[k.source]),
+    known: !k.draft,
+    draft: k.draft === true,
+    ...(k.attrs ? { attrs: k.attrs } : {}),
+    ...(k.hint ? { hint: k.hint } : {}),
+    ...(k.use === false ? { use: false } : {}),
+    ...(k.guessed ? { guessed: true } : {}),
+    gender: k.gender ?? null,
+  });
+
+  const sources = input.glossary.map((e) => e.source);
   for (const k of input.glossary) {
     // A name that is part of a longer one counts only where it stands on its own (山田 in 「山田、…」, not in 山田太郎).
-    const sources = input.glossary.map((e) => e.source);
-    if (namesOf(k).some((n) => withoutLongerNames(passage, n, sources).includes(n))) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: !k.draft, draft: k.draft === true, ...(k.attrs ? { attrs: k.attrs } : {}), gender: k.gender ?? null });
+    if (namesOf(k).some((n) => withoutLongerNames(passage, n, sources).includes(n))) names.push(from(k));
   }
   // The longest candidates first, so a short one inside a longer one is not taken as a name of its own.
   const rest = [...new Set(input.candidates)].filter((c) => !taken(c)).sort((a, b) => b.length - a.length);
@@ -255,37 +293,26 @@ export function interpretPassage(input: InterpretInput): Interpretation {
     if (other >= 0) names.splice(other, 1);
     if (!namesOf(p).includes(tail)) p.aliases.push(tail);
   }
-
-  const narratorWord = firstPersonInNarration(passage);
-  // The narrator carries on from the block before, and can be changed on any block. They speak and act in a block told as "I"
-  // even when the block never writes the name.
-  const narratorEntry = input.narrator ? input.glossary.find((k) => k.source === input.narrator) : undefined;
-  const narrator = input.narrator ?? null;
-  if (narratorWord && narratorEntry && !names.some((n) => n.source === narratorEntry.source)) {
-    names.push({ source: narratorEntry.source, english: narratorEntry.english, kind: narratorEntry.kind, aliases: [...narratorEntry.aliases], reading: readingLetters(input.readings[narratorEntry.source]), known: !narratorEntry.draft, draft: narratorEntry.draft === true, ...(narratorEntry.attrs ? { attrs: narratorEntry.attrs } : {}), gender: narratorEntry.gender ?? null });
-  }
-  // The two of a conversation that carries on speak here even when the block does not write their names.
-  for (const who of [input.carry?.before, input.carry?.other]) {
-    const k = who ? input.glossary.find((e) => e.source === who) : undefined;
-    if (k && !names.some((n) => n.source === k.source)) names.push({ source: k.source, english: k.english, kind: k.kind, aliases: [...k.aliases], reading: readingLetters(input.readings[k.source]), known: !k.draft, draft: k.draft === true, ...(k.attrs ? { attrs: k.attrs } : {}), gender: k.gender ?? null });
-  }
   // Where the text says it, a person who is not known to be one way or the other is that.
   for (const p of names.filter((n) => n.kind === "character" && !n.gender)) {
     p.gender = guessGender(passage, namesOf(p), names.filter((o) => o !== p && o.kind === "character").flatMap(namesOf));
     if (p.gender && p.draft) p.attrs = { ...(p.attrs ?? {}), gender: [p.gender] };
   }
-  return { names, narrator, narratorWord, lines: labelLines(passage, names, narrator, narratorWord, input.carry ?? null) };
+  return names;
 }
 
 const shorten = (text: string, n: number): string => (Array.from(text).length > n ? `${Array.from(text).slice(0, n).join("")}…` : text);
 
-/** The notes sent with the block: who is telling it, and who says the lines that are known. */
-export function notesFor(interp: Interpretation, only?: string): string[] {
-  const english = (source: string): string => interp.names.find((n) => n.source === source)?.english || source;
+/** The notes sent with a paragraph: the gender of the people it names, and who says the lines in it that are known. */
+export function notesFor(words: readonly Word[], lines: readonly WorkLine[], paragraph: { index: number; text: string }): string[] {
+  const english = (source: string): string => words.find((n) => n.source === source)?.english || source;
   const notes: string[] = [];
-  if (interp.narrator && interp.narratorWord) notes.push(`The narrator, who says ${interp.narratorWord} about himself or herself, is ${english(interp.narrator)}.`);
-  for (const n of interp.names) if (n.use !== false && n.kind === "character" && n.gender && n.english) notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
-  for (const l of interp.lines) if (l.speaker && (only === undefined || only.includes(l.text))) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
+  for (const n of words) {
+    if (n.use === false || n.kind !== "character" || !n.gender || !n.english) continue;
+    if (!occurrencesOf(paragraph.text, namesOf(n), words.map((w) => w.source)).length) continue;
+    notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
+  }
+  for (const l of lines) if (l.speaker && l.paragraph === paragraph.index) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
   return notes;
 }
 
@@ -317,13 +344,13 @@ export function glossaryHits<T extends { source: string; aliases: readonly strin
 }
 
 /**
- * The glossary entries sent with the block: every name that has an English form and appears in it. A short name that is part of
- * a longer one (山田 in 山田太郎) is sent only when it stands on its own somewhere, with a note saying that is when it applies, and is
- * not also listed as another way to write the longer name.
+ * The glossary entries sent with a paragraph: every word that has an English form (or a note) and stands in it. A short name that is
+ * part of a longer one (山田 in 山田太郎) is sent only when it stands on its own there, with a note saying that is when it applies,
+ * and is not also listed as another way to write the longer name.
  */
-export function glossaryFor(interp: Interpretation, only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
-  const sources = interp.names.map((n) => n.source);
-  return interp.names
+export function glossaryFor(words: readonly Word[], only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
+  const sources = words.map((n) => n.source);
+  return words
     .filter((n) => (n.english.trim() !== "" || (n.hint ?? "").trim() !== "") && n.use !== false)
     .flatMap((n) => {
       const longer = sources.filter((s) => s.length > n.source.length && s.includes(n.source));
@@ -332,17 +359,25 @@ export function glossaryFor(interp: Interpretation, only?: string): { source: st
         const alone = withoutLongerNames(only, n.source, sources);
         if (![n.source, ...aliases].some((s) => (s === n.source ? alone : only).includes(s))) return [];
       }
-      const target = n.refersTo ? interp.names.find((o) => o.source === n.refersTo) : undefined;
+      const target = n.refersTo ? words.find((o) => o.source === n.refersTo) : undefined;
       const stands = target ? `a name for ${target.english.trim() !== "" ? target.english.trim() : target.source}` : "";
       const note = [stands, n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
 }
 
-/** The last `lines` lines of a text, but never more than `maxChars` characters. */
-export function lastLines(text: string, lines: number, maxChars: number): string {
-  const parts = text.split(/\r?\n/).filter((l) => l.trim() !== "");
-  let out = parts.slice(-lines).join("\n");
-  if (out.length > maxChars) out = out.slice(-maxChars);
-  return out;
+/**
+ * The paragraphs of a new text with the work of the old: a paragraph whose text is the same as one before it (in the same order)
+ * keeps its translation, and the others start again.
+ */
+export function syncParagraphs(old: readonly WorkParagraph[], text: string): WorkParagraph[] {
+  const byText = new Map<string, number[]>();
+  old.forEach((p, i) => byText.set(p.text, [...(byText.get(p.text) ?? []), i]));
+  let last = -1;
+  return paragraphsOf(text).map((p) => {
+    const at = (byText.get(p.text) ?? []).find((i) => i > last);
+    if (at === undefined) return { text: p.text, translation: "" };
+    last = at;
+    return { ...old[at]! };
+  });
 }
