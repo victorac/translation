@@ -231,7 +231,7 @@ describe("suggested names", () => {
       word("山田太郎", "Taro", { suggestions: { english: ["Yamada Taro"] } }),
       word("桜台学園", "", { kind: "organization", suggestions: { english: ["Sakuradai"] }, use: false }),
     ];
-    expect(suggestionsFor(words, "花子は桜台学園で山田太郎に会った。魔王が来た。")).toEqual([{ source: "鈴木花子", suggestion: "Suzuki Hanako", sound: false, aliases: ["花子"] }, { source: "魔王", suggestion: "Maou", sound: true }]);
+    expect(suggestionsFor(words, "花子は桜台学園で山田太郎に会った。魔王が来た。")).toEqual([{ source: "魔王", suggestion: "Maou" }]); // only a dictionary reading is sent: what the model wrote before is not
     expect(suggestionsFor(words, "何もない。")).toEqual([]);
   });
 });

@@ -640,12 +640,12 @@ describe("translating a document", () => {
     expect(sent).toContain("HOW NAMES SOUND (a rough reading of a name from a dictionary, only for the sound; write the name in English the way it is normally spelled, and the same way every time):\n- 鈴木花子 is read: Suzuki Hanako");
     expect(sent).not.toContain("SUGGESTED NAMES");
     expect(sent.split("HOW NAMES SOUND")[1]!.split("\n\n")[0]).not.toContain("山田太郎"); // confirmed: not a suggestion
-    // A name the model wrote itself in an earlier translation is a suggestion to keep writing it the same way.
+    // What the model wrote itself in an earlier translation is not sent back: it would keep a mistake in place.
     const word = service.workGet()!.words.find((n) => n.source === "鈴木花子")!;
     word.suggestions = { english: ["Hanako Suzuki"] };
     delete word.fromReading;
     await service.workTranslate({ ...model, redo: true });
-    expect(bodies(lm).at(-1)!.messages[1]!.content).toContain("SUGGESTED NAMES (how the name was written before; use it unless it is clearly wrong, and write the name the same way every time):\n- 鈴木花子 => Hanako Suzuki");
+    expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("Hanako Suzuki");
   });
 
   it("reads the translation for suggestions with short questions, and throws away an answer that does not pass its check", async () => {

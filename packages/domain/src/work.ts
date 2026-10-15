@@ -385,18 +385,18 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
 }
 
 /**
- * The words of a paragraph that have no confirmed English name but a suggested one (the dictionary's reading, or what the model used in an
- * earlier translation). They are told to the model as suggestions: it may write the name differently when that is clearly better.
+ * The words of a paragraph that have no confirmed English name but a dictionary reading. It is told to the model as how the name sounds,
+ * not as a spelling. What the model itself wrote in an earlier translation is not sent back: it would keep a mistake in place.
  */
-export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; sound: boolean; aliases?: string[] }[] {
+export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
   const sources = words.map((n) => n.source);
   return words.flatMap((n) => {
     const suggestion = n.suggestions?.["english"]?.[0]?.trim();
-    if (!suggestion || n.english.trim() !== "" || n.use === false) return [];
+    if (!suggestion || n.fromReading !== true || n.english.trim() !== "" || n.use === false) return [];
     const aliases = n.aliases.filter((a) => !sources.includes(a));
     const alone = withoutLongerNames(only, n.source, sources);
     if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];
-    return [{ source: n.source, suggestion, sound: n.fromReading === true, ...(aliases.length > 0 ? { aliases } : {}) }];
+    return [{ source: n.source, suggestion, ...(aliases.length > 0 ? { aliases } : {}) }];
   });
 }
 
