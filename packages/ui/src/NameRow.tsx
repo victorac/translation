@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Cross2Icon, DotsHorizontalIcon } from "@radix-ui/react-icons";
 import { Badge, Button, DropdownMenu, Flex, IconButton, Text, TextField } from "@radix-ui/themes";
 import type { AttributeDef, Word } from "@ltw/domain";
@@ -19,9 +19,8 @@ export interface TopicRef {
 const KIND_LABEL: Record<string, string> = { character: "person", family: "family", place: "place", organization: "organization", term: "term" };
 
 /** A text field that keeps what is being typed and saves it when the field is left (Enter saves, Escape goes back). */
-export function TextBox({ value, label, placeholder, onSave, onConfirm, className }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void; /** Returns true when it took the value (the field then does not save it again when it is left). */ onConfirm?: (value: string) => boolean; className?: string }) {
+export function TextBox({ value, label, placeholder, onSave, className }: { value: string; label: string; placeholder?: string; onSave: (value: string) => void; className?: string }) {
   const [text, setText] = useState(value);
-  const confirmed = useRef(false);
   useEffect(() => setText(value), [value]);
   return (
     <TextField.Root
@@ -31,14 +30,9 @@ export function TextBox({ value, label, placeholder, onSave, onConfirm, classNam
       value={text}
       {...(placeholder !== undefined ? { placeholder } : {})}
       onChange={(e) => setText(e.target.value)}
-      onBlur={() => {
-        if (confirmed.current) confirmed.current = false;
-        else if (text.trim() !== value.trim()) onSave(text);
-      }}
+      onBlur={() => text.trim() !== value.trim() && onSave(text)}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
-          // Ctrl or Cmd with Enter confirms (the field is where the value is read from afterwards), Enter alone only saves.
-          if ((e.ctrlKey || e.metaKey) && onConfirm?.(text)) confirmed.current = true;
           (e.target as HTMLInputElement).blur();
         }
         if (e.key === "Escape") {
@@ -219,6 +213,7 @@ export function NameRow({
   onSuggest,
   onEnglish,
   onSuggestEnglish,
+  onLoosen,
   onHint,
   onKind,
   onAttribute,
@@ -244,6 +239,8 @@ export function NameRow({
   onEnglish: (english: string) => void;
   /** The English name was written as a suggestion: told to the model the way the dictionary's reading is, not forced. */
   onSuggestEnglish: (english: string) => void;
+  /** A fixed English name is turned back into a suggestion (only for a word that is not in the knowledge base yet). */
+  onLoosen: () => void;
   onHint: (hint: string) => void;
   onKind: (kind: string) => void;
   onAttribute: (key: string, values: string[]) => void;
@@ -255,6 +252,7 @@ export function NameRow({
   const suggestions = name.suggestions ?? {};
   const suggestedEnglish = name.english.trim() === "" ? (suggestions["english"]?.[0] ?? "") : "";
   const used = name.use !== false;
+  const state: "fixed" | "suggested" | null = name.english.trim() !== "" ? "fixed" : suggestedEnglish !== "" ? "suggested" : null;
   return (
     <li className={used ? "name-item" : "name-item ignored"}>
       <Flex align="center" gap="1" className="glossary-head">
@@ -269,22 +267,32 @@ export function NameRow({
         {used ? (
           <Flex align="center" gap="1" className="name-english">
             <TextBox
-              className={suggestedEnglish !== "" ? "english-suggested" : name.english.trim() === "" && !name.hint ? "english-missing" : ""}
+              className={state === "suggested" ? "english-suggested" : state === null && !name.hint ? "english-missing" : ""}
               value={name.english.trim() !== "" ? name.english : suggestedEnglish}
               label={`English name of ${name.source}`}
               placeholder={name.hint ? `note: ${name.hint}` : "English name"}
-              // A name that is confirmed stays confirmed when it is changed; otherwise what is written is a suggestion until it is confirmed.
-              onSave={(v) => (name.english.trim() !== "" ? onEnglish(v) : onSuggestEnglish(v))}
-              onConfirm={(v) => {
-                if (name.english.trim() !== "" || v.trim() === "") return false;
-                onEnglish(v);
-                return true;
-              }}
+              // A name that is fixed stays fixed when it is changed; otherwise what is written is a suggestion until it is fixed.
+              onSave={(v) => (state === "fixed" ? onEnglish(v) : onSuggestEnglish(v))}
             />
-            {suggestedEnglish !== "" && (
-              <IconButton variant="ghost" size="1" onClick={() => onAcceptSuggestion("english")} aria-label={`Confirm ${suggestedEnglish} as the English name of ${name.source}`} title="This is only a suggestion. Click to confirm it as the name the model must use. You can change it first: Enter keeps it as a suggestion.">
-                <CheckIcon />
-              </IconButton>
+            {state !== null && (
+              <Button
+                size="1"
+                variant="soft"
+                color={state === "fixed" ? "green" : "amber"}
+                className="english-state"
+                disabled={state === "fixed" && !name.draft}
+                onClick={() => (state === "suggested" ? onAcceptSuggestion("english") : onLoosen())}
+                aria-label={state === "suggested" ? `Make the English name of ${name.source} fixed` : `Make the English name of ${name.source} a suggestion again`}
+                title={
+                  state === "suggested"
+                    ? "Suggested: told to the model as a hint it may not follow. Click to fix it: the model must write exactly this."
+                    : name.draft
+                      ? "Fixed: the model must write exactly this. Click to make it a suggestion again."
+                      : "Fixed: the model must write exactly this. It is in the knowledge base; change it here, or remove the word."
+                }
+              >
+                {state === "suggested" ? "suggested" : "fixed"}
+              </Button>
             )}
           </Flex>
         ) : (

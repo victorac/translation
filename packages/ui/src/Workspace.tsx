@@ -211,6 +211,13 @@ export function Workspace({
 
   const update = (run: () => Promise<{ ok: true; value: Work } | { ok: false; error: { message: string } }>) => void call(run).then((w) => w && setWork(w));
 
+  /** A fixed English name becomes a suggestion again: it stays as text in the field, no longer forced on the model. */
+  const loosen = async (word: Word) => {
+    const first = await call(() => api.invoke("work.setEnglish", { source: word.source, english: "" }));
+    if (!first) return;
+    update(() => api.invoke("work.setSuggestion", { source: word.source, key: "english", value: word.english }));
+  };
+
   /** Takes a word out of the glossary (and says so, with a way back): it is not found again in this text. */
   const removeWord = async (word: Word) => {
     const w = await call(() => api.invoke("work.removeWord", { source: word.source }));
@@ -301,12 +308,12 @@ export function Workspace({
         if (r.value.reading) setActivity({ what: `Reading the translation for suggestions: ${r.value.reading.done} of ${r.value.reading.total}`, stop: true });
       });
     }, 1000);
-    const before = JSON.stringify(work.words.filter((n) => !only || only.includes(n.source)).map((n) => [n.source, n.suggestions]));
     const w = await call(() => api.invoke("work.suggest", { ...modelInput(), ...(only ? { only } : {}) }));
     clearInterval(poll);
-    // Asked for particular words and nothing new came back: say so, instead of leaving the row as it was.
-    if (w && only && JSON.stringify(w.words.filter((n) => only.includes(n.source)).map((n) => [n.source, n.suggestions])) === before) {
-      toast({ text: `The model did not find how ${only.length === 1 ? only[0] : "those words"} was written in the translation. You can write a suggestion yourself.` });
+    // What the model could not suggest, and why: said, so that a row left as it was is explained.
+    if (w && (w.misses ?? []).length > 0) {
+      const shown = w.misses!.slice(0, 3).join("; ");
+      toast({ text: `No suggestion from the translation. ${shown}${w.misses!.length > 3 ? `; and ${w.misses!.length - 3} more` : ""}.` });
     }
     if (w) setWork(w);
     else void api.invoke("work.get").then((r) => r.ok && r.value && setWork(r.value));
@@ -524,6 +531,7 @@ export function Workspace({
                           onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
                           onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
                           onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
+                          onLoosen={() => void loosen(n)}
                           onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                           onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                           onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
@@ -571,6 +579,7 @@ export function Workspace({
                             onRemove={() => void removeWord(n)}
                             onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
                           onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
+                          onLoosen={() => void loosen(n)}
                             onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
                             onKind={(kind) => update(() => api.invoke("work.setKind", { source: n.source, kind }))}
                             onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}

@@ -241,7 +241,7 @@ export class WorkspaceService {
       settings: this.settings ? structuredClone(this.settings) : null,
       knowledge: { entries: this.knowledge.everything(), classes: this.classesText },
       work: [...this.workByDoc.values(), ...(this.work ? [this.work] : [])].map((g) => {
-        const { reading: _reading, ...saved } = structuredClone(g);
+        const { reading: _reading, misses: _misses, ...saved } = structuredClone(g);
         return saved;
       }),
     };
@@ -1001,6 +1001,8 @@ export class WorkspaceService {
     const evidenceFor = (n: Word): { at: number; pair: Evidence }[] =>
       w.paragraphs.flatMap((p, k) => (translated(k) && occurrencesOf(p.text, namesOf(n), sources).length > 0 ? [{ at: k, pair: { source: p.text, translation: p.translation.trim() } }] : [])).slice(0, 3);
     const label = (n: Word) => n.english.trim() || n.suggestions?.["english"]?.[0] || n.source;
+    // The window asks for the work while this runs, and every such read makes new objects of the words: an answer is written to the word as it is then.
+    const current = (n: Word): Word | undefined => w.words.find((x) => x.source === n.source);
     // Asked about some words only: the lines are left alone.
     const wanted = (n: Word): boolean => input.only === undefined || input.only.includes(n.source);
     type Task = { count: number; run: () => Promise<void> };
@@ -1020,11 +1022,18 @@ export class WorkspaceService {
       tasks.push({
         count: 1,
         run: async () => {
-          const reply = await ask(nameQuestion(n.source, ev.map((e) => e.pair), input.sourceLanguage, input.targetLanguage));
-          const copied = reply === null ? null : copiedWords(reply, ev.map((e) => e.pair.translation));
-          if (copied) {
-            n.suggestions = { ...(n.suggestions ?? {}), english: [copied] };
-            delete n.fromReading; // now it is how the name was written, not how it sounds
+          const question = nameQuestion(n.source, ev.map((e) => e.pair), input.sourceLanguage, input.targetLanguage);
+          let reply = await ask(question);
+          // An empty answer is a model that had nothing ready (it was loading, or cut off): once more.
+          if (reply === "") reply = await ask(question);
+          const copied = reply === null || reply === "" ? null : copiedWords(reply, ev.map((e) => e.pair.translation));
+          const word = current(n);
+          if (copied && word) {
+            word.suggestions = { ...(word.suggestions ?? {}), english: [copied] };
+            delete word.fromReading; // now it is how the name was written, not how it sounds
+          } else if (!copied) {
+            const why = reply === null ? "the question did not fit the model's context" : reply === "" ? "the model gave no answer" : /^none\b/i.test(reply) ? "the model says it is not written in the translation" : `the model answered "${reply.split(/\r?\n/)[0]!.slice(0, 60)}", which is not in the translation`;
+            w.misses = [...(w.misses ?? []), `${n.source}: ${why}`];
           }
         },
       });
@@ -1050,7 +1059,8 @@ export class WorkspaceService {
               const by = pronounGender(ev.map((e) => e.pair.translation));
               if (by !== null && by !== value) return;
             }
-            n.suggestions = { ...(n.suggestions ?? {}), [def.key]: [value] };
+            const word = current(n);
+            if (word) word.suggestions = { ...(word.suggestions ?? {}), [def.key]: [value] };
           },
         });
       }
@@ -1081,6 +1091,7 @@ export class WorkspaceService {
     });
 
     try {
+      w.misses = [];
       w.reading = { done: 0, total: tasks.length };
       this.workChanged();
       for (const task of tasks) {

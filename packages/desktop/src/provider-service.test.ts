@@ -752,6 +752,24 @@ describe("translating a document", () => {
     expect(() => service.workSetSuggestion("鈴木花子", "gender", "female")).toThrow(/English name/);
   });
 
+  it("keeps what it finds while the window reads the work again and again, as it does during a reading of the translation", async () => {
+    let reads = () => {};
+    const lm = await fakeLmStudio({
+      paragraph: () => "Taro Yamada laughed.",
+      answer: (_system, user) => {
+        reads(); // every read of the work makes new objects of its words
+        return user.includes("stand for") ? "Taro Yamada" : "NONE";
+      },
+    });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "山田太郎は笑った。");
+    await service.workTranslate({ ...model });
+    reads = () => void service.workGet();
+    await service.workSuggest({ ...model });
+    expect(words(service).find((n) => n.source === "山田太郎")!.suggestions?.["english"]).toEqual(["Taro Yamada"]);
+  });
+
   it("reads the translation for suggestions with short questions, and throws away an answer that does not pass its check", async () => {
     const english = ["Taro Yamada laughed.", "Hanako Suzuki cried. She sat down.", '"Good morning," Taro Yamada said.'];
     let k = 0;

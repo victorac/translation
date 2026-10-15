@@ -94,6 +94,8 @@ export interface Work {
   error?: string | null;
   /** While the translation is being read for suggestions: how far it has got. Never saved. */
   reading?: { done: number; total: number } | null;
+  /** What the last reading of the translation could not suggest, and why, in words for the user. Never saved. */
+  misses?: string[];
 }
 
 const ORGANIZATION = /(学園|学院|学校|高校|大学|会社|協会|組合|騎士団|教団|軍|党)$/;

@@ -244,3 +244,7 @@ details > summary { cursor: pointer; }
 .drawer-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; z-index: 1; }
 .drawer-resize::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 2px; background: transparent; }
 .drawer-resize:hover::after, .drawer-resize:focus-visible::after, .drawer-resize:active::after { background: var(--accent-8); }
+.english-state { flex: none; }
+/* A row that is too narrow puts the English name (with its state) on a line of its own instead of squeezing it. */
+.glossary-head { flex-wrap: wrap; row-gap: 0.15rem; }
+.glossary-head .name-english { flex: 1 1 9rem; min-width: 9rem; }
