@@ -61,6 +61,7 @@ const COMMANDS = new Set([
   "work.setUse",
   "work.translate",
   "work.setPart",
+  "work.setNote",
   "work.retranslate",
   "knowledge.files",
   "knowledge.file",

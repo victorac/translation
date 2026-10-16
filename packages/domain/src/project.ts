@@ -104,7 +104,7 @@ const workSchema = z.object({
   source: z.string().max(5_000_000),
   words: z.array(wordSchema).max(5000),
   lines: z.array(z.object({ paragraph: count, text: str, speaker: z.string().max(200).nullable(), suggested: z.string().max(200).nullable().optional() })).max(100_000),
-  paragraphs: z.array(z.object({ text: str, translation: str, issue: z.string().max(5000).nullable().optional(), edited: z.boolean().optional() })).max(200_000),
+  paragraphs: z.array(z.object({ text: str, translation: str, issue: z.string().max(5000).nullable().optional(), edited: z.boolean().optional(), note: z.string().max(2000).optional() })).max(200_000),
   error: z.string().max(5000).nullable().optional(),
 });
 

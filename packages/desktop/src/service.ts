@@ -23,6 +23,7 @@ import {
   STANDARD_PROMPT,
   type Word,
   type Work,
+  type WorkParagraph,
   type WorkLine,
   type KnownWord,
   type ModelInput,
@@ -118,6 +119,11 @@ const newDoc = (title: string): Doc => ({ id: newId(), title, createdAt: new Dat
  * blocks of its text with what was read from each and the translation of each paragraph. Every window action ends up in one of
  * these methods.
  */
+/** A paragraph written again by the model: no longer the user's text, and its note stays. */
+function rewritten(p: WorkParagraph, translation: string, issue?: string | null): WorkParagraph {
+  return { text: p.text, translation, ...(issue !== undefined ? { issue } : {}), ...(p.note ? { note: p.note } : {}) };
+}
+
 export class WorkspaceService {
   private docs: Doc[] = [newDoc("Document 1")];
   private activeDocId = this.docs[0]!.id;
@@ -932,6 +938,18 @@ export class WorkspaceService {
     return this.workView();
   }
 
+  /** The user's note from one paragraph on (who tells the story from there, say). An empty note removes it. */
+  workSetNote(paragraph: number, note: string): Work {
+    const w = this.need();
+    const p = w.paragraphs[paragraph];
+    if (!p) throw new UserError("no_paragraph", "That paragraph does not exist.");
+    const text = note.replace(/\s+/g, " ").trim();
+    if (text !== "") p.note = text;
+    else delete p.note;
+    this.workChanged();
+    return this.workView();
+  }
+
   /** The translation style the model's settings name, filled in with the languages. */
   private styleOf(input: ModelInput): { text: string } {
     const style = allPrompts((this.settings?.prompts ?? []).filter((p) => validatePrompt(p) === null)).find((p) => p.id === input.promptId) ?? STANDARD_PROMPT;
@@ -948,7 +966,7 @@ export class WorkspaceService {
     const w = this.work!;
     const paragraph = w.paragraphs[k]!.text;
     const glossary = glossaryFor(w.words, paragraph);
-    const notes = notesFor(w.words, w.lines, { index: k, text: paragraph });
+    const notes = notesFor(w.words, w.lines, { index: k, text: paragraph }, w.paragraphs);
     const suggestions = suggestionsFor(w.words, paragraph);
     const sameText = (a: string, b: string): boolean => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
     // An alternative is asked for with the current translation shown as the version that was not accepted, as when the model gives back the same text.
@@ -1040,12 +1058,15 @@ export class WorkspaceService {
       const several = lines.length > 1;
       const missing = missingNames(glossary, paragraph, text);
       const unchanged = old !== undefined && sameText(text, old);
-      issue = missing.length > 0 ? `Paragraph ${k + 1} does not use the glossary names: ${missing.join("; ")}.` : unchanged ? `Paragraph ${k + 1}: the model wrote the same text again.` : several ? `Paragraph ${k + 1}: the model wrote several paragraphs, which were joined.` : null;
+      // Speech in 「…」 is speech in the translation too: an answer with no quotation marks at all made it narration.
+      const unquoted = paragraph.includes("「") && !/["“”]/.test(text);
+      issue = missing.length > 0 ? `Paragraph ${k + 1} does not use the glossary names: ${missing.join("; ")}.` : unchanged ? `Paragraph ${k + 1}: the model wrote the same text again.` : several ? `Paragraph ${k + 1}: the model wrote several paragraphs, which were joined.` : unquoted ? `Paragraph ${k + 1}: the speech in it has no quotation marks.` : null;
       if (issue === null) break;
       if (unchanged) reject = old;
       complaint = [
         several ? "Your last answer was not accepted because it was several paragraphs. Translate only the paragraph above, as one paragraph." : "",
         missing.length > 0 ? `Your last answer was not accepted because it does not use these names or words: ${missing.join("; ")}. Translate again and use them.` : "",
+        unquoted ? "Your last answer was not accepted because it has no quotation marks. What is said in 「」 in the paragraph goes in quotation marks." : "",
       ]
         .filter((x) => x !== "")
         .map((x) => `\n\n${x}`)
@@ -1197,13 +1218,13 @@ export class WorkspaceService {
       const system = paragraphSystem(this.styleOf(input).text, input.sourceLanguage, input.targetLanguage);
       const start = Math.max(0, input.from ?? 0);
       w.error = null;
-      if (input.redo) for (let k = start; k < w.paragraphs.length; k++) w.paragraphs[k] = { text: w.paragraphs[k]!.text, translation: "" };
+      if (input.redo) for (let k = start; k < w.paragraphs.length; k++) w.paragraphs[k] = rewritten(w.paragraphs[k]!, "");
       this.workChanged();
       for (let k = start; k < w.paragraphs.length; k++) {
         if (w.paragraphs[k]!.translation.trim() !== "") continue;
         const done = await this.translateParagraph(input, k, system, abort);
         if (done === null) break; // stopped: what is written so far stays
-        w.paragraphs[k] = { text: w.paragraphs[k]!.text, translation: done.text, issue: done.issue };
+        w.paragraphs[k] = rewritten(w.paragraphs[k]!, done.text, done.issue);
         this.workChanged();
       }
     } catch (e) {
@@ -1229,7 +1250,7 @@ export class WorkspaceService {
       const old = w.paragraphs[input.paragraph]!.translation;
       const done = await this.translateParagraph(input, input.paragraph, system, abort, old.trim() === "" ? undefined : old, input.alternative === true);
       if (done === null) return this.workView();
-      w.paragraphs[input.paragraph] = { text: w.paragraphs[input.paragraph]!.text, translation: done.text, issue: done.issue };
+      w.paragraphs[input.paragraph] = rewritten(w.paragraphs[input.paragraph]!, done.text, done.issue);
       w.error = null;
       this.workChanged();
     } finally {

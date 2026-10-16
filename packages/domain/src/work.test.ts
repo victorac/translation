@@ -9,6 +9,7 @@ import {
   guessGender,
   guessKind,
   labelDocument,
+  noteAt,
   notesFor,
   occurrencesOf,
   readWords,
@@ -214,12 +215,32 @@ describe("where a word stands in a text", () => {
   });
 });
 
+describe("a note from a paragraph on", () => {
+  const paragraphs = [{ text: "一。", translation: "", note: "Told by Noah, in the first person." }, { text: "二。", translation: "" }, { text: "三。", translation: "", note: "Third person, following Sera." }, { text: "四。", translation: "" }];
+
+  it("is in effect until the next note", () => {
+    expect([0, 1, 2, 3].map((k) => noteAt(paragraphs, k))).toEqual(["Told by Noah, in the first person.", "Told by Noah, in the first person.", "Third person, following Sera.", "Third person, following Sera."]);
+    expect(noteAt([{ text: "一。", translation: "" }], 0)).toBeNull();
+  });
+
+  it("is sent first among the notes of a paragraph", () => {
+    expect(notesFor([], [], { index: 3, text: "四。" }, paragraphs)).toEqual(["Third person, following Sera."]);
+  });
+});
+
 describe("when the text changes", () => {
   it("keeps the translation of a paragraph whose text is the same, and starts the others again", () => {
     const old = [{ text: "一。", translation: "One." }, { text: "二。", translation: "Two." }, { text: "三。", translation: "Three." }];
     const next = syncParagraphs(old, "一。\n\n新しい。\n\n二。\n\n三。");
     expect(next.map((p) => p.translation)).toEqual(["One.", "", "Two.", "Three."]);
     expect(syncParagraphs(old, "三。\n二。").map((p) => p.translation)).toEqual(["Three.", ""]); // order is kept: Two. cannot come back after Three.
+  });
+
+  it("keeps a note with its paragraph, and where the paragraph's text changed, at the place it stands now", () => {
+    const old = [{ text: "一。", translation: "One.", note: "Told by Noah." }, { text: "二。", translation: "Two." }, { text: "三。", translation: "Three.", note: "Sera's point of view." }];
+    expect(syncParagraphs(old, "新しい。\n一。\n二。\n三。").map((p) => p.note)).toEqual([undefined, "Told by Noah.", undefined, "Sera's point of view."]);
+    // 三 was edited: its note stays on the paragraph after 二.
+    expect(syncParagraphs(old, "一。\n二。\n三が変わった。").map((p) => p.note)).toEqual(["Told by Noah.", undefined, "Sera's point of view."]);
   });
 
   it("matches repeated paragraphs in order", () => {

@@ -19,7 +19,8 @@
  * The fixture is JSON: { sourceLanguage?, targetLanguage?, glossary: [{ source, target, kind?, note?, aliases? }], passages: [{ id,
  * source: string[], reference: string[], edits?, checks? }] }. Each passage is translated as one text, in order, so the paragraphs before
  * carry the model's own translations as context, as in the app. `edits` ({ "3": "text" }) are paragraphs the user translated before the
- * run: they are set as the user's own (and so can be sent as examples) and are not scored. `checks` ([{ at, must?, not?, why }]) are
+ * run: they are set as the user's own (and so can be sent as examples) and are not scored. `notes` ({ "0": "Told by Noah." }) are the
+ * user's notes from a paragraph on. `checks` ([{ at, must?, not?, why }]) are
  * patterns (case-sensitive regular expressions) that the translation of paragraph `at` must or must not match: a pointed test of one
  * thing (a term in lowercase in prose, a speaker, a name that must not appear), more telling than chrF on a small set.
  * Do not commit fixtures made of someone's book: name them *.local.json.
@@ -46,7 +47,7 @@ interface Fixture {
   sourceLanguage?: string;
   targetLanguage?: string;
   glossary: GlossaryItem[];
-  passages: { id: string; source: string[]; reference: string[]; edits?: Record<string, string>; checks?: Check[] }[];
+  passages: { id: string; source: string[]; reference: string[]; edits?: Record<string, string>; notes?: Record<string, string>; checks?: Check[] }[];
 }
 interface Check {
   at: number;
@@ -230,6 +231,7 @@ async function translatePassage(
   // What the user translated before: their own text, which the run keeps and does not score.
   const edits = new Map(Object.entries(passage.edits ?? {}).map(([k, v]) => [Number(k), v]));
   for (const [k, text] of edits) service.workSetPart(k, text);
+  for (const [k, note] of Object.entries(passage.notes ?? {})) service.workSetNote(Number(k), note);
   const done = await service.workTranslate({
     backend: opts.backend,
     modelId: opts.model,
@@ -421,7 +423,8 @@ async function main(): Promise<void> {
   const backend = served === null ? "practice" : "provider";
   if (backend === "practice") console.error(values.practice ? "Using the practice translator." : `No model server at ${baseUrl}: using the practice translator, so the scores say nothing about quality.`);
   const models = values.model?.length ? values.model : served?.length ? [served.find((m) => !/embed/i.test(m)) ?? served[0]!] : ["practice"];
-  for (const m of models) if (served && !served.includes(m)) throw new Error(`${baseUrl} does not have the model "${m}". It has: ${served.join(", ")}.`);
+  // A variant (qwen/qwen3-4b-2507@4bit) is listed only once it is loaded, but LM Studio loads it when asked.
+  for (const m of models) if (served && !served.includes(m) && !served.includes(m.split("@")[0]!)) throw new Error(`${baseUrl} does not have the model "${m}". It has: ${served.join(", ")}.`);
   const prompts = values.prompt?.length ? values.prompt : ["standard"];
   const temperature = Number(values.temperature);
   const judgeUrl = values["judge-url"];

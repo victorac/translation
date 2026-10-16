@@ -57,7 +57,8 @@ interface Seen {
 }
 
 /** What the stand-in "translates" a block into: not the source text, so it does not look untranslated. */
-const fakeEnglish = (source: string): string => source.replace(/[\u3000-\u9fff]/g, "a");
+// Speech keeps its quotation marks, as in a real translation.
+const fakeEnglish = (source: string): string => source.replace(/[「」]/g, '"').replace(/[\u3000-\u9fff]/g, "a");
 
 /** A small stand-in for LM Studio: lists two models and "translates" each paragraph it is asked for into something that is not the source. */
 async function fakeLmStudio(opts: { apiKey?: string; answer?: (system: string, user: string) => string; paragraph?: (user: string, source: string, model: string) => string } = {}) {
@@ -451,6 +452,23 @@ describe("translating a document", () => {
     expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("EXAMPLES");
   });
 
+  it("sends the note in effect at each paragraph, and keeps notes when paragraphs are translated again", async () => {
+    const lm = await fakeLmStudio({ paragraph: (_user, source) => `EN: ${fakeEnglish(source)}` });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "一。\n\n二。\n\n三。");
+    service.workSetNote(0, "Told by Noah, in the first person.");
+    const noted = service.workSetNote(2, "  Third person,\n following Sera. ");
+    expect(noted.paragraphs.map((p) => p.note)).toEqual(["Told by Noah, in the first person.", undefined, "Third person, following Sera."]);
+    const done = await service.workTranslate({ ...model });
+    const asked = bodies(lm).map((b) => b.messages[1]!.content);
+    expect(asked[1]).toContain("- Told by Noah, in the first person.");
+    expect(asked[2]).toContain("- Third person, following Sera.");
+    expect(asked[2]).not.toContain("Told by Noah");
+    expect(done.paragraphs[2]!.note).toBe("Third person, following Sera.");
+    expect(service.workSetNote(2, "").paragraphs[2]!.note).toBeUndefined();
+  });
+
   it("sends at most eight translated paragraphs before and two after, even when more would fit", async () => {
     const lm = await fakeLmStudio({ paragraph: (_user, source) => `EN: ${fakeEnglish(source)}` });
     const { provider, service } = setup();
@@ -551,6 +569,20 @@ describe("translating a document", () => {
     const again = await service.workRetranslate({ ...model, paragraph: 0 });
     expect(again.paragraphs[0]!.translation).toBe("First. Hanako Second.");
     expect(again.paragraphs[0]!.issue).toMatch(/several paragraphs, which were joined/);
+  });
+
+  it("asks again when speech comes back without quotation marks, and says so if it still does", async () => {
+    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("has no quotation marks") ? '"Good morning."' : "Good morning.") });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "「おはよう」");
+    const done = await service.workTranslate({ ...model });
+    expect(done.paragraphs[0]).toMatchObject({ translation: '"Good morning."' });
+    expect(done.paragraphs[0]!.issue ?? null).toBeNull();
+    const stubborn = await fakeLmStudio({ paragraph: () => "Good morning." });
+    provider.save({ baseUrl: stubborn.baseUrl, allowRemote: false });
+    const again = await service.workRetranslate({ ...model, paragraph: 0 });
+    expect(again.paragraphs[0]!.issue).toMatch(/no quotation marks/);
   });
 
   it("asks again when the glossary name of the paragraph is left out, and says so if it still is", async () => {

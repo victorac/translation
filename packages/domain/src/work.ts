@@ -82,6 +82,11 @@ export interface WorkParagraph {
   issue?: string | null;
   /** The user wrote or corrected this translation: it is shown to the model as an example where its terms come back. */
   edited?: boolean;
+  /**
+   * A note the user wrote from this paragraph on (who tells the story, whose point of view, a letter or a flashback): sent with this
+   * paragraph and the ones after it, until the next paragraph that has a note.
+   */
+  note?: string;
 }
 
 /** Everything about one document's translation. */
@@ -326,10 +331,24 @@ export function readWords(input: ReadInput): Word[] {
 
 const shorten = (text: string, n: number): string => (Array.from(text).length > n ? `${Array.from(text).slice(0, n).join("")}…` : text);
 
-/** The notes sent with a paragraph: the gender of the people it names, and who says the lines in it, as the user confirmed them. */
-export function notesFor(words: readonly Word[], lines: readonly WorkLine[], paragraph: { index: number; text: string }): string[] {
+/** The note in effect at a paragraph: the last one written on it or on a paragraph before it. */
+export function noteAt(paragraphs: readonly WorkParagraph[], index: number): string | null {
+  for (let k = Math.min(index, paragraphs.length - 1); k >= 0; k--) {
+    const note = paragraphs[k]!.note?.trim();
+    if (note) return note;
+  }
+  return null;
+}
+
+/**
+ * The notes sent with a paragraph: the user's note in effect there, the gender of the people it names, and who says the lines in it,
+ * as the user confirmed them.
+ */
+export function notesFor(words: readonly Word[], lines: readonly WorkLine[], paragraph: { index: number; text: string }, paragraphs: readonly WorkParagraph[] = []): string[] {
   const english = (source: string): string => words.find((n) => n.source === source)?.english || source;
   const notes: string[] = [];
+  const note = noteAt(paragraphs, paragraph.index);
+  if (note) notes.push(note);
   for (const n of words) {
     if (n.use === false || n.kind !== "character" || !n.gender || !n.english) continue;
     if (!occurrencesOf(paragraph.text, namesOf(n), words.map((w) => w.source)).length) continue;
@@ -418,10 +437,21 @@ export function syncParagraphs(old: readonly WorkParagraph[], text: string): Wor
   const byText = new Map<string, number[]>();
   old.forEach((p, i) => byText.set(p.text, [...(byText.get(p.text) ?? []), i]));
   let last = -1;
-  return paragraphsOf(text).map((p) => {
+  const movedTo = new Map<number, number>();
+  const out: WorkParagraph[] = paragraphsOf(text).map((p, k) => {
     const at = (byText.get(p.text) ?? []).find((i) => i > last);
     if (at === undefined) return { text: p.text, translation: "" };
     last = at;
+    movedTo.set(at, k);
     return { ...old[at]! };
   });
+  // A note on a paragraph whose text changed stays where that paragraph now stands: as far after the last paragraph that kept its
+  // text as it was before.
+  old.forEach((p, i) => {
+    if (!p.note || movedTo.has(i) || out.length === 0) return;
+    const kept = [...movedTo.keys()].filter((j) => j < i).at(-1);
+    const k = Math.min(out.length - 1, kept === undefined ? i : movedTo.get(kept)! + (i - kept));
+    if (!out[k]!.note) out[k] = { ...out[k]!, note: p.note };
+  });
+  return out;
 }

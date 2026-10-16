@@ -5,7 +5,7 @@ import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
-import { SourceEditor, type Hit } from "./SourceEditor";
+import { SourceEditor, type Hit, type NoteMark } from "./SourceEditor";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import { useLog } from "./Log";
@@ -73,6 +73,8 @@ export function Workspace({
   const [showIgnored, setShowIgnored] = useState(false);
   /** Words selected in the source: the button to add them to the glossary shows beside them. */
   const [selected, setSelected] = useState<{ text: string; left: number; bottom: number } | null>(null);
+  /** The note being written for a paragraph, in a box next to its number. */
+  const [noteEdit, setNoteEdit] = useState<{ paragraph: number; left: number; bottom: number; draft: string } | null>(null);
   const toast = useToast();
   const { log } = useLog();
   const [filter, setFilter] = useState("");
@@ -401,6 +403,18 @@ export function Workspace({
     if (at >= 0) lineItems.current[at]?.scrollIntoView({ block: "nearest" });
   }, [cur]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const noteMarks: NoteMark[] = inSync ? paragraphs.flatMap((p, k) => (p.note && places[k] ? [{ paragraph: k, at: places[k]!.start, text: p.note }] : [])) : [];
+  const openNote = (paragraph: number, place: { left: number; bottom: number }) => {
+    setSelected(null);
+    setNoteEdit({ paragraph, ...place, draft: paragraphs[paragraph]?.note ?? "" });
+  };
+  const saveNote = async (note: string) => {
+    if (!noteEdit) return;
+    const w = await call(() => api.invoke("work.setNote", { paragraph: noteEdit.paragraph, note }));
+    if (w) setWork(w);
+    setNoteEdit(null);
+  };
+
   const currentRange = inSync && cur !== null && places[cur] ? { from: places[cur]!.start, to: places[cur]!.end } : null;
   const editorHits: Hit[] = inSync ? hits.map((h, i) => ({ from: h.start, to: h.end, current: i === current })) : [];
 
@@ -498,8 +512,53 @@ export function Workspace({
               <span>to the glossary</span>
             </Button>
           )}
+          {noteEdit && (
+            <form
+              className="note-box"
+              style={{ left: Math.max(4, Math.min(noteEdit.left, window.innerWidth - 360)), top: noteEdit.bottom + 6 }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveNote(noteEdit.draft);
+              }}
+              onKeyDown={(e) => e.key === "Escape" && setNoteEdit(null)}
+            >
+              <Text as="label" size="1" weight="bold" htmlFor="note-draft">
+                Note from paragraph {noteEdit.paragraph + 1} on
+              </Text>
+              <Text as="p" size="1" color="gray" mb="1">
+                Who tells the story from here, whose point of view, a letter or a flashback. It is sent with this paragraph and the ones after it, until the next note.
+              </Text>
+              <TextArea
+                id="note-draft"
+                size="1"
+                autoFocus
+                value={noteEdit.draft}
+                placeholder="Told by Noah, in the first person."
+                onChange={(e) => setNoteEdit({ ...noteEdit, draft: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void saveNote(noteEdit.draft);
+                  }
+                }}
+              />
+              <Flex gap="2" mt="2" justify="end">
+                {(paragraphs[noteEdit.paragraph]?.note ?? "") !== "" && (
+                  <Button type="button" size="1" variant="soft" color="red" onClick={() => void saveNote("")}>
+                    Remove
+                  </Button>
+                )}
+                <Button type="button" size="1" variant="soft" color="gray" onClick={() => setNoteEdit(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" size="1">
+                  Save
+                </Button>
+              </Flex>
+            </form>
+          )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} />
           </div>
         </section>
 

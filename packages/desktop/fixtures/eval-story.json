@@ -92,6 +92,9 @@
     "\"...I'm sorry.\"",
     "Without looking back, I stepped out into the night streets."
    ],
+   "notes": {
+    "0": "Told by Noah, in the first person."
+   },
    "checks": [
     {
      "at": 0,
@@ -203,6 +206,9 @@
     "\"Rin Shiraishi. I want you to look at a sword.\"",
     "With that, she laid her sword on the table."
    ],
+   "notes": {
+    "0": "Told by Noah, in the first person."
+   },
    "checks": [
     {
      "at": 0,
@@ -318,6 +324,12 @@
     "\"We split the mana stones we find in the labyrinth down the middle. Does that work for you?\"",
     "\"Yes. Looking forward to working with you, Mr. Enchanter.\""
    ],
+   "edits": {
+    "1": "The moment I picked up Rin's sword, my instincts as an enchanter stirred."
+   },
+   "notes": {
+    "0": "Told by Noah, in the first person."
+   },
    "checks": [
     {
      "at": 0,
@@ -381,10 +393,7 @@
      ],
      "why": "付与魔術師さん: the enchanter, as a form of address"
     }
-   ],
-   "edits": {
-    "1": "The moment I picked up Rin's sword, my instincts as an enchanter stirred."
-   }
+   ]
   },
   {
    "id": "labyrinth",
@@ -420,6 +429,9 @@
     "She called his name, but there was no one left to answer.",
     "Gard clicked his tongue and slammed the bag of mana stones onto the floor."
    ],
+   "notes": {
+    "0": "Third person, following Sera and Gard's party in the labyrinth. Noah is not with them."
+   },
    "checks": [
     {
      "at": 0,
