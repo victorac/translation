@@ -15,8 +15,13 @@ import type {
 export const OPENAI_COMPATIBLE_KIND = "openai-compatible";
 
 export interface Timeouts {
-  /** Connecting and receiving the response headers. */
+  /** Connecting and receiving the response headers, for a quick question to the server (its list of models). */
   headersMs: number;
+  /**
+   * Receiving the headers of a translation request. LM Studio loads a model when it is first asked for, and answers only once it is
+   * loaded: an 8-bit 4B model on an 8 GB Mac takes over 20 seconds.
+   */
+  loadMs: number;
   /** After headers, waiting for the first piece of translated text. */
   firstContentMs: number;
   /** Silence between pieces once text is flowing. */
@@ -25,7 +30,7 @@ export interface Timeouts {
   totalMs: number;
 }
 
-export const DEFAULT_TIMEOUTS: Timeouts = { headersMs: 15_000, firstContentMs: 180_000, idleMs: 90_000, totalMs: 600_000 };
+export const DEFAULT_TIMEOUTS: Timeouts = { headersMs: 15_000, loadMs: 300_000, firstContentMs: 180_000, idleMs: 90_000, totalMs: 600_000 };
 export const MAX_RAW_BYTES = 2 * 1024 * 1024;
 
 export interface OpenAICompatibleOptions {
@@ -103,7 +108,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       yield { type: "error", error: target.error };
       return;
     }
-    const run = new Request_(signal, this.timeouts);
+    const run = new Request_(signal, { ...this.timeouts, headersMs: this.timeouts.loadMs });
     try {
       const body = JSON.stringify({
         model: request.modelId,

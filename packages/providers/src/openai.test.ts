@@ -199,7 +199,7 @@ describe("streaming generation", () => {
         res.end();
       }, 400);
     });
-    const out = await run(new OpenAICompatibleProvider({ timeouts: { headersMs: 500, firstContentMs: 150, idleMs: 200, totalMs: 5000 } }), cfg(s.baseUrl));
+    const out = await run(new OpenAICompatibleProvider({ timeouts: { headersMs: 500, loadMs: 500, firstContentMs: 150, idleMs: 200, totalMs: 5000 } }), cfg(s.baseUrl));
     expect(out.text).toBe("Done");
     expect(out.terminal).toMatchObject({ type: "finish", reason: "stop", reasoningSeen: true });
   });
@@ -349,12 +349,18 @@ describe("safety", () => {
 });
 
 describe("timeouts and cancel", () => {
-  const fast = { headersMs: 80, firstContentMs: 150, idleMs: 80, totalMs: 2000 };
+  const fast = { headersMs: 80, loadMs: 80, firstContentMs: 150, idleMs: 80, totalMs: 2000 };
 
   it("times out waiting for headers, and says what to do if the model is loading", async () => {
     const s = await serve(() => {});
     const out = await run(new OpenAICompatibleProvider({ timeouts: fast }), cfg(s.baseUrl));
     expect(out.terminal).toMatchObject({ type: "error", error: { code: "timeout", message: expect.stringContaining("loading the model") } });
+  });
+
+  it("waits longer for a translation's headers than for the list of models, since the model may be loading", async () => {
+    const s = await serve((_q, res) => setTimeout(() => (startSse(res), sse(res, chunk("Loaded")), sse(res, chunk(null, "stop")), res.end()), 200));
+    const out = await run(new OpenAICompatibleProvider({ timeouts: { ...fast, headersMs: 50, loadMs: 1000 } }), cfg(s.baseUrl));
+    expect(out.text).toBe("Loaded");
   });
 
   it("times out waiting for the first text", async () => {
