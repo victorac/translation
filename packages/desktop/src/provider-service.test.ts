@@ -395,6 +395,19 @@ describe("translating a document", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.map((e) => e.source)).toContain("花子");
   });
 
+  it("keeps the requests sent to the model, as sent, with what it answered, and lets them be cleared", async () => {
+    const { service } = setup();
+    await sync(service, "花子は笑った。");
+    await service.workTranslate({ ...model, backend: "practice" });
+    const [first] = service.promptLog();
+    expect(first).toMatchObject({ purpose: "Translation of paragraph 1", error: null });
+    expect(first!.messages.map((m) => m.role)).toEqual(["system", "user"]);
+    expect(first!.messages[1]!.content).toContain("花子は笑った。");
+    expect(first!.reply).toBeTruthy();
+    service.clearPromptLog();
+    expect(service.promptLog()).toEqual([]);
+  });
+
   it("sends only the glossary words that stand in the paragraphs of the request", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();

@@ -45,6 +45,8 @@ const COMMANDS = new Set([
   "work.setSpeakerSuggestion",
   "work.suggest",
   "work.lookup",
+  "prompts.list",
+  "prompts.clear",
   "work.setSuggestion",
   "work.acceptSuggestion",
   "work.dismissSuggestion",

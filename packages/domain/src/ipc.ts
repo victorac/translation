@@ -27,6 +27,21 @@ import type {
 export type IpcError = { code: string; message: string };
 export type IpcResult<T> = { requestId: string; ok: true; value: T } | { requestId: string; ok: false; error: IpcError };
 
+/** One request sent to the model, as it was sent, with the answer (or the error). Kept for the session only. */
+export interface PromptRecord {
+  id: number;
+  time: number;
+  /** What it was for, in words ("Translation of paragraph 3"). */
+  purpose: string;
+  modelId: string;
+  temperature: number;
+  messages: { role: "system" | "user"; content: string }[];
+  reply: string | null;
+  error: string | null;
+  /** How long the model took, in milliseconds. */
+  ms: number;
+}
+
 /** How one model is set up: its own limits, temperature and translation style. */
 export interface ModelSetting {
   /** The exact model identifier the server knows (for LM Studio, as shown in its model list). */
@@ -170,6 +185,9 @@ export interface CommandMap {
   "work.setSuggestion": { source: string; key: string; value: string };
   /** Asks the dictionary how a word is read, and suggests that as its English name. */
   "work.lookup": { source: string };
+  /** The requests sent to the model in this session, newest last, with what it answered. */
+  "prompts.list": Record<string, never>;
+  "prompts.clear": Record<string, never>;
   "work.acceptSuggestion": { source: string; key: string };
   "work.dismissSuggestion": { source: string; key: string };
   "work.acceptSpeaker": { line: number };
@@ -195,7 +213,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.setSpeakerSuggestion" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.setSuggestion" | "work.lookup" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.setSpeakerSuggestion" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.setSuggestion" | "work.lookup" | "prompts.list" | "prompts.clear" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "notes.cancel": { canceled: boolean };
   "work.get": Work | null;
@@ -214,6 +232,8 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "work.suggest": Work;
   "work.setSuggestion": Work;
   "work.lookup": Work;
+  "prompts.list": PromptRecord[];
+  "prompts.clear": { cleared: true };
   "work.acceptSuggestion": Work;
   "work.dismissSuggestion": Work;
   "work.acceptSpeaker": Work;

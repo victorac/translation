@@ -268,3 +268,9 @@ details > summary { cursor: pointer; }
 .log-time { flex: none; font-variant-numeric: tabular-nums; }
 .log-level { flex: none; }
 .log-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.prompt-row { border-bottom: 1px solid var(--gray-5); }
+.prompt-row summary { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.35rem 0.75rem; cursor: pointer; }
+.prompt-body { padding: 0 0.75rem 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+.prompt-body > div { width: 100%; }
+.prompt-body pre { margin: 0.1rem 0 0; padding: 0.4rem 0.5rem; background: var(--gray-3); border-radius: var(--radius-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78rem; max-height: 14rem; overflow-y: auto; }

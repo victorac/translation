@@ -62,11 +62,15 @@ import {
   type KnowledgeFiles,
   type KnowledgeList,
   type ProjectDocument,
+  type PromptRecord,
   type ProjectSettings,
   type ProjectView,
   type SyncSettingsInput,
   type WorkspaceSnapshot,
 } from "@ltw/domain";
+
+/** How many of the requests sent to the model are kept for the prompt log. */
+const KEPT_PROMPTS = 50;
 import {
   findCandidateNames,
   readNames,
@@ -986,6 +990,7 @@ export class WorkspaceService {
       const user = paragraphMessage({ ...bare, glossary: sent, before, next }) + complaint;
       const reply = await this.askModel(
         {
+          purpose: `${alternative ? "Alternative for" : "Translation of"} paragraph ${k + 1}`,
           backend: input.backend,
           modelId: input.modelId,
           maxOutputTokens: input.maxOutputTokens,
@@ -1048,7 +1053,7 @@ export class WorkspaceService {
     const ask = async (q: { system: string; user: string }): Promise<string | null> => {
       // As many of the paragraphs as fit: a question that does not fit the context is skipped.
       if (estimateTokens(q.system) + estimateTokens(q.user) + 32 + DEFAULTS.messageOverheadTokens > input.contextLimit) return null;
-      const reply = await this.askModel({ backend: input.backend, modelId: input.modelId, maxOutputTokens: 32, temperature: 0, messages: [{ role: "system", content: q.system }, { role: "user", content: q.user }], practiceReply: () => "NONE", allowEmpty: true }, abort);
+      const reply = await this.askModel({ purpose: "Reading the translation for suggestions", backend: input.backend, modelId: input.modelId, maxOutputTokens: 32, temperature: 0, messages: [{ role: "system", content: q.system }, { role: "user", content: q.user }], practiceReply: () => "NONE", allowEmpty: true }, abort);
       return reply === null ? null : reply.trim();
     };
 
@@ -1219,6 +1224,35 @@ export class WorkspaceService {
 
   /** One request to a model, answered in full. Returns null if the user stopped it. */
   private async askModel(
+    ask: { purpose: string; backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
+    abort: AbortController,
+  ): Promise<string | null> {
+    const started = Date.now();
+    const record = (reply: string | null, error: string | null) => {
+      this.prompts.push({ id: ++this.promptSeq, time: started, purpose: ask.purpose, modelId: ask.modelId, temperature: ask.temperature ?? 0.2, messages: ask.messages, reply, error, ms: Date.now() - started });
+      if (this.prompts.length > KEPT_PROMPTS) this.prompts.splice(0, this.prompts.length - KEPT_PROMPTS);
+    };
+    try {
+      const answer = await this.askModelOnce(ask, abort);
+      record(answer, answer === null ? "Stopped by the user." : null);
+      return answer;
+    } catch (e) {
+      record(null, e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  }
+
+  private prompts: PromptRecord[] = [];
+  private promptSeq = 0;
+  promptLog(): PromptRecord[] {
+    return this.prompts;
+  }
+  clearPromptLog(): { cleared: true } {
+    this.prompts = [];
+    return { cleared: true };
+  }
+
+  private async askModelOnce(
     ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
     abort: AbortController,
   ): Promise<string | null> {
