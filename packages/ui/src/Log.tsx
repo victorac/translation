@@ -89,41 +89,17 @@ export function LogProvider({ children }: { children: ReactNode }) {
   return <LogContext.Provider value={api}>{children}</LogContext.Provider>;
 }
 
-/** How often the list of requests is read again while it is showing (a request arrives while the model works, with no event for it). */
+/** How often the list of requests is read again (a request arrives while the model works, with no event for it). */
 const PROMPT_REFRESH_MS = 1500;
 
 /** The requests sent to the model, as sent, with its answers: to see exactly what a translation was made from. */
-function PromptList() {
-  const [records, setRecords] = useState<PromptRecord[]>([]);
-  useEffect(() => {
-    let live = true;
-    const read = async () => {
-      const r = await api.invoke("prompts.list", {});
-      if (live && r.ok)
-        setRecords((old) =>
-          old.length === r.value.length &&
-          old[old.length - 1]?.id === r.value[r.value.length - 1]?.id
-            ? old
-            : r.value,
-        );
-    };
-    void read();
-    const t = setInterval(() => void read(), PROMPT_REFRESH_MS);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, []);
+function PromptList({ records, onClear }: { records: PromptRecord[]; onClear: () => void }) {
   const copy = (r: PromptRecord) => {
     const text = [
       ...r.messages.map((m) => `[${m.role}]\n${m.content}`),
       `[reply]\n${r.reply ?? r.error ?? ""}`,
     ].join("\n\n");
     void navigator.clipboard?.writeText(text).catch(() => undefined);
-  };
-  const clear = async () => {
-    await api.invoke("prompts.clear", {});
-    setRecords([]);
   };
   return (
     <>
@@ -132,7 +108,7 @@ function PromptList() {
           size="1"
           variant="ghost"
           color="gray"
-          onClick={() => void clear()}
+          onClick={onClear}
           disabled={records.length === 0}
         >
           Clear
@@ -193,10 +169,64 @@ function PromptList() {
   );
 }
 
+/** The tray's height in pixels: its default, the least it can be, the most of the window it can take, and where the chosen one is remembered. */
+const DEFAULT_HEIGHT = 288;
+const LEAST_HEIGHT = 96;
+const MOST_OF_WINDOW = 0.85;
+const HEIGHT_KEY = "ltw.logHeight";
+const readHeight = (): number => {
+  try {
+    const n = Number(localStorage.getItem(HEIGHT_KEY));
+    return n >= LEAST_HEIGHT ? n : DEFAULT_HEIGHT;
+  } catch {
+    return DEFAULT_HEIGHT;
+  }
+};
+
 /** The strip at the bottom of the window: how many problems there are (quietly), and a click opens the list above it. */
 export function LogDock() {
   const { entries, unseen, shown, toggle, clear } = useLog();
   const [tab, setTab] = useState<"messages" | "prompts">("messages");
+  const [records, setRecords] = useState<PromptRecord[]>([]);
+  useEffect(() => {
+    let live = true;
+    const read = async () => {
+      const r = await api.invoke("prompts.list", {});
+      if (live && r.ok) setRecords((old) => (old.length === r.value.length && old[old.length - 1]?.id === r.value[r.value.length - 1]?.id ? old : r.value));
+    };
+    void read();
+    const t = setInterval(() => void read(), PROMPT_REFRESH_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+  const clearPrompts = async () => {
+    await api.invoke("prompts.clear", {});
+    setRecords([]);
+  };
+  const [height, setHeight] = useState(readHeight);
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const startY = e.clientY;
+    const startHeight = height;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const move = (m: PointerEvent) => setHeight(Math.min(window.innerHeight * MOST_OF_WINDOW, Math.max(LEAST_HEIGHT, startHeight + startY - m.clientY)));
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      setHeight((h) => {
+        try {
+          localStorage.setItem(HEIGHT_KEY, String(Math.round(h)));
+        } catch {
+          // the height is only a convenience
+        }
+        return h;
+      });
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  };
   const errors = entries.filter((e) => e.level === "error").length;
   const warnings = entries.filter((e) => e.level === "warning").length;
   const copy = () => {
@@ -211,7 +241,8 @@ export function LogDock() {
   return (
     <div className="log-dock">
       {shown && (
-        <div className="log-panel">
+        <div className="log-panel" style={{ height }}>
+          <div className="log-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the log" onPointerDown={drag} />
           <Flex
             align="center"
             justify="between"
@@ -267,7 +298,7 @@ export function LogDock() {
             </Flex>
           </Flex>
           {tab === "prompts" ? (
-            <PromptList />
+            <PromptList records={records} onClear={() => void clearPrompts()} />
           ) : (
             <div className="log-list">
               {entries.length === 0 ? (
@@ -322,6 +353,9 @@ export function LogDock() {
           className={warnings > 0 ? "log-count log-count-warn" : "log-count"}
         >
           {warnings} {warnings === 1 ? "warning" : "warnings"}
+        </span>
+        <span className="log-count">
+          {records.length} {records.length === 1 ? "prompt" : "prompts"}
         </span>
         {unseen > 0 && <span className="log-new">{unseen} new</span>}
       </button>

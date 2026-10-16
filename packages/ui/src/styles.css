@@ -256,14 +256,16 @@ details > summary { cursor: pointer; }
 
 /* The log: one line for each message, with its time and kind. */
 .log-dock { flex: none; border-top: 1px solid var(--border); background: var(--panel); }
-.log-panel { border-bottom: 1px solid var(--border); }
+.log-panel { position: relative; display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--border); }
+.log-resize { position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 5; touch-action: none; }
+.log-resize:hover { background: var(--accent); opacity: 0.5; }
 .log-panel-head { border-bottom: 1px solid var(--gray-5); }
 .log-bar { display: flex; gap: 1rem; align-items: center; width: 100%; padding: 0.2rem 0.75rem; font-size: 0.75rem; color: var(--muted); background: none; border: 0; cursor: pointer; text-align: left; }
 .log-bar:hover { background: var(--gray-3); }
 .log-count-error { color: var(--red-11); }
 .log-count-warn { color: var(--amber-11); }
 .log-new { margin-left: auto; }
-.log-list { max-height: 14rem; overflow-y: auto; }
+.log-list { flex: 1; min-height: 0; overflow-y: auto; }
 .log-row { padding: 0.35rem 0; border-bottom: 1px solid var(--gray-5); }
 .log-time { flex: none; font-variant-numeric: tabular-nums; }
 .log-level { flex: none; }
@@ -273,4 +275,4 @@ details > summary { cursor: pointer; }
 .prompt-row summary { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.35rem 0.75rem; cursor: pointer; }
 .prompt-body { padding: 0 0.75rem 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
 .prompt-body > div { width: 100%; }
-.prompt-body pre { margin: 0.1rem 0 0; padding: 0.4rem 0.5rem; background: var(--gray-3); border-radius: var(--radius-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78rem; max-height: 14rem; overflow-y: auto; }
+.prompt-body pre { margin: 0.1rem 0 0; padding: 0.4rem 0.5rem; background: var(--gray-3); border-radius: var(--radius-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78rem; }
