@@ -24,7 +24,7 @@ const request = {
 describe("paragraphMessage", () => {
   it("puts the background first, the paragraphs around it for reference, and the paragraph and the task last", () => {
     const m = paragraphMessage(request);
-    expect(m).toContain("GLOSSARY:\n- 太郎 => Taro\n");
+    expect(m).toContain("NAMES (write them exactly as given):\n- 太郎 => Taro\n");
     expect(m).toContain("WORD NOTES (instructions about how to translate particular words; follow them):\n- 太郎: a boy\n- 食べる: use the past tense");
     expect(m).toContain("CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):\nJAPANESE: 前。\nENGLISH: Before.");
     expect(m).toContain("NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):\nJAPANESE: 後。");
@@ -38,7 +38,7 @@ describe("paragraphMessage", () => {
     expect(m).toContain("REJECTED VERSION");
   });
   it("names the glossary names to use in the last line, and gives unconfirmed names as likely", () => {
-    const m = paragraphMessage({ ...request, required: ["Taro"], suggestions: [{ source: "鈴木花子", suggestion: "Suzuki Hanako" }] });
+    const m = paragraphMessage({ ...request, required: [request.glossary[0]!], suggestions: [{ source: "鈴木花子", suggestion: "Suzuki Hanako" }] });
     expect(m.split("\n\n").at(-1)).toBe("Translate that paragraph into English. Use these names: Taro. Reply with its translation only, as one paragraph.");
     expect(m).toContain("LIKELY NAMES (a likely English name, not confirmed: use it unless the story shows it is wrong, and write it the same way every time):\n- 鈴木花子 => probably Suzuki Hanako");
     expect(paragraphMessage(request).split("\n\n").at(-1)).toBe("Translate that paragraph into English. Reply with its translation only, as one paragraph.");

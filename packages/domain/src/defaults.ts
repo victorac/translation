@@ -6,4 +6,6 @@ export const DEFAULTS = {
   contextBefore: 8,
   /** At most this many paragraphs after it are sent, so the model knows where the story goes. */
   contextAfter: 2,
+  /** At most this many paragraphs the user translated are sent as examples of how the paragraph's terms are written. */
+  examples: 2,
 } as const;

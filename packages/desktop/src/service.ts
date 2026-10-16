@@ -926,6 +926,8 @@ export class WorkspaceService {
     if (!w.paragraphs[paragraph]) throw new UserError("no_paragraph", "That paragraph does not exist.");
     w.paragraphs[paragraph]!.translation = text.trim();
     w.paragraphs[paragraph]!.issue = null;
+    if (text.trim() !== "") w.paragraphs[paragraph]!.edited = true;
+    else delete w.paragraphs[paragraph]!.edited;
     this.workChanged();
     return this.workView();
   }
@@ -955,8 +957,7 @@ export class WorkspaceService {
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const required = glossary.map((g) => targetVariants(g.target)[0]).filter((t): t is string => !!t);
-      const bare = { glossary, notes, suggestions, required, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject, different: alternative };
+      const bare = { glossary, notes, suggestions, required: glossary, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject, different: alternative };
       let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
       if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
       // Context nearest first, one before and one after in turn, as far as it fits: the translated paragraphs before, and the ones after.
@@ -966,6 +967,7 @@ export class WorkspaceService {
       const sent = [...glossary];
       const extraFor = (text: string): typeof glossary => glossaryFor(w.words, text).filter((g) => !sent.some((s) => s.source === g.source));
       const lineCost = (g: (typeof glossary)[number]): number => estimateTokens(`${g.source} => ${g.target} ${g.note ?? ""} ${(g.aliases ?? []).join(" ")}`) + 4;
+      const shown = new Set<number>([k]);
       let b = k - 1;
       let a = k + 1;
       // A small model does best with a few paragraphs on each side, not with all that fits.
@@ -981,6 +983,7 @@ export class WorkspaceService {
           left -= cost;
           sent.push(...extra);
           before.unshift({ source: p.text, translation: p.translation.trim() });
+          shown.add(b + 1);
         } else if (moreAfter()) {
           const p = w.paragraphs[a++]!;
           const extra = extraFor(p.text);
@@ -989,9 +992,30 @@ export class WorkspaceService {
           left -= cost;
           sent.push(...extra);
           next.push({ source: p.text, translation: p.translation.trim() || null });
+          shown.add(a - 1);
         }
       }
-      const user = paragraphMessage({ ...bare, glossary: sent, before, next }) + complaint;
+      // For each term of the paragraph, one paragraph from elsewhere that the user translated with it, nearest first, preferring one
+      // that writes the term as the glossary does: a small model follows an example better than a rule about the word.
+      const examples: Pair[] = [];
+      for (const g of glossary.filter((x) => x.term)) {
+        if (examples.length >= DEFAULTS.examples || left <= 0) break;
+        const word = targetVariants(g.target)[0];
+        const has = (j: number): boolean => {
+          const p = w.paragraphs[j]!;
+          return p.edited === true && !shown.has(j) && p.translation.trim() !== "" && glossaryFor(w.words, p.text).some((x) => x.source === g.source);
+        };
+        const near = w.paragraphs.map((_, j) => j).filter(has).sort((x, y) => Math.abs(x - k) - Math.abs(y - k));
+        const pick = near.find((j) => word !== undefined && w.paragraphs[j]!.translation.includes(word)) ?? near[0];
+        if (pick === undefined) continue;
+        const p = w.paragraphs[pick]!;
+        const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8;
+        if (cost > left) continue;
+        left -= cost;
+        shown.add(pick);
+        examples.push({ source: p.text, translation: p.translation.trim() });
+      }
+      const user = paragraphMessage({ ...bare, glossary: sent, before, next, examples }) + complaint;
       const reply = await this.askModel(
         {
           purpose: `${alternative ? "Alternative for" : "Translation of"} paragraph ${k + 1}`,
@@ -1021,7 +1045,7 @@ export class WorkspaceService {
       if (unchanged) reject = old;
       complaint = [
         several ? "Your last answer was not accepted because it was several paragraphs. Translate only the paragraph above, as one paragraph." : "",
-        missing.length > 0 ? `Your last answer was not accepted because it does not use these exact names: ${missing.join("; ")}. Translate again and use them exactly as written.` : "",
+        missing.length > 0 ? `Your last answer was not accepted because it does not use these names or words: ${missing.join("; ")}. Translate again and use them.` : "",
       ]
         .filter((x) => x !== "")
         .map((x) => `\n\n${x}`)

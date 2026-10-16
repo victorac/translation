@@ -427,6 +427,30 @@ describe("translating a document", () => {
     expect(glossaryOf(last)).not.toContain("=> Hanako");
   });
 
+  it("sends a term as a word to use, and a paragraph the user translated with it as an example", async () => {
+    const lm = await fakeLmStudio({ paragraph: (_user, source) => `EN: ${fakeEnglish(source)} enchanter` });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const text = ["１　追放された付与魔術師", ...Array.from({ length: 12 }, (_, i) => `${i}番目の段落。`), "付与魔術師は笑った。"].join("\n\n");
+    await sync(service, text);
+    await service.workAddWord("付与魔術師");
+    service.workSetEnglish("付与魔術師", "enchanter");
+    await service.workTranslate({ ...model, contextLimit: 32000 });
+    // The model's own translations are not examples.
+    expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("EXAMPLES");
+    service.workSetPart(0, "1. Expelled Enchanter");
+    await service.workRetranslate({ ...model, contextLimit: 32000, paragraph: 13 });
+    const sent = bodies(lm).at(-1)!.messages[1]!.content;
+    expect(sent).toContain("TERMS (use these words; their capitals, plural and article follow the sentence, as in normal English):\n- 付与魔術師 => enchanter");
+    expect(sent).not.toContain("NAMES (");
+    expect(sent).toContain("EXAMPLES (paragraphs elsewhere in the story as the user translated them, to show how the TERMS are written there; reference only, do not translate):\nJAPANESE: １　追放された付与魔術師\nENGLISH: 1. Expelled Enchanter");
+    expect(sent).toContain("Use these words: enchanter.");
+    // Written again by the model, it is no longer the user's.
+    await service.workRetranslate({ ...model, contextLimit: 32000, paragraph: 0 });
+    await service.workRetranslate({ ...model, contextLimit: 32000, paragraph: 13 });
+    expect(bodies(lm).at(-1)!.messages[1]!.content).not.toContain("EXAMPLES");
+  });
+
   it("sends at most eight translated paragraphs before and two after, even when more would fit", async () => {
     const lm = await fakeLmStudio({ paragraph: (_user, source) => `EN: ${fakeEnglish(source)}` });
     const { provider, service } = setup();
@@ -531,7 +555,7 @@ describe("translating a document", () => {
 
   it("asks again when the glossary name of the paragraph is left out, and says so if it still is", async () => {
     let calls = 0;
-    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("does not use these exact names") ? "Hanako laughed." : (calls++, "She laughed.")) });
+    const lm = await fakeLmStudio({ paragraph: (user) => (user.includes("does not use these names or words") ? "Hanako laughed." : (calls++, "She laughed.")) });
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     await sync(service, "花子は笑った。");
@@ -746,7 +770,7 @@ describe("translating a document", () => {
     service.workSetEnglish("山田太郎", "Taro Yamada");
     await service.workTranslate({ ...model });
     const sent = bodies(lm)[0]!.messages[1]!.content;
-    expect(sent).toContain("GLOSSARY:\n- 山田太郎 => Taro Yamada");
+    expect(sent).toContain("NAMES (write them exactly as given):\n- 山田太郎 => Taro Yamada");
     // The dictionary's reading is only how the name sounds, not a spelling to copy.
     expect(sent).toContain("LIKELY NAMES (a likely English name, not confirmed: use it unless the story shows it is wrong, and write it the same way every time):\n- 鈴木花子 => probably Suzuki Hanako");
     expect(sent).not.toContain("SUGGESTED NAMES");

@@ -5,6 +5,8 @@ export interface GlossaryEntry {
   note?: string;
   /** Other ways the same word is written in the text. */
   aliases?: string[];
+  /** A word of the story rather than a name: the word to use, in whatever form the sentence needs, not a spelling to copy. */
+  term?: boolean;
 }
 
 /** The accepted ways to write a term: the first is the preferred one. */
@@ -14,7 +16,7 @@ export const targetVariants = (target: string): string[] =>
     .map((t) => t.trim())
     .filter(Boolean);
 
-type GlossaryItem = { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined };
+type GlossaryItem = { source: string; target: string; note?: string | undefined; aliases?: string[] | undefined; term?: boolean | undefined };
 
 /** The glossary lines the model reads: the English name to use for each word that has one. Notes about words are separate (see wordNoteLines). */
 export function glossaryLines(glossary: readonly GlossaryItem[]): string[] {

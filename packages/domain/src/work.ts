@@ -80,6 +80,8 @@ export interface WorkParagraph {
   translation: string;
   /** Something to look at in the translation, such as a glossary name it does not use. */
   issue?: string | null;
+  /** The user wrote or corrected this translation: it is shown to the model as an example where its terms come back. */
+  edited?: boolean;
 }
 
 /** Everything about one document's translation. */
@@ -369,7 +371,7 @@ export function glossaryHits<T extends { source: string; aliases: readonly strin
  * part of a longer one (山田 in 山田太郎) is sent only when it stands on its own there (with no paragraph, with a note saying that is when it applies),
  * and is not also listed as another way to write the longer name.
  */
-export function glossaryFor(words: readonly Word[], only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
+export function glossaryFor(words: readonly Word[], only?: string): { source: string; target: string; note?: string; aliases?: string[]; term?: boolean }[] {
   const sources = words.map((n) => n.source);
   const names = words.flatMap((n) => [n.source, ...n.aliases]);
   return words
@@ -383,7 +385,9 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
       const stands = target ? `a name for ${target.english.trim() !== "" ? target.english.trim() : target.source}` : "";
       // For one paragraph a short name is sent only where it stands on its own, so saying so would only puzzle the model.
       const note = [stands, n.hint?.trim() ?? "", only === undefined && longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
-      return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
+      // A term that stands for a person (山田 for 山田太郎) is a name.
+      const term = n.kind === "term" && !n.refersTo;
+      return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}), ...(term ? { term } : {}) }];
     });
 }
 

@@ -170,7 +170,7 @@ describe("a short name that is part of a longer one", () => {
     const both = glossaryFor([taro, tono], "「山田、お待たせ」山田太郎は笑った。");
     expect(both).toEqual([
       { source: "山田太郎", target: "Yamada Taro" },
-      { source: "山田", target: "Yamada", note: "Hanako's name for Taro" },
+      { source: "山田", target: "Yamada", note: "Hanako's name for Taro", term: true },
     ]);
     // Where it is only part of the full name, it is not sent at all, and the full name keeps it as an alias.
     expect(glossaryFor([taro, tono], "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Yamada Taro" }]);
