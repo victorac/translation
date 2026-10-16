@@ -1,0 +1,492 @@
+{
+ "sourceLanguage": "Japanese",
+ "targetLanguage": "English",
+ "glossary": [
+  {
+   "source": "ノア",
+   "target": "Noah",
+   "kind": "character"
+  },
+  {
+   "source": "ガルド",
+   "target": "Gard",
+   "kind": "character"
+  },
+  {
+   "source": "セラ",
+   "target": "Sera",
+   "kind": "character"
+  },
+  {
+   "source": "白石凛",
+   "target": "Rin Shiraishi",
+   "kind": "character",
+   "aliases": [
+    "凛"
+   ]
+  },
+  {
+   "source": "蒼の剣",
+   "target": "Azure Blade",
+   "kind": "organization"
+  },
+  {
+   "source": "冒険者ギルド",
+   "target": "Adventurers' Guild|Adventurers Guild",
+   "kind": "organization"
+  },
+  {
+   "source": "付与魔術師",
+   "target": "enchanter",
+   "kind": "term"
+  },
+  {
+   "source": "魔石",
+   "target": "mana stone",
+   "kind": "term"
+  },
+  {
+   "source": "剣聖",
+   "target": "Sword Saint",
+   "kind": "term"
+  }
+ ],
+ "passages": [
+  {
+   "id": "expulsion",
+   "source": [
+    "１　追放された付与魔術師",
+    "「ノア、お前は今日でクビだ」",
+    "酒場の喧騒の中で、ガルドははっきりとそう言った。『蒼の剣』のリーダーである彼の声に、周りの冒険者たちが一斉にこちらを振り向いた。",
+    "「……理由を聞いてもいいか」",
+    "「理由？　決まってるだろ。付与魔術師なんて、後ろで突っ立ってるだけじゃないか」",
+    "俺は付与魔術師だ。仲間の剣や鎧に魔力を込め、その力を何倍にも引き上げる。派手な魔法は使えないが、パーティーの戦いは全部、俺の付与の上に成り立っていた。",
+    "少なくとも、俺はそう思っていた。",
+    "「ガルド、待って。ノアがいなかったら、この前のワイバーンだって……」",
+    "セラが慌てて口を挟んだが、ガルドは手を振ってそれを遮った。",
+    "「セラ、お前は黙ってろ。回復役の代わりはいないが、こいつの代わりならいくらでもいる」",
+    "誰も何も言わなかった。三年間一緒に戦ってきた仲間たちは、テーブルの木目を見つめたまま、俺と目を合わせようとしなかった。",
+    "「分かった。今までありがとう」",
+    "俺は立ち上がり、背負い袋を肩にかけた。中に入っているのは、着替えと、売るつもりだった魔石が三つだけだ。",
+    "「ノア」",
+    "扉に手をかけたところで、セラが小さく俺の名を呼んだ。",
+    "「……ごめんね」",
+    "俺は振り返らずに、夜の街へ出た。"
+   ],
+   "reference": [
+    "1. The Exiled Enchanter",
+    "\"Noah, as of today, you're fired.\"",
+    "Gard said it plainly over the noise of the tavern. At the voice of the Azure Blade's leader, the adventurers around us all turned to look.",
+    "\"...Mind if I ask why?\"",
+    "\"Why? Isn't it obvious? An enchanter just stands around at the back.\"",
+    "I'm an enchanter. I pour mana into my companions' swords and armor and raise their power many times over. I can't cast flashy spells, but every battle the party fought rested on my enchantments.",
+    "At least, that's what I had thought.",
+    "\"Gard, wait. If it weren't for Noah, that wyvern the other day...\"",
+    "Sera hurried to cut in, but Gard waved her off.",
+    "\"Sera, keep out of this. There's no replacing a healer, but there are plenty more where he came from.\"",
+    "Nobody said a word. The companions I had fought beside for three years stared at the grain of the table and would not meet my eyes.",
+    "\"All right. Thanks for everything.\"",
+    "I stood and slung my pack over my shoulder. All it held was a change of clothes and the three mana stones I had meant to sell.",
+    "\"Noah.\"",
+    "As I put my hand on the door, Sera called my name softly.",
+    "\"...I'm sorry.\"",
+    "Without looking back, I stepped out into the night streets."
+   ],
+   "checks": [
+    {
+     "at": 0,
+     "must": [
+      "Enchanter"
+     ],
+     "not": [
+      "[Gg]rant",
+      "[Mm]agician"
+     ],
+     "why": "heading: Enchanter, capitalized as a title"
+    },
+    {
+     "at": 1,
+     "must": [
+      "Noah",
+      "(fired|out|kicked|dismiss)"
+     ],
+     "why": "クビ: fired from the party"
+    },
+    {
+     "at": 2,
+     "must": [
+      "Gard",
+      "Azure Blade"
+     ],
+     "why": "names: Gard, Azure Blade"
+    },
+    {
+     "at": 4,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase in a sentence"
+    },
+    {
+     "at": 5,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase in a sentence"
+    },
+    {
+     "at": 8,
+     "must": [
+      "Sera",
+      "Gard"
+     ],
+     "why": "names: Sera, Gard"
+    },
+    {
+     "at": 12,
+     "must": [
+      "mana stones"
+     ],
+     "why": "term in the plural: mana stones"
+    },
+    {
+     "at": 14,
+     "must": [
+      "Sera"
+     ],
+     "not": [
+      "\\bhis\\b"
+     ],
+     "why": "Sera calls my name (the narrator's)"
+    }
+   ]
+  },
+  {
+   "id": "guild",
+   "source": [
+    "翌朝、俺は冒険者ギルドの扉をくぐった。",
+    "掲示板の前には、いつものように依頼書を奪い合う冒険者たちが群がっている。俺はその横を抜けて、買い取りカウンターへ向かった。",
+    "「魔石の買い取りをお願いしたい」",
+    "カウンターに三つの魔石を並べると、受付の女性は眉を上げた。",
+    "「これ、全部付与済みですね。しかも、こんなに綺麗に……。付与魔術師の方ですか？」",
+    "「ああ。昨日まではパーティーにいたんだが」",
+    "「でしたら、ちょうどいいお話があります」",
+    "彼女が目で示した先、ギルドの隅の席に、一人の少女が座っていた。",
+    "長い黒髪を後ろで束ね、背筋を伸ばして座るその姿は、どこか凛々しい。腰には、使い込まれた細身の剣を下げていた。",
+    "「白石凛さんです。剣士なんですが、付与魔術師を探しているそうで」",
+    "俺が近づくと、凛は顔を上げた。まっすぐな目だった。",
+    "「あなたが付与魔術師？」",
+    "「ノアだ。今朝からフリーの付与魔術師をやってる」",
+    "「白石凛。剣を一本、見てほしいの」",
+    "彼女はそう言って、テーブルの上に剣を置いた。"
+   ],
+   "reference": [
+    "The next morning, I walked through the doors of the Adventurers' Guild.",
+    "As always, adventurers crowded the notice board, fighting over the job postings. I slipped past them and headed for the buying counter.",
+    "\"I'd like to sell some mana stones.\"",
+    "When I lined up the three mana stones on the counter, the woman at the desk raised her eyebrows.",
+    "\"These have all been enchanted. And so cleanly, too... Are you an enchanter?\"",
+    "\"Yeah. I was in a party until yesterday.\"",
+    "\"In that case, I have just the thing for you.\"",
+    "Following her gaze, I saw a girl sitting alone at a table in the corner of the guild.",
+    "Her long black hair was tied back, and she sat with her back straight, with something gallant about her. A slender, well-worn sword hung at her hip.",
+    "\"That's Rin Shiraishi. She's a swordswoman, and I hear she's looking for an enchanter.\"",
+    "When I approached, Rin looked up. Her gaze was direct.",
+    "\"You're the enchanter?\"",
+    "\"I'm Noah. A freelance enchanter, as of this morning.\"",
+    "\"Rin Shiraishi. I want you to look at a sword.\"",
+    "With that, she laid her sword on the table."
+   ],
+   "checks": [
+    {
+     "at": 0,
+     "must": [
+      "Adventurers'? Guild"
+     ],
+     "why": "name: Adventurers' Guild"
+    },
+    {
+     "at": 3,
+     "must": [
+      "mana stones"
+     ],
+     "why": "term in the plural: mana stones"
+    },
+    {
+     "at": 4,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase in a sentence"
+    },
+    {
+     "at": 8,
+     "not": [
+      "\\bRin\\b"
+     ],
+     "why": "凛々しい is an adjective (gallant), not the name Rin"
+    },
+    {
+     "at": 9,
+     "must": [
+      "Rin",
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "Rin; enchanter in lowercase"
+    },
+    {
+     "at": 10,
+     "must": [
+      "Rin"
+     ],
+     "why": "凛 alone is Rin"
+    },
+    {
+     "at": 12,
+     "must": [
+      "Noah",
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "Noah; enchanter in lowercase"
+    },
+    {
+     "at": 14,
+     "must": [
+      "\\b[Ss]he\\b"
+     ],
+     "not": [
+      "\\b[Hh]e\\b"
+     ],
+     "why": "Rin is a woman"
+    }
+   ]
+  },
+  {
+   "id": "sword",
+   "source": [
+    "２　剣聖の弟子",
+    "凛の剣を手に取った瞬間、付与魔術師としての勘が騒いだ。",
+    "刃には、古い付与の跡が幾重にも残っていた。誰かが何年もかけて、丁寧に魔力を重ねてきた跡だ。",
+    "「これを付与したのは誰だ？」",
+    "「師匠。剣聖と呼ばれていた人よ。三年前にいなくなったけど」",
+    "「剣聖の弟子が、どうしてこんな田舎のギルドに？」",
+    "「師匠を探してるの。でも、この剣にかかった師匠の付与は、もうほとんど切れかけてる。このままじゃ、北の迷宮には潜れない」",
+    "俺は剣を握り直し、魔力を流し込んだ。古い付与を壊さないように、その上に新しい層を一枚ずつ重ねていく。",
+    "しばらくして、刃が淡い青に光った。",
+    "凛は剣を受け取ると、一度だけ軽く振った。空気が裂ける音がして、隣のテーブルの冒険者が椅子から転げ落ちた。",
+    "「……すごい。師匠の付与と、同じ感じがする」",
+    "「褒めすぎだ。俺はただの付与魔術師だよ」",
+    "「ただの付与魔術師に、この剣が直せるはずがない」",
+    "凛はそう言って、まっすぐに俺を見た。",
+    "「ノア。私とパーティーを組んで。北の迷宮で、師匠の手がかりを探したいの」",
+    "断る理由は、どこにもなかった。",
+    "「報酬は、迷宮で拾った魔石を半分ずつ。それでいいか？」",
+    "「ええ。よろしくね、付与魔術師さん」"
+   ],
+   "reference": [
+    "2. The Sword Saint's Apprentice",
+    "The moment I picked up Rin's sword, my instincts as an enchanter stirred.",
+    "Layer upon layer of old enchantment lingered on the blade, the mark of someone who had spent years carefully building up mana in it.",
+    "\"Who enchanted this?\"",
+    "\"My master. People called her the Sword Saint. She disappeared three years ago.\"",
+    "\"What's the Sword Saint's apprentice doing at a backwater guild like this?\"",
+    "\"I'm looking for her. But my master's enchantment on this sword has almost worn off. Like this, I can't go down into the northern labyrinth.\"",
+    "I tightened my grip on the sword and let my mana flow into it. Careful not to break the old enchantment, I laid new layers over it, one at a time.",
+    "After a while, the blade glowed a faint blue.",
+    "Rin took the sword and swung it lightly, just once. The air split with a crack, and an adventurer at the next table tumbled off his chair.",
+    "\"...Amazing. It feels just like my master's enchantment.\"",
+    "\"You're giving me too much credit. I'm just an enchanter.\"",
+    "\"A mere enchanter could never have fixed this sword.\"",
+    "Rin said it looking straight at me.",
+    "\"Noah. Form a party with me. I want to search the northern labyrinth for some trace of my master.\"",
+    "I had no reason at all to refuse.",
+    "\"We split the mana stones we find in the labyrinth down the middle. Does that work for you?\"",
+    "\"Yes. Looking forward to working with you, Mr. Enchanter.\""
+   ],
+   "checks": [
+    {
+     "at": 0,
+     "must": [
+      "Sword Saint"
+     ],
+     "why": "剣聖: the title Sword Saint, capitalized"
+    },
+    {
+     "at": 4,
+     "must": [
+      "Sword Saint"
+     ],
+     "why": "剣聖: the title Sword Saint, capitalized"
+    },
+    {
+     "at": 5,
+     "must": [
+      "Sword Saint"
+     ],
+     "why": "剣聖: the title Sword Saint, capitalized"
+    },
+    {
+     "at": 9,
+     "must": [
+      "Rin"
+     ],
+     "why": "凛 alone is Rin"
+    },
+    {
+     "at": 11,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase (an edited paragraph shows it)"
+    },
+    {
+     "at": 12,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase (an edited paragraph shows it)"
+    },
+    {
+     "at": 16,
+     "must": [
+      "mana stones"
+     ],
+     "why": "term in the plural: mana stones"
+    },
+    {
+     "at": 17,
+     "must": [
+      "[Ee]nchanter"
+     ],
+     "why": "付与魔術師さん: the enchanter, as a form of address"
+    }
+   ],
+   "edits": {
+    "1": "The moment I picked up Rin's sword, my instincts as an enchanter stirred."
+   }
+  },
+  {
+   "id": "labyrinth",
+   "source": [
+    "３　付与魔術師のいないパーティー",
+    "同じ頃、『蒼の剣』は北の迷宮の入り口に立っていた。",
+    "「たかが付与魔術師が一人いなくなっただけだ。何も変わらねえよ」",
+    "ガルドはそう言って笑ったが、セラは笑えなかった。",
+    "最初の部屋で、異変はすぐに起きた。",
+    "ガルドの剣が、ゴブリンの骨で止まった。いつもなら鎧ごと両断できるはずの一撃が、浅い傷しか残さない。",
+    "「なんだ、この剣……なまくらじゃねえか！」",
+    "「ガルド、下がれ！　盾がもたない！」",
+    "盾役のバルトが叫んだ。その盾も、いつもより重く、脆く感じられた。",
+    "セラは震える手で回復魔法を唱えながら、ようやく気づいていた。",
+    "剣が鋭かったのも、盾が固かったのも、自分の魔法がよく効いたのも、全部、あの付与魔術師のおかげだったのだ。",
+    "「ノア……」",
+    "その名前を呼んでも、答える者はもういなかった。",
+    "ガルドは舌打ちすると、魔石の入った袋を床に叩きつけた。"
+   ],
+   "reference": [
+    "3. The Party Without an Enchanter",
+    "Around the same time, the Azure Blade stood at the entrance to the northern labyrinth.",
+    "\"All we lost was one lousy enchanter. Nothing's changed.\"",
+    "Gard laughed as he said it, but Sera couldn't.",
+    "Something went wrong in the very first room.",
+    "Gard's sword stopped at a goblin's bone. A blow that should have cut through armor and all left nothing but a shallow wound.",
+    "\"What's wrong with this sword... It's blunt!\"",
+    "\"Gard, fall back! The shield won't hold!\"",
+    "Bart, their shield-bearer, shouted. Even his shield felt heavier and more brittle than usual.",
+    "As she chanted healing spells with shaking hands, Sera finally understood.",
+    "The sharp swords, the sturdy shields, how well her own magic worked: all of it had been thanks to that enchanter.",
+    "\"Noah...\"",
+    "She called his name, but there was no one left to answer.",
+    "Gard clicked his tongue and slammed the bag of mana stones onto the floor."
+   ],
+   "checks": [
+    {
+     "at": 0,
+     "must": [
+      "Enchanter"
+     ],
+     "why": "heading: Enchanter, capitalized as a title"
+    },
+    {
+     "at": 1,
+     "must": [
+      "Azure Blade"
+     ],
+     "why": "name: Azure Blade"
+    },
+    {
+     "at": 2,
+     "must": [
+      "\\benchanter"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase in a sentence"
+    },
+    {
+     "at": 3,
+     "must": [
+      "Gard",
+      "Sera"
+     ],
+     "why": "names: Gard, Sera"
+    },
+    {
+     "at": 9,
+     "must": [
+      "Sera"
+     ],
+     "why": "name: Sera"
+    },
+    {
+     "at": 10,
+     "must": [
+      "\\benchanter",
+      "\\bher\\b"
+     ],
+     "not": [
+      "\\bEnchanter"
+     ],
+     "why": "enchanter in lowercase; her own magic (Sera's)"
+    },
+    {
+     "at": 12,
+     "must": [
+      "\\b[Ss]he\\b"
+     ],
+     "why": "Sera, a woman, calls his name"
+    },
+    {
+     "at": 13,
+     "must": [
+      "Gard",
+      "mana stones"
+     ],
+     "why": "Gard; term in the plural: mana stones"
+    }
+   ]
+  }
+ ]
+}

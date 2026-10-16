@@ -17,8 +17,15 @@
  * EVAL_JUDGE_KEY).
  *
  * The fixture is JSON: { sourceLanguage?, targetLanguage?, glossary: [{ source, target, kind?, note?, aliases? }], passages: [{ id,
- * source: string[], reference: string[] }] }. Each passage is translated as one text, in order, so the paragraphs before carry the
- * model's own translations as context, as in the app. Do not commit fixtures made of someone's book: name them *.local.json.
+ * source: string[], reference: string[], edits?, checks? }] }. Each passage is translated as one text, in order, so the paragraphs before
+ * carry the model's own translations as context, as in the app. `edits` ({ "3": "text" }) are paragraphs the user translated before the
+ * run: they are set as the user's own (and so can be sent as examples) and are not scored. `checks` ([{ at, must?, not?, why }]) are
+ * patterns (case-sensitive regular expressions) that the translation of paragraph `at` must or must not match: a pointed test of one
+ * thing (a term in lowercase in prose, a speaker, a name that must not appear), more telling than chrF on a small set.
+ * Do not commit fixtures made of someone's book: name them *.local.json.
+ *
+ * --compare also gives the change in chrF from the first run to each other one with a 95% interval (paired bootstrap over paragraphs):
+ * an interval that contains 0 means the difference may be noise.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -39,7 +46,13 @@ interface Fixture {
   sourceLanguage?: string;
   targetLanguage?: string;
   glossary: GlossaryItem[];
-  passages: { id: string; source: string[]; reference: string[] }[];
+  passages: { id: string; source: string[]; reference: string[]; edits?: Record<string, string>; checks?: Check[] }[];
+}
+interface Check {
+  at: number;
+  must?: string[];
+  not?: string[];
+  why: string;
 }
 /** One paragraph as translated in one run. */
 interface Row {
@@ -55,6 +68,9 @@ interface Row {
   /** Some reply had more than one line (the app joins them). */
   multiLine: boolean;
   judge: number | null;
+  /** The checks of this paragraph that failed, by their `why`. */
+  failed?: string[];
+  checks?: number;
 }
 interface Run {
   label: string;
@@ -135,6 +151,7 @@ interface Scores {
   flagged: number;
   judge: number | null;
   paragraphs: number;
+  checks: { ok: number; of: number };
 }
 
 function score(run: Run, glossary: GlossaryItem[]): Scores {
@@ -173,6 +190,7 @@ function score(run: Run, glossary: GlossaryItem[]): Scores {
     flagged: rows.filter((r) => r.issue !== null).length,
     judge: judged.length === 0 ? null : judged.reduce((a, r) => a + r.judge!, 0) / judged.length,
     paragraphs: rows.length,
+    checks: { of: rows.reduce((n, r) => n + (r.checks ?? 0), 0), ok: rows.reduce((n, r) => n + (r.checks ?? 0) - (r.failed?.length ?? 0), 0) },
   };
 }
 
@@ -209,6 +227,9 @@ async function translatePassage(
   }
   // Words the app found that are not in the fixture's glossary are left out, as a user would ignore them, so every run gets the same glossary.
   for (const w of synced.words) if (!known.has(w.source)) service.workSetUse(w.source, false);
+  // What the user translated before: their own text, which the run keeps and does not score.
+  const edits = new Map(Object.entries(passage.edits ?? {}).map(([k, v]) => [Number(k), v]));
+  for (const [k, text] of edits) service.workSetPart(k, text);
   const done = await service.workTranslate({
     backend: opts.backend,
     modelId: opts.model,
@@ -220,9 +241,12 @@ async function translatePassage(
     targetLanguage: fixture.targetLanguage ?? "English",
   });
   const log: PromptRecord[] = service.promptLog();
-  return done.paragraphs.map((p, k) => {
+  return done.paragraphs.flatMap((p, k) => {
+    if (edits.has(k)) return [];
     const asked = log.filter((r) => r.purpose === `Translation of paragraph ${k + 1}`);
-    return {
+    const checks = (passage.checks ?? []).filter((c) => c.at === k);
+    const failed = checks.filter((c) => (c.must ?? []).some((m) => !new RegExp(m).test(p.translation)) || (c.not ?? []).some((m) => new RegExp(m).test(p.translation))).map((c) => c.why);
+    return [{
       passage: passage.id,
       index: k,
       source: p.text,
@@ -231,7 +255,9 @@ async function translatePassage(
       issue: p.issue ?? null,
       attempts: asked.length,
       multiLine: asked.some((r) => (r.reply ?? "").trim().split(/\n+/).filter((l) => l.trim() !== "").length > 1),
-    };
+      checks: checks.length,
+      failed,
+    }];
   });
 }
 
@@ -261,6 +287,42 @@ async function judge(url: string, model: string, row: Omit<Row, "judge">): Promi
   return d ? Number(d[0]) : null;
 }
 
+// ---- is a difference real? ----
+
+/**
+ * The change in chrF from run `a` to run `b` with a 95% interval, by paired bootstrap: the paragraphs both runs translated are drawn again
+ * with replacement many times, and the change is measured on each draw. Runs on different paragraphs cannot be compared.
+ */
+function delta(a: Run, b: Run): string {
+  // The same paragraph with the same reference, whichever checkout's copy of the fixture the run read.
+  const key = (r: Row) => `${r.passage}#${r.index}\u0000${r.source}\u0000${r.reference}`;
+  const inB = new Map(b.rows.map((r) => [key(r), r]));
+  const pairs = a.rows.filter((r) => inB.has(key(r))).map((r) => [r, inB.get(key(r))!] as const);
+  if (pairs.length < 2) return "not comparable";
+  const statsA = pairs.map(([x]) => chrfStats(x.output, x.reference));
+  const statsB = pairs.map(([, y]) => chrfStats(y.output, y.reference));
+  const corpus = (stats: [number, number, number][][], pick: number[]) => {
+    const total = Array.from({ length: CHAR_ORDER }, (): [number, number, number] => [0, 0, 0]);
+    for (const i of pick) stats[i]!.forEach((st, n) => st.forEach((v, j) => (total[n]![j]! += v)));
+    return chrfScore(total);
+  };
+  const all = pairs.map((_, i) => i);
+  const d = corpus(statsB, all) - corpus(statsA, all);
+  // A fixed seed, so the same two runs always give the same interval.
+  let seed = 12345;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const draws: number[] = [];
+  for (let t = 0; t < 1000; t++) {
+    const pick = all.map(() => Math.floor(rand() * all.length));
+    draws.push(corpus(statsB, pick) - corpus(statsA, pick));
+  }
+  draws.sort((x, y) => x - y);
+  const lo = draws[25]!;
+  const hi = draws[974]!;
+  const sign = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}`;
+  return `${sign(d)} [${sign(lo)}, ${sign(hi)}]${lo > 0 || hi < 0 ? "" : " (may be noise)"}`;
+}
+
 // ---- table ----
 
 function table(runs: Run[], fixtures: Map<string, Fixture>, show: number): string {
@@ -272,6 +334,8 @@ function table(runs: Run[], fixtures: Map<string, Fixture>, show: number): strin
     ["prompt", ...runs.map((r) => r.prompt)],
     ["backend", ...runs.map((r) => (r.backend === "practice" ? "practice (stub)" : `server, t=${r.temperature}`))],
     ["chrF ↑", ...scores.map((s) => s.chrf.toFixed(1))],
+    ["chrF change vs first (95%)", ...runs.map((r, i) => (i === 0 ? "-" : delta(runs[0]!, r)))],
+    ["checks passed ↑", ...scores.map((s) => pct(s.checks.ok, s.checks.of))],
     ["judge 1-5 ↑", ...scores.map((s) => (s.judge === null ? "-" : s.judge.toFixed(2)))],
     ["glossary names used ↑", ...scores.map((s) => pct(s.glossary.hit, s.glossary.wanted))],
     ["quoted speech kept ↑", ...scores.map((s) => pct(s.quotes.ok, s.quotes.of))],
@@ -284,6 +348,12 @@ function table(runs: Run[], fixtures: Map<string, Fixture>, show: number): strin
   const widths = head.map((_, c) => Math.max(...lines.map((l) => (l[c] ?? "").length)));
   const fmt = (l: string[]) => l.map((x, c) => x.padEnd(widths[c]!)).join("  ").trimEnd();
   const out = [fmt(head), widths.map((w) => "-".repeat(w)).join("  "), ...lines.slice(1).map(fmt)];
+  for (const r of runs) {
+    const failed = r.rows.filter((row) => (row.failed ?? []).length > 0);
+    if (failed.length === 0) continue;
+    out.push("", `Failed checks, ${r.label}:`);
+    for (const row of failed) out.push(`  ${row.passage}#${row.index + 1}  ${row.failed!.join("; ")}`, `    out: ${row.output}`);
+  }
   if (show > 0) {
     for (const r of runs) {
       const worst = r.rows
@@ -303,7 +373,7 @@ function table(runs: Run[], fixtures: Map<string, Fixture>, show: number): strin
 // ---- main ----
 
 async function main(): Promise<void> {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       fixture: { type: "string" },
       model: { type: "string", multiple: true },
@@ -330,8 +400,9 @@ async function main(): Promise<void> {
   };
 
   // Comparing runs saved before (on main and on a branch, say): one column each.
+  // `--compare a.json b.json` gives the first file to the option and the others as positionals: all of them are compared.
   if (values.compare?.length) {
-    const runs = values.compare.flatMap((f) => (JSON.parse(readFileSync(f, "utf8")) as { runs: Run[] }).runs);
+    const runs = [...values.compare, ...positionals].flatMap((f) => (JSON.parse(readFileSync(f, "utf8")) as { runs: Run[] }).runs);
     for (const r of runs) load(r.fixture);
     console.log(table(runs, fixtures, show));
     return;
@@ -340,7 +411,10 @@ async function main(): Promise<void> {
   if (!values.fixture) throw new Error("Give --fixture FILE (see fixtures/eval-example.json), or --compare FILE...");
   const fixturePath = resolve(values.fixture);
   const fixture = load(fixturePath);
-  for (const p of fixture.passages) if (p.source.length !== p.reference.length) throw new Error(`${p.id}: ${p.source.length} paragraphs but ${p.reference.length} references.`);
+  for (const p of fixture.passages) {
+    if (p.source.length !== p.reference.length) throw new Error(`${p.id}: ${p.source.length} paragraphs but ${p.reference.length} references.`);
+    for (const c of p.checks ?? []) if (c.at < 0 || c.at >= p.source.length || Object.hasOwn(p.edits ?? {}, String(c.at))) throw new Error(`${p.id}: a check is on paragraph ${c.at}, which is not a paragraph that is translated.`);
+  }
 
   const baseUrl = values["base-url"].replace(/\/$/, "");
   const served = values.practice ? null : await reachable(baseUrl);
