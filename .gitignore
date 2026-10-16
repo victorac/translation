@@ -5,3 +5,5 @@ out
 *.ltw.json.tmp
 out
 .dev-data
+*.local.json
+eval-runs

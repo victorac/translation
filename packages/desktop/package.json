@@ -11,6 +11,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dev:bridge": "tsx src/dev-bridge.ts",
+    "eval": "tsx scripts/eval.ts",
     "smoke": "electron-vite build && LTW_SMOKE_TEST=1 electron .",
     "predev": "node ensure-electron.mjs",
     "prebuild": "node ensure-electron.mjs",

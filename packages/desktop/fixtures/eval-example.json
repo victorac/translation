@@ -1,0 +1,45 @@
+{
+  "about": "Made-up text written for this example, so that the eval script can run without anyone's book. Put real passages and their published translations in a file of your own, outside the repository (or named *.local.json, which git ignores).",
+  "sourceLanguage": "Japanese",
+  "targetLanguage": "English",
+  "glossary": [
+    { "source": "水瀬灯", "target": "Akari Minase", "kind": "character", "aliases": ["灯"] },
+    { "source": "久我蓮", "target": "Ren Kuga", "kind": "character", "aliases": ["蓮"] },
+    { "source": "白鷺堂", "target": "Shirasagi-dō", "kind": "place" },
+    { "source": "灯籠祭", "target": "Lantern Festival", "kind": "term" }
+  ],
+  "passages": [
+    {
+      "id": "bookshop",
+      "source": [
+        "古書店・白鷺堂の扉を開けると、乾いた紙の匂いがした。",
+        "「いらっしゃい」と奥から声がした。店主の久我蓮は、いつものように本の山の向こうに座っていた。",
+        "水瀬灯は傘をたたみ、濡れた肩を払った。「蓮さん、頼んでいた本、届きました？」",
+        "「ああ、届いたよ。でも、その前に一つ聞きたい」蓮は眼鏡を外した。「どうして急にあんな古い地図が必要なんだ？」",
+        "灯は少し迷ってから答えた。「祖母の日記に、その地図のことが書いてあったんです」"
+      ],
+      "reference": [
+        "When she opened the door of Shirasagi-dō, the secondhand bookshop, she was met by the smell of dry paper.",
+        "\"Welcome,\" a voice called from the back. The owner, Ren Kuga, was sitting behind a pile of books as usual.",
+        "Akari Minase folded her umbrella and brushed off her wet shoulders. \"Ren, did the book I ordered come in?\"",
+        "\"Yeah, it came. But first I want to ask you something.\" Ren took off his glasses. \"Why do you suddenly need such an old map?\"",
+        "Akari hesitated a moment before answering. \"My grandmother wrote about that map in her diary.\""
+      ]
+    },
+    {
+      "id": "festival",
+      "source": [
+        "灯籠祭の夜、川沿いの道は人で溢れていた。",
+        "灯は橋の上で足を止め、流れていく光を見下ろした。祖母も昔、ここに立っていたのだろうか。",
+        "「迷子になるなよ」背後から蓮の声がした。振り向くと、彼は両手に綿菓子を持っていた。",
+        "「子供じゃないんですから」と言いながらも、灯はその一つを受け取った。"
+      ],
+      "reference": [
+        "On the night of the Lantern Festival, the path along the river was overflowing with people.",
+        "Akari stopped on the bridge and looked down at the lights drifting by. Had her grandmother stood here once, long ago?",
+        "\"Don't get lost.\" Ren's voice came from behind her. When she turned around, he was holding cotton candy in both hands.",
+        "\"I'm not a child, you know,\" Akari said, but she took one anyway."
+      ]
+    }
+  ]
+}
