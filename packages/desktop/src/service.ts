@@ -955,10 +955,11 @@ export class WorkspaceService {
     let text = "";
     let issue: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const bare = { glossary, notes, suggestions, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject, different: alternative };
+      const required = glossary.map((g) => targetVariants(g.target)[0]).filter((t): t is string => !!t);
+      const bare = { glossary, notes, suggestions, required, sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage, paragraph, rejected: reject, different: alternative };
       let left = input.contextLimit - estimateTokens(system) - estimateTokens(paragraphMessage({ ...bare, before: [], next: [] }) + complaint) - input.maxOutputTokens - DEFAULTS.messageOverheadTokens;
       if (left < 0) throw new UserError("context_overflow", `Paragraph ${k + 1} needs about ${input.contextLimit - left - input.maxOutputTokens} tokens plus ${input.maxOutputTokens} for the reply, but the context of ${input.modelId} is set to ${input.contextLimit}. Raise the context size.`);
-      // As much context as fits, nearest first, one before and one after in turn: the translated paragraphs before, and the ones after.
+      // Context nearest first, one before and one after in turn, as far as it fits: the translated paragraphs before, and the ones after.
       const before: Pair[] = [];
       const next: { source: string; translation: string | null }[] = [];
       // The glossary also covers the names of the paragraphs around it that are sent; their lines take room too, and are not checked in the answer.
@@ -967,8 +968,11 @@ export class WorkspaceService {
       const lineCost = (g: (typeof glossary)[number]): number => estimateTokens(`${g.source} => ${g.target} ${g.note ?? ""} ${(g.aliases ?? []).join(" ")}`) + 4;
       let b = k - 1;
       let a = k + 1;
-      for (let turn = 0; (b >= 0 || a < w.paragraphs.length) && left > 0; turn++) {
-        if (turn % 2 === 0 && b >= 0) {
+      // A small model does best with a few paragraphs on each side, not with all that fits.
+      const moreBefore = () => b >= 0 && before.length < DEFAULTS.contextBefore;
+      const moreAfter = () => a < w.paragraphs.length && next.length < DEFAULTS.contextAfter;
+      for (let turn = 0; (moreBefore() || moreAfter()) && left > 0; turn++) {
+        if ((turn % 2 === 0 || !moreAfter()) && moreBefore()) {
           const p = w.paragraphs[b--]!;
           if (p.translation.trim() === "") continue;
           const extra = extraFor(p.text);
@@ -977,7 +981,7 @@ export class WorkspaceService {
           left -= cost;
           sent.push(...extra);
           before.unshift({ source: p.text, translation: p.translation.trim() });
-        } else if (a < w.paragraphs.length) {
+        } else if (moreAfter()) {
           const p = w.paragraphs[a++]!;
           const extra = extraFor(p.text);
           const cost = estimateTokens(p.text) + estimateTokens(p.translation) + 8 + extra.reduce((n, g) => n + lineCost(g), 0);

@@ -166,21 +166,28 @@ describe("a short name that is part of a longer one", () => {
     expect(only("「山田、お待たせ」山田太郎は笑った。").sort()).toEqual(["山田", "山田太郎"].sort());
   });
 
-  it("is sent as its own entry, with a note about when it applies, and the full name no longer lists it as another way to write it", () => {
+  it("is sent as its own entry where it stands on its own, and the full name no longer lists it as another way to write it", () => {
     const both = glossaryFor([taro, tono], "「山田、お待たせ」山田太郎は笑った。");
     expect(both).toEqual([
       { source: "山田太郎", target: "Yamada Taro" },
-      { source: "山田", target: "Yamada", note: "Hanako's name for Taro; when it stands on its own, not as part of 山田太郎" },
+      { source: "山田", target: "Yamada", note: "Hanako's name for Taro" },
     ]);
     // Where it is only part of the full name, it is not sent at all, and the full name keeps it as an alias.
     expect(glossaryFor([taro, tono], "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Yamada Taro" }]);
     expect(glossaryFor([taro], "山田太郎という。")).toEqual([{ source: "山田太郎", target: "Yamada Taro", aliases: ["山田"] }]);
   });
 
+  it("does not send a name whose short form is only part of another glossary word", () => {
+    const akari = word("水瀬灯", "Akari Minase", { aliases: ["灯"] });
+    const festival = word("灯籠祭", "Lantern Festival", { kind: "term" });
+    expect(glossaryFor([akari, festival], "灯籠祭の夜だった。").map((g) => g.source)).toEqual(["灯籠祭"]);
+    expect(glossaryFor([akari, festival], "灯籠祭の夜、灯は笑った。").map((g) => g.source).sort()).toEqual(["水瀬灯", "灯籠祭"].sort());
+  });
+
   it("tells the model whom a name stands for", () => {
     const stands = word("山田", "Yamada", { kind: "term", refersTo: "山田太郎" });
     const sent = glossaryFor([taro, stands], "「山田、お待たせ」山田太郎");
-    expect(sent.find((g) => g.source === "山田")).toEqual({ source: "山田", target: "Yamada", note: "a name for Yamada Taro; when it stands on its own, not as part of 山田太郎" });
+    expect(sent.find((g) => g.source === "山田")).toEqual({ source: "山田", target: "Yamada", note: "a name for Yamada Taro" });
   });
 });
 

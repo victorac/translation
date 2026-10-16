@@ -37,6 +37,13 @@ describe("paragraphMessage", () => {
     expect(m).toContain("JAPANESE: 後。\nENGLISH: After.\n\nJAPANESE: 更に。");
     expect(m).toContain("REJECTED VERSION");
   });
+  it("names the glossary names to use in the last line, and gives unconfirmed names as likely", () => {
+    const m = paragraphMessage({ ...request, required: ["Taro"], suggestions: [{ source: "鈴木花子", suggestion: "Suzuki Hanako" }] });
+    expect(m.split("\n\n").at(-1)).toBe("Translate that paragraph into English. Use these names: Taro. Reply with its translation only, as one paragraph.");
+    expect(m).toContain("LIKELY NAMES (a likely English name, not confirmed: use it unless the story shows it is wrong, and write it the same way every time):\n- 鈴木花子 => probably Suzuki Hanako");
+    expect(paragraphMessage(request).split("\n\n").at(-1)).toBe("Translate that paragraph into English. Reply with its translation only, as one paragraph.");
+  });
+
   it("leaves out the sections that have nothing in them", () => {
     const m = paragraphMessage({ ...request, before: [], next: [], notes: [], glossary: [] });
     expect(m).not.toMatch(/CONTEXT|NEXT|GLOSSARY|NOTES/);
@@ -65,6 +72,12 @@ describe("missingNames", () => {
     expect(missingNames(glossary, "花子と太郎。", "She and Tarou.")).toEqual(["花子 => Hanako"]);
     expect(missingNames(glossary, "他の人。", "Someone.")).toEqual([]); // not in the paragraph
   });
+  it("does not ask for a name whose short form is only part of a longer glossary word", () => {
+    const glossary = [{ source: "水瀬灯", target: "Akari Minase", aliases: ["灯"] }, { source: "灯籠祭", target: "Lantern Festival" }];
+    expect(missingNames(glossary, "灯籠祭の夜だった。", "It was the night of the Lantern Festival.")).toEqual([]);
+    expect(missingNames(glossary, "灯籠祭の夜、灯は笑った。", "It was the night of the Lantern Festival.")).toEqual(["水瀬灯 => Akari Minase"]);
+  });
+
   it("lets a short form of a name be translated as part of the name", () => {
     const glossary = [{ source: "山田太郎", target: "Taro Yamada", aliases: ["太郎"] }];
     expect(missingNames(glossary, "「太郎、行くぞ」", "\"Taro, let's go.\"")).toEqual([]);

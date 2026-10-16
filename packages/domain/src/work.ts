@@ -366,23 +366,23 @@ export function glossaryHits<T extends { source: string; aliases: readonly strin
 
 /**
  * The glossary entries sent with a paragraph: every word that has an English form (or a note) and stands in it. A short name that is
- * part of a longer one (山田 in 山田太郎) is sent only when it stands on its own there, with a note saying that is when it applies,
+ * part of a longer one (山田 in 山田太郎) is sent only when it stands on its own there (with no paragraph, with a note saying that is when it applies),
  * and is not also listed as another way to write the longer name.
  */
 export function glossaryFor(words: readonly Word[], only?: string): { source: string; target: string; note?: string; aliases?: string[] }[] {
   const sources = words.map((n) => n.source);
+  const names = words.flatMap((n) => [n.source, ...n.aliases]);
   return words
     .filter((n) => (n.english.trim() !== "" || (n.hint ?? "").trim() !== "") && n.use !== false)
     .flatMap((n) => {
       const longer = sources.filter((s) => s.length > n.source.length && s.includes(n.source));
       const aliases = n.aliases.filter((a) => !sources.includes(a));
-      if (only !== undefined) {
-        const alone = withoutLongerNames(only, n.source, sources);
-        if (![n.source, ...aliases].some((s) => (s === n.source ? alone : only).includes(s))) return [];
-      }
+      // A name or a short form counts only where it stands on its own, not inside a longer word of the glossary (灯 in 灯籠祭).
+      if (only !== undefined && ![n.source, ...aliases].some((s) => withoutLongerNames(only, s, names).includes(s))) return [];
       const target = n.refersTo ? words.find((o) => o.source === n.refersTo) : undefined;
       const stands = target ? `a name for ${target.english.trim() !== "" ? target.english.trim() : target.source}` : "";
-      const note = [stands, n.hint?.trim() ?? "", longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
+      // For one paragraph a short name is sent only where it stands on its own, so saying so would only puzzle the model.
+      const note = [stands, n.hint?.trim() ?? "", only === undefined && longer.length > 0 ? `when it stands on its own, not as part of ${longer.join(" or ")}` : ""].filter((x) => x !== "").join("; ");
       return [{ source: n.source, target: n.english.trim(), ...(note !== "" ? { note } : {}), ...(aliases.length > 0 ? { aliases } : {}) }];
     });
 }
@@ -393,6 +393,7 @@ export function glossaryFor(words: readonly Word[], only?: string): { source: st
  */
 export function suggestionsFor(words: readonly Word[], only: string): { source: string; suggestion: string; aliases?: string[] }[] {
   const sources = words.map((n) => n.source);
+  const names = words.flatMap((n) => [n.source, ...n.aliases]);
   return words.flatMap((n) => {
     const suggestion = n.suggestions?.["english"]?.[0]?.trim();
     if (!suggestion || n.fromReading !== true || n.english.trim() !== "" || n.use === false) return [];
@@ -400,8 +401,7 @@ export function suggestionsFor(words: readonly Word[], only: string): { source: 
     // sounds (Sumisu for Smith) and the model would copy that: it is sent only when the user wrote it.
     if (n.written !== true && !/\p{Script=Han}/u.test(n.source)) return [];
     const aliases = n.aliases.filter((a) => !sources.includes(a));
-    const alone = withoutLongerNames(only, n.source, sources);
-    if (![n.source, ...aliases].some((x) => (x === n.source ? alone : only).includes(x))) return [];
+    if (![n.source, ...aliases].some((x) => withoutLongerNames(only, x, names).includes(x))) return [];
     return [{ source: n.source, suggestion, ...(aliases.length > 0 ? { aliases } : {}) }];
   });
 }

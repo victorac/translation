@@ -15,7 +15,7 @@ export interface SetupState {
 export const newModel = (name: string, promptId = "standard"): ModelSetting => ({
   name,
   contextLimit: 4096,
-  maxOutputTokens: 1536,
+  maxOutputTokens: 512,
   temperature: 0.2,
   promptId,
   useGlossary: true,

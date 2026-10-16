@@ -10,7 +10,7 @@ import {
 } from "./labels.js";
 
 const CONTEXT_LABEL = "CONTEXT (the paragraphs before this one, with their translations; reference only, do not translate):";
-const SOUNDS_LABEL = "HOW NAMES SOUND (a rough reading of a name from a dictionary, only for the sound; write the name in {language} the way it is normally spelled, and the same way every time):";
+const UNSURE_LABEL = "LIKELY NAMES (a likely {language} name, not confirmed: use it unless the story shows it is wrong, and write it the same way every time):";
 const NEXT_LABEL = "NEXT (the paragraphs after this one, so that you know where the story goes; reference only, do not translate):";
 
 /** One paragraph (a non-empty line) of a text, with where it stands in it. */
@@ -46,7 +46,7 @@ export interface Pair {
  */
 export function paragraphSystem(styleGuidance: string, sourceLanguage: string, targetLanguage: string): string {
   return [
-    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), HOW NAMES SOUND (readings of names, only for the sound), CONTEXT and NEXT (the paragraphs around the one to translate, with their translations when there are any; for reference only, never translate them), and the ${sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE.`,
+    `You translate a story from ${sourceLanguage} into ${targetLanguage}, one paragraph at a time. The user message has labelled sections: NOTES (background about the story and its people; do not translate it), GLOSSARY (the ${targetLanguage} names to use), WORD NOTES (instructions about particular words; follow them), LIKELY NAMES (names that are not confirmed), CONTEXT and NEXT (the paragraphs around the one to translate, with their translations when there are any; for reference only, never translate them), and the ${sourceLanguage.toUpperCase()} PARAGRAPH TO TRANSLATE.`,
     `Style of the whole translation (it applies to tone and wording only; for this task follow the instructions below):\n${styleGuidance}`,
     `Your task: translate the paragraph, all of it and only it, so that it fits what comes before. Use the names from GLOSSARY exactly as written and follow WORD NOTES. Do not omit or sanitize anything, and do not add comments.`,
     `Reply with the translation of the paragraph only, as one paragraph: no labels, and nothing about the other paragraphs.`,
@@ -64,6 +64,8 @@ export interface ParagraphRequest {
   /** The paragraphs before this one with their translations, oldest first (for the first paragraph of a block: the end of the block before). */
   before: readonly Pair[];
   paragraph: string;
+  /** The names the translation must use (the paragraph's own glossary names), repeated in the last line where a small model reads them best. */
+  required?: readonly string[] | undefined;
   /** The paragraphs after this one, with their translations when they have one. */
   next: readonly { source: string; translation: string | null }[];
   /** A version the user did not accept, shown only when the model gave it back unchanged, or when an alternative is asked for. */
@@ -82,17 +84,17 @@ export function paragraphMessage(r: ParagraphRequest): string {
   if (lines.length > 0) parts.push(`${GLOSSARY_LABEL}\n${lines.join("\n")}`);
   const wordNotes = wordNoteLines(r.glossary);
   if (wordNotes.length > 0) parts.push(`${WORD_NOTES_LABEL}\n${wordNotes.join("\n")}`);
-  // A dictionary's reading is only how the name sounds: told as that, so the model spells the name the way it is normally spelled.
-  const line = (g: { source: string; suggestion: string; aliases?: string[] | undefined }, how: string) => `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} ${how} ${g.suggestion}`;
-  const sounds = (r.suggestions ?? []).map((g) => line(g, "is read:"));
-  if (sounds.length > 0) parts.push(`${SOUNDS_LABEL.replace("{language}", r.targetLanguage)}\n${sounds.join("\n")}`);
+  // A dictionary's reading of a name in kanji is usually its spelling, but a name can be read in more than one way: told as likely, not as certain.
+  const unsure = (r.suggestions ?? []).map((g) => `- ${[g.source, ...(g.aliases ?? [])].join(" / ")} => probably ${g.suggestion}`);
+  if (unsure.length > 0) parts.push(`${UNSURE_LABEL.replace("{language}", r.targetLanguage)}\n${unsure.join("\n")}`);
   if (r.before.length > 0) parts.push(`${CONTEXT_LABEL}\n${r.before.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.next.length > 0) parts.push(`${NEXT_LABEL}\n${r.next.map((p) => pair(p.source, p.translation)).join("\n\n")}`);
   if (r.rejected) parts.push(`REJECTED VERSION (the user did not accept it; write a different translation, do not copy its wording):\n${r.rejected}`);
   parts.push(`${from} PARAGRAPH TO TRANSLATE:\n${r.paragraph}`);
   // For an alternative the model is told outright to write something else: shown the version alone, it copies it.
   const how = r.rejected && r.different ? ` in a clearly different way from the REJECTED VERSION: other words and another sentence structure, with the same meaning` : "";
-  parts.push(`Translate that paragraph into ${r.targetLanguage}${how}. Reply with its translation only, as one paragraph.`);
+  const names = r.required && r.required.length > 0 ? ` Use these names: ${r.required.join(", ")}.` : "";
+  parts.push(`Translate that paragraph into ${r.targetLanguage}${how}.${names} Reply with its translation only, as one paragraph.`);
   return parts.join("\n\n");
 }
 
@@ -110,11 +112,18 @@ export function answerOf(reply: string, targetLanguage: string): string | null {
  */
 export function missingNames(glossary: readonly GlossaryItem[], source: string, translation: string): string[] {
   const hay = translation.toLocaleLowerCase();
+  const names = glossary.flatMap((g) => [g.source, ...(g.aliases ?? [])]);
+  // Where a word stands on its own, not inside a longer word of the glossary (灯 in 灯籠祭).
+  const stands = (word: string): boolean =>
+    names
+      .filter((n) => n.length > word.length && n.includes(word))
+      .reduce((rest, n) => rest.split(n).join("\u0000"), source)
+      .includes(word);
   return glossary.flatMap((g) => {
     const wanted = targetVariants(g.target);
     if (wanted.length === 0) return [];
-    const full = source.includes(g.source);
-    if (!full && !(g.aliases ?? []).some((n) => source.includes(n))) return [];
+    const full = stands(g.source);
+    if (!full && !(g.aliases ?? []).some(stands)) return [];
     const ok = full
       ? wanted.some((w) => hay.includes(w.toLocaleLowerCase()))
       : wanted.some((w) => w.split(/\s+/).some((word) => word.length >= 2 && hay.includes(word.toLocaleLowerCase())));
