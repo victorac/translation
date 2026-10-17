@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-web",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["LTW_UI_PORT=5183", "LTW_BRIDGE_PORT=5184", "pnpm", "dev:web"],
+      "port": 5183
+    }
+  ]
+}
