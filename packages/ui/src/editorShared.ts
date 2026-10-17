@@ -92,7 +92,8 @@ const placeOf = (el: Element): Place => {
 /** What the pointer does on the words of the glossary in an editor: rests on one (or leaves it), or clicks one. */
 export interface EntryEvents {
   onHover?: (hover: { source: string; place: Place } | null) => void;
-  onPin?: (source: string, place: Place) => void;
+  /** A word was clicked: which one, where it is on the screen, and where it stands in the text. */
+  onPin?: (source: string, place: Place, range: Match) => void;
 }
 
 export function entryEvents(events: { current: EntryEvents }) {
@@ -110,7 +111,8 @@ export function entryEvents(events: { current: EntryEvents }) {
     click: (event, view) => {
       const el = (event.target as HTMLElement).closest<HTMLElement>(".cm-entry");
       if (!el?.dataset["source"] || !view.state.selection.main.empty) return false;
-      events.current.onPin?.(el.dataset["source"], placeOf(el));
+      const from = view.posAtDOM(el);
+      events.current.onPin?.(el.dataset["source"], placeOf(el), { from, to: from + (el.textContent ?? "").length });
       return false;
     },
   });

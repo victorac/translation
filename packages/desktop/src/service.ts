@@ -1122,6 +1122,8 @@ export class WorkspaceService {
     const abort = this.beginSideRequest();
     const mine = input.side === "source" ? input.source : input.translation;
     const near = mine.length === 0 ? 0 : at / mine.length;
+    // Which of several times the selection is written, so a word written twice is told apart in the other text.
+    const own = { text: mine, selected, at };
     const ask = (messages: { role: "system" | "user" | "assistant"; content: string }[], temperature: number) =>
       this.askModel({ purpose: "Matching a selection to the other text", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature, messages, practiceReply: () => "NONE", allowEmpty: true }, abort);
     const language = (input.side === "source" ? input.targetLanguage : input.sourceLanguage).toUpperCase();
@@ -1132,14 +1134,15 @@ export class WorkspaceService {
       // A model that finds nothing (or something the other text does not have) is asked again a little less strictly, a few times.
       for (const temperature of MATCH_TEMPERATURES) {
         const reply = await ask(first, temperature);
-        if (reply === null) return null; // stopped
-        const span = fits(matchedSpan(reply, other, near));
+        // Stopped is not "nothing found": the window must not keep it as the answer.
+        if (reply === null) throw new UserError("stopped", "Finding the match was stopped.");
+        const span = fits(matchedSpan(reply, other, near, own));
         if (span) return span;
         // A small model may give back what it was shown, from the selection's own text: told so, it is asked once more.
         if (matchedSpan(reply, mine) === null) continue;
         const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `That PART is not in the ${language} text. Reply again in the two lines, with the PART copied exactly from the ${language} text.` }], temperature);
-        if (again === null) return null;
-        const corrected = fits(matchedSpan(again, other, near));
+        if (again === null) throw new UserError("stopped", "Finding the match was stopped.");
+        const corrected = fits(matchedSpan(again, other, near, own));
         if (corrected) return corrected;
       }
       return null;

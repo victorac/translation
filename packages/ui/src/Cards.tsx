@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import { Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Badge, Button, Flex, IconButton, Text } from "@radix-ui/themes";
 import type { Word, WorkLine } from "@ltw/domain";
 import { kindClass, type Place } from "./editorShared";
@@ -13,18 +13,40 @@ const inPopup = (el: Element | null): boolean => !!el?.closest("[data-radix-popp
  * A card next to a place in the text: below it, or above it when there is no room below. A pinned card closes with Escape or a click
  * anywhere else (but not in a dropdown opened from it).
  */
-export function Floating({ place, pinned, onClose, onEnter, onLeave, label, children }: { place: Place; pinned: boolean; onClose: () => void; onEnter?: () => void; onLeave?: () => void; label: string; children: ReactNode }) {
+export function Floating({
+  place,
+  within,
+  pinned,
+  onClose,
+  onEnter,
+  onLeave,
+  label,
+  children,
+}: {
+  place: Place;
+  /** The pane of what the card is about: the card stays inside it (unless it is narrower than the card), so it covers nothing of the other one. */
+  within?: HTMLElement | null;
+  pinned: boolean;
+  onClose: () => void;
+  onEnter?: () => void;
+  onLeave?: () => void;
+  label: string;
+  children: ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ left: place.left, top: place.bottom + 6, visibility: "hidden" });
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
     const { width, height } = el.getBoundingClientRect();
-    const left = Math.max(8, Math.min(place.left, window.innerWidth - width - 8));
+    const pane = within?.getBoundingClientRect();
+    const lo = Math.max(8, (pane?.left ?? 0) + 4);
+    const hi = Math.min(window.innerWidth, pane?.right ?? window.innerWidth) - width - 8;
+    const left = Math.max(lo, Math.min(place.left, hi));
     const below = place.bottom + 6;
     const top = below + height > window.innerHeight - 8 && place.top - height - 6 > 8 ? place.top - height - 6 : Math.max(8, Math.min(below, window.innerHeight - height - 8));
     setStyle({ left, top });
-  }, [place.left, place.top, place.bottom, children]);
+  }, [place.left, place.top, place.bottom, within, children]);
   // Listened to for as long as the card is pinned, whatever is drawn meanwhile: a press in an editor draws the page again before it
   // reaches the document, and listening again each time would miss it.
   const close = useRef(onClose);
@@ -147,7 +169,26 @@ export function WordPeek({ word, kindLabel, places }: { word: Word; kindLabel: s
 }
 
 /** A word's card pinned to change it: the English name, the details, where it stands in the text, and the rest from the menu. */
-export function WordEdit({ word, kindLabel, places, classes, topics, actions, onClose }: { word: Word; kindLabel: string; places: number; classes: ClassInfo[]; topics: TopicRef[]; actions: WordActions; onClose: () => void }) {
+export function WordEdit({
+  word,
+  kindLabel,
+  places,
+  classes,
+  topics,
+  actions,
+  onClose,
+  find,
+}: {
+  word: Word;
+  kindLabel: string;
+  places: number;
+  classes: ClassInfo[];
+  topics: TopicRef[];
+  actions: WordActions;
+  onClose: () => void;
+  /** Asking the model where this place of the word is in the other text. */
+  find?: { label: string; disabled: boolean; run: () => void };
+}) {
   const used = word.use !== false;
   return (
     <Flex direction="column" gap="3">
@@ -175,9 +216,16 @@ export function WordEdit({ word, kindLabel, places, classes, topics, actions, on
         onDismissSuggestion={actions.onDismissSuggestion}
       />
       <Flex align="center" justify="between" gap="2">
-        <Button variant="ghost" size="1" onClick={actions.onLocate} disabled={places === 0}>
-          <MagnifyingGlassIcon /> Show each place
-        </Button>
+        <Flex gap="3" wrap="wrap">
+          <Button variant="ghost" size="1" onClick={actions.onLocate} disabled={places === 0}>
+            <MagnifyingGlassIcon /> Show each place
+          </Button>
+          {find && (
+            <Button variant="ghost" size="1" onClick={find.run} disabled={find.disabled}>
+              <ReloadIcon /> {find.label}
+            </Button>
+          )}
+        </Flex>
         <WordMenu name={word} actions={actions} />
       </Flex>
     </Flex>
@@ -232,5 +280,39 @@ export function LineEdit({
         )}
       </Flex>
     </Flex>
+  );
+}
+
+/**
+ * What can be done with a selection, as a small menu under it, kept inside its own pane (it does not cover the other text, where a
+ * match is shown). It closes on a press anywhere else, or Escape; the page closes it after an action too.
+ */
+export function SelectionMenu({ at, within, onClose, children }: { at: { left: number; bottom: number }; within: HTMLElement | null; onClose: () => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [left, setLeft] = useState(at.left);
+  useLayoutEffect(() => {
+    const width = box.current?.offsetWidth ?? 0;
+    const pane = within?.getBoundingClientRect();
+    const lo = (pane?.left ?? 0) + 4;
+    const hi = (pane?.right ?? window.innerWidth) - width - 8;
+    setLeft(Math.max(lo, Math.min(at.left, hi)));
+  }, [at.left, at.bottom, within, children]);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    // Seen before the editor takes the press, so a new selection starts with the menu closed (and it opens again on the new one).
+    const onDown = (e: MouseEvent) => !box.current?.contains(e.target as Node) && close.current();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close.current();
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  return (
+    <div ref={box} className="select-bar" role="menu" aria-label="What to do with the selection" style={{ left, top: at.bottom + 6 }}>
+      {children}
+    </div>
   );
 }

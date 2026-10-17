@@ -207,7 +207,7 @@ details > summary { cursor: pointer; }
 .english-missing { box-shadow: inset 0 0 0 1px var(--amber-8); }
 .toast { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 100; padding: 0.55rem 0.9rem; border-radius: var(--radius-3); background: var(--gray-12); color: var(--gray-1); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); max-width: min(32rem, calc(100vw - 2rem)); }
 /* What to do with a selection: a small solid menu under it, one action a row (nothing behind it shows through). */
-.select-bar { position: fixed; z-index: 50; padding: 0.25rem; border-radius: var(--radius-3); background: var(--color-panel-solid); border: 1px solid var(--gray-6); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28); }
+.select-bar { position: fixed; z-index: 50; display: flex; flex-direction: column; padding: 0.25rem; border-radius: var(--radius-3); background: var(--color-panel-solid); border: 1px solid var(--gray-6); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28); }
 .select-bar .rt-Button { margin: 0; justify-content: flex-start; white-space: nowrap; color: var(--gray-12); }
 .select-add { max-width: 22rem; }
 .note-box { position: fixed; z-index: 50; width: 22rem; max-width: calc(100vw - 8px); padding: 0.75rem; border-radius: var(--radius-3); background: var(--color-panel-solid); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
@@ -320,6 +320,9 @@ details > summary { cursor: pointer; }
 .text-glossary { max-width: 48rem; }
 .card .tree > li::before { display: none; }
 
-/* The words of one text that stand for what is selected in the other. */
-.cm-match { background: color-mix(in srgb, var(--accent-9) 28%, transparent); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-9) 55%, transparent); }
-.match-status { font-weight: 400; margin-left: 0.5rem; color: var(--muted); font-style: italic; }
+/* The words of one text that stand for what is selected in the other: they flash when found, then stay marked. */
+@keyframes match-found { 0%, 40% { background: color-mix(in srgb, var(--accent-9) 70%, transparent); } 100% { background: color-mix(in srgb, var(--accent-9) 28%, transparent); } }
+.cm-match { background: color-mix(in srgb, var(--accent-9) 28%, transparent); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-9) 55%, transparent); animation: match-found 1.2s ease-out; }
+.match-status { font-weight: 400; margin-left: 0.5rem; color: var(--muted); }
+.match-status-asking { font-style: italic; }
+.match-status-found { color: var(--accent-11); font-weight: 600; }

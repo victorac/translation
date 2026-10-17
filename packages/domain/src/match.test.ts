@@ -61,6 +61,16 @@ describe("matching a selection to the other text", () => {
     expect(matchedSpan("クビ (kubi)", source)).toEqual({ start: 10, end: 12 });
   });
 
+  it("tells apart a selection written more than once, and does not guess when the other text writes it fewer times", () => {
+    const own = "ノアが来た。セラはノアを見た。";
+    const second = { text: own, selected: "ノア", at: 9 };
+    expect(matchedSpan("MEANING: Noah\nPART: Noah", "Noah came. Sera looked at Noah.", 0, second)).toEqual({ start: 26, end: 30 });
+    expect(matchedSpan("MEANING: Noah\nPART: Noah", "Noah came. Sera looked at Noah.", 0, { ...second, at: 0 })).toEqual({ start: 0, end: 4 });
+    // "Noah" is the first one, not this one: the part the model copied is taken, or nothing.
+    expect(matchedSpan("MEANING: Noah\nPART: Sera looked at him.", "Noah came. Sera looked at him.", 0, second)).toEqual({ start: 11, end: 30 });
+    expect(matchedSpan("MEANING: Noah\nPART: NONE", "Noah came. Sera looked at him.", 0, second)).toBeNull();
+  });
+
   it("takes the place nearest to where the selection stands", () => {
     const text = "Noah ran. Then Noah fell.";
     expect(matchedSpan("Noah", text, 0)).toEqual({ start: 0, end: 4 });

@@ -9,7 +9,7 @@ import { SourceEditor, type Hit, type NoteMark } from "./SourceEditor";
 import { TranslationEditor, asLine } from "./TranslationEditor";
 import type { EntryEvents, Match, Place, Selection, Speech, Underline } from "./editorShared";
 import type { ClassInfo, TopicRef, WordActions } from "./NameRow";
-import { Floating, LineEdit, WordEdit, WordPeek } from "./Cards";
+import { Floating, LineEdit, SelectionMenu, WordEdit, WordPeek } from "./Cards";
 import { KnowledgeDrawer } from "./KnowledgeDrawer";
 import { TextGlossary } from "./TextGlossary";
 import { Pick } from "./Pick";
@@ -67,7 +67,10 @@ export function Workspace({
   onActivity: (what: Activity | null) => void;
 }) {
   const [work, setWork] = useState<Work | null>(null);
-  const [working, setWorking] = useState<"read" | "find" | "translate" | null>(null);
+  const [working, setWorking] = useState<"read" | "find" | "translate" | "match" | null>(null);
+  // The same, for what runs after an await, when the state read then may be from before.
+  const workingRef = useRef(working);
+  workingRef.current = working;
   const [activity, setActivity] = useState<Activity | null>(null);
   useEffect(() => onActivity(activity), [activity]); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState<string | null>(null);
@@ -84,8 +87,11 @@ export function Workspace({
   const [focus, setFocus] = useState<string | null>(null);
   const [hit, setHit] = useState(0);
   /** The word whose card shows while the pointer rests on it, the word whose card is pinned to change it, and the line of speech whose speaker is being chosen. */
-  const [peek, setPeek] = useState<{ source: string; place: Place } | null>(null);
-  const [pinned, setPinned] = useState<{ source: string; place: Place } | null>(null);
+  // Each with the pane of the word, so the card stays in it and does not cover the other text, where the word's match is shown.
+  const [peek, setPeek] = useState<{ source: string; place: Place; side?: "source" | "translation" | null } | null>(null);
+  const [pinned, setPinned] = useState<{ source: string; place: Place; side?: "source" | "translation" | null } | null>(null);
+  /** The pane the pointer was last on a word in. */
+  const cardSide = useRef<"source" | "translation" | null>(null);
   const [linePop, setLinePop] = useState<{ line: number; place: Place } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Words selected in the source: the button to add them to the glossary shows beside them. */
@@ -272,7 +278,7 @@ export function Workspace({
     if (!w) return;
     setWork(w);
     const found = w.words.find((n) => n.source === word || n.aliases.includes(word));
-    if (found) setPinned({ source: found.source, place: { left, top: bottom - 20, bottom } });
+    if (found) setPinned({ source: found.source, place: { left, top: bottom - 20, bottom }, side: "source" });
   };
 
   /** Adds a word typed in the glossary of the text. */
@@ -300,6 +306,7 @@ export function Workspace({
   const unread = paragraphs.filter((p) => !(work?.searched ?? []).includes(p.text)).length;
   /** The text the last reading on its own failed for: it is not tried again by itself until the text changes. */
   const findFailed = useRef<string | null>(null);
+  const [findRetry, setFindRetry] = useState(0);
   const find = async (auto = false) => {
     if (!work || !model) return;
     setWorking("find");
@@ -316,8 +323,10 @@ export function Workspace({
     clearInterval(poll);
     if (r.ok) setWork(r.value);
     else {
+      // The model was busy with something else (a match, say): tried again a moment later, not counted as a failure.
+      if (auto && r.error.code === "busy") setTimeout(() => setFindRetry((n) => n + 1), 3000);
       // Done on its own, a failure (no model server running, say) is only logged; asked for, it is shown.
-      if (auto) {
+      else if (auto) {
         findFailed.current = work.source;
         log("warning", `Could not read the source for names and terms: ${r.error.message}`);
       } else setError(r.error.message);
@@ -331,7 +340,7 @@ export function Workspace({
     if (!work || !model || working !== null || unread === 0 || findFailed.current === work.source) return;
     const timer = setTimeout(() => void find(true), 1500);
     return () => clearTimeout(timer);
-  }, [work?.source, unread, model?.name, working]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [work?.source, unread, model?.name, working, findRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Translates every paragraph, one after the other, writing again the ones that already have a translation. A single paragraph is written again with its own button. */
   const translate = async () => {
@@ -359,7 +368,8 @@ export function Workspace({
   };
 
   /** Reads the translation for suggestions: how each name was written, genders and who says each line. Nothing is confirmed by it. */
-  const suggest = async (only?: string[]) => {
+  /** Done by itself (after a paragraph was edited), what it could not suggest is only logged, not shown. */
+  const suggest = async (only?: string[], auto = false) => {
     if (!work || !model) return;
     setWorking("translate");
     setActivity({ what: "Reading the translation for suggestions", stop: true });
@@ -373,7 +383,8 @@ export function Workspace({
     const w = await call(() => api.invoke("work.suggest", { ...modelInput(), ...(only ? { only } : {}) }));
     clearInterval(poll);
     // What the model could not suggest, and why: said, so that a row left as it was is explained.
-    if (w && (w.misses ?? []).length > 0) {
+    if (w && (w.misses ?? []).length > 0 && auto) log("warning", `No suggestion from the translation. ${w.misses!.join("; ")}.`);
+    else if (w && (w.misses ?? []).length > 0) {
       const shown = w.misses!.slice(0, 3).join("; ");
       toast({ level: "warning", text: `No suggestion from the translation. ${shown}${w.misses!.length > 3 ? `; and ${w.misses!.length - 3} more` : ""}.` });
     }
@@ -409,6 +420,9 @@ export function Workspace({
     if (!work || text === asLine(paragraphs[paragraph]?.translation ?? "")) return;
     const w = await call(() => api.invoke("work.setPart", { paragraph, text }));
     if (w) setWork(w);
+    // A paragraph the user wrote is read, as one the model wrote is, for how its words were written.
+    const inIt = wordsIn(paragraph);
+    if (w && text.trim() !== "" && inIt.length > 0 && workingRef.current === null) await suggest(inIt, true);
   };
 
   // ---- the cursor: a paragraph in the source and its translation go together ----
@@ -468,18 +482,33 @@ export function Workspace({
     });
   }, [drafts]);
   type Side = "source" | "translation";
+  type Origin = "selection" | "word";
   /** What is selected in one text (a paragraph of it), and where it ends on the screen, for the button that finds its match. */
   const [sel, setSel] = useState<{ side: Side; paragraph: number; text: string; at: number; left: number; bottom: number } | null>(null);
-  const [match, setMatch] = useState<{ side: Side; range: Match } | null>(null);
-  const [matchState, setMatchState] = useState<{ side: Side; what: "asking" | "none" } | null>(null);
+  /** The match shown, and what it is for: a selection, or a word clicked (shown while its card is open). */
+  const [match, setMatch] = useState<{ side: Side; range: Match; origin: Origin } | null>(null);
+  const [matchState, setMatchState] = useState<{ side: Side; what: "asking" | "none" | "found"; text?: string; origin: Origin } | null>(null);
   const matchCache = useRef(new Map<string, { start: number; end: number } | null>());
   const matchToken = useRef(0);
+  /** Whether the menu of the selection shows: it opens on a new selection, and closes after an action or a press elsewhere. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const lastRange = useRef<{ side: Side; from: number; to: number } | null>(null);
+  const openOnNew = (side: Side, r: Selection | null) => {
+    const last = lastRange.current;
+    if (r && (!last || last.side !== side || last.from !== r.from || last.to !== r.to)) setMenuOpen(true);
+    if (!r && last?.side === side) setMenuOpen(false);
+    lastRange.current = r ? { side, from: r.from, to: r.to } : last?.side === side ? null : last;
+  };
+  const sourcePane = useRef<HTMLElement>(null);
+  const translationPane = useRef<HTMLElement>(null);
   const onSourceRange = (r: Selection | null) => {
+    openOnNew("source", r);
     const k = r && inSync ? places.findIndex((p) => p.start <= r.from && r.to <= p.end) : -1;
     const p = places[k];
     setSel(r && p && asLine(drafts[k] ?? "").trim() !== "" ? { side: "source", paragraph: k, text: p.text.slice(r.from - p.start, r.to - p.start), at: r.from - p.start, left: r.left, bottom: r.bottom } : null);
   };
   const onTranslationRange = (r: Selection | null) => {
+    openOnNew("translation", r);
     const k = r ? lineStarts.findIndex((start, i) => start <= r.from && r.to <= start + asLine(drafts[i] ?? "").length) : -1;
     setSel(r && k >= 0 && paragraphs[k] ? { side: "translation", paragraph: k, text: asLine(drafts[k]!).slice(r.from - lineStarts[k]!, r.to - lineStarts[k]!), at: r.from - lineStarts[k]!, left: r.left, bottom: r.bottom } : null);
   };
@@ -489,57 +518,88 @@ export function Workspace({
     return start === undefined ? null : { from: start + span.start, to: start + span.end };
   };
   /** A glossary word selected: where it stands in the other text is known from its underlines, without asking. */
+  /**
+   * A glossary word selected: where it stands in the other paragraph is known from the underlines, without asking. When the word is
+   * written more than once, the second in one text is the second in the other, but only when both write it as many times: otherwise
+   * (one of them says "he" instead, say) which is which is not known, and the model is asked with the selection marked where it stands.
+   */
   const knownMatch = (s: NonNullable<typeof sel>): Match | null => {
-    const other: Side = s.side === "source" ? "translation" : "source";
+    const other = otherOf(s.side);
+    const bounds = (side: Side): [number, number] => {
+      const lo = side === "source" ? places[s.paragraph]!.start : lineStarts[s.paragraph]!;
+      return [lo, side === "source" ? places[s.paragraph]!.end : lo + asLine(drafts[s.paragraph] ?? "").length];
+    };
+    const inParagraph = (side: Side, source: string) => {
+      const [lo, hi] = bounds(side);
+      return (side === "source" ? (sourceUnderlines ?? []) : translationUnderlines).filter((u) => u.source === source && lo <= u.from && u.to <= hi).sort((a, b) => a.from - b.from);
+    };
+    const start = bounds(s.side)[0];
     const mine = s.side === "source" ? (sourceUnderlines ?? []) : translationUnderlines;
-    const start = s.side === "source" ? places[s.paragraph]!.start : lineStarts[s.paragraph]!;
     const picked = mine.find((u) => u.from === start + s.at && u.to === start + s.at + s.text.length);
     if (!picked) return null;
-    const theirs = (other === "source" ? (sourceUnderlines ?? []) : translationUnderlines).filter((u) => u.source === picked.source);
-    const lo = other === "source" ? places[s.paragraph]!.start : lineStarts[s.paragraph]!;
-    const hi = other === "source" ? places[s.paragraph]!.end : lo + asLine(drafts[s.paragraph] ?? "").length;
-    const inIt = theirs.filter((u) => lo <= u.from && u.to <= hi);
-    return inIt[0] ? { from: inIt[0].from, to: inIt[0].to } : null;
+    const ours = inParagraph(s.side, picked.source);
+    const theirs = inParagraph(other, picked.source);
+    const nth = ours.findIndex((u) => u.from === picked.from);
+    const hit = theirs.length === ours.length ? theirs[nth] : undefined;
+    return hit ? { from: hit.from, to: hit.to } : null;
   };
   type Selected = NonNullable<typeof sel>;
   const otherOf = (side: Side): Side => (side === "source" ? "translation" : "source");
   /** What a match is kept under: the selection, where it stands, and both texts as they are. */
   const matchKey = (s: Selected) => [s.side, paragraphs[s.paragraph]?.text ?? "", asLine(drafts[s.paragraph] ?? ""), s.text, s.at].join("\u0000");
-  const showMatch = (s: Selected, span: { start: number; end: number } | null) => {
-    const range = span ? rangeIn(otherOf(s.side), s.paragraph, span) : null;
-    if (range) setMatch({ side: otherOf(s.side), range });
-    else setMatchState({ side: otherOf(s.side), what: "none" });
+  const showMatch = (s: Selected, span: { start: number; end: number } | null, origin: Origin) => {
+    const other = otherOf(s.side);
+    const range = span ? rangeIn(other, s.paragraph, span) : null;
+    if (range && span) {
+      setMatch({ side: other, range, origin });
+      const text = other === "source" ? (paragraphs[s.paragraph]?.text ?? "") : asLine(drafts[s.paragraph] ?? "");
+      setMatchState({ side: other, what: "found", text: text.slice(span.start, span.end), origin });
+    } else setMatchState({ side: other, what: "none", origin });
+  };
+  /** The match of a selection or a clicked word, when it is known without asking: what the model said for it before, or the underlines. */
+  const showKnown = (s: Selected, origin: Origin): boolean => {
+    // What the model was asked for this very place wins: asked about a glossary word, the user did not want the underlines' answer.
+    if (matchCache.current.has(matchKey(s))) {
+      showMatch(s, matchCache.current.get(matchKey(s))!, origin);
+      return true;
+    }
+    const known = knownMatch(s);
+    if (known) setMatch({ side: otherOf(s.side), range: known, origin });
+    return known !== null;
   };
   // A selection shows its match by itself only when it is known without asking: a word of the glossary, from its underlines, or a
   // selection the model was asked about before. Otherwise the button next to it asks.
   useEffect(() => {
-    ++matchToken.current;
-    setMatch(null);
-    setMatchState(null);
     const s = sel;
+    // A new selection takes the place of what was shown for the last one (what is shown for a clicked word stays with its card).
+    if (s) ++matchToken.current;
+    setMatch((m) => (m?.origin === "word" && !s ? m : null));
+    setMatchState((m) => (m?.origin === "word" && !s ? m : null));
     if (!s || s.text.trim() === "") return;
-    const timer = setTimeout(() => {
-      const known = knownMatch(s);
-      if (known) setMatch({ side: otherOf(s.side), range: known });
-      else if (matchCache.current.has(matchKey(s))) showMatch(s, matchCache.current.get(matchKey(s))!);
-    }, 150);
+    const timer = setTimeout(() => void showKnown(s, "selection"), 150);
     return () => clearTimeout(timer);
   }, [sel?.side, sel?.paragraph, sel?.text, sel?.at]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Asks the model for the match of the selection; what it says replaces what it said before for the same selection. */
-  const askMatch = () => {
-    const s = sel;
+  const askMatch = (s: Selected | null = sel, origin: Origin = "selection") => {
     if (!s || !model) return;
     const token = ++matchToken.current;
     const key = matchKey(s);
+    const other = otherOf(s.side);
+    setMenuOpen(false);
     setMatch(null);
-    setMatchState({ side: otherOf(s.side), what: "asking" });
+    setMatchState({ side: other, what: "asking", origin });
+    // The model is at work, as for a translation: said in the bar at the top, with a way to stop it.
+    setWorking("match");
+    setActivity({ what: `Finding 「${s.text.length > 12 ? `${s.text.slice(0, 12)}…` : s.text}」 in the ${other} with ${model.name}`, stop: true });
     void api.invoke("work.match", { ...modelInput(), side: s.side, selected: s.text, at: s.at, source: paragraphs[s.paragraph]?.text ?? "", translation: asLine(drafts[s.paragraph] ?? "") }).then((r) => {
+      setActivity(null);
+      setWorking(null);
       if (token !== matchToken.current) return; // the selection changed meanwhile
       setMatchState(null);
       if (r.ok) {
         matchCache.current.set(key, r.value);
-        showMatch(s, r.value);
-      } else {
+        showMatch(s, r.value, origin);
+      } else if (r.error.code !== "stopped") {
         log("warning", `Could not match the selection: ${r.error.message}`);
         if (r.error.code === "busy") toast({ level: "warning", text: "The model is busy. Try again when it is done." });
       }
@@ -548,18 +608,25 @@ export function Workspace({
   /** The button next to a selection that the glossary does not already match: to find it in the other text, or find it again. */
   const matchButton = (side: Side) => {
     const s = sel;
-    if (!s || s.side !== side || !model || s.text.trim() === "" || knownMatch(s)) return null;
+    if (!s || s.side !== side || !model || s.text.trim() === "") return null;
     const asking = matchState?.what === "asking";
+    const asked = matchCache.current.has(matchKey(s));
+    // A glossary word shows its match from the underlines; the model can still be asked, in case that one is not right.
+    const known = !asked && knownMatch(s) !== null;
     return (
-      <Button size="2" variant="ghost" color="gray" disabled={asking || working !== null} onMouseDown={(e) => e.preventDefault()} onClick={askMatch} title={`Ask the model which part of the ${otherOf(side)} matches the selection`}>
-        {matchCache.current.has(matchKey(s)) ? <ReloadIcon /> : <MagnifyingGlassIcon />}
-        {asking ? "Finding…" : `${matchCache.current.has(matchKey(s)) ? "Find again" : "Find"} in the ${otherOf(side)}`}
+      <Button size="2" variant="ghost" color="gray" disabled={asking || working !== null} onMouseDown={(e) => e.preventDefault()} onClick={() => askMatch()} title={`Ask the model which part of the ${otherOf(side)} matches the selection`}>
+        {asked || known ? <ReloadIcon /> : <MagnifyingGlassIcon />}
+        {asking ? "Finding…" : known ? "Ask the model instead" : `${asked ? "Find again" : "Find"} in the ${otherOf(side)}`}
       </Button>
     );
   };
 
   const matchNote = (side: Side) =>
-    matchState?.side === side ? <span className="match-status">{matchState.what === "asking" ? "finding the matching words…" : "no matching words found"}</span> : null;
+    matchState?.side === side ? (
+      <span className={`match-status match-status-${matchState.what}`}>
+        {matchState.what === "asking" ? "finding the match…" : matchState.what === "found" ? `match: ${matchState.text}` : "no match found"}
+      </span>
+    ) : null;
 
   /** What can be done to a word, from its card or its row in the glossary of the text. */
   const actionsFor = (n: Word): WordActions => ({
@@ -592,19 +659,54 @@ export function Workspace({
     if (peekTimer.current) clearTimeout(peekTimer.current);
     peekTimer.current = null;
   };
+  /** Where a clicked word stands: its paragraph and place in it, as for a selection. */
+  const spotOf = (side: Side, r: Match): Selected | null => {
+    const k = side === "source" ? places.findIndex((p) => p.start <= r.from && r.to <= p.end) : lineStarts.findIndex((start, i) => start <= r.from && r.to <= start + asLine(drafts[i] ?? "").length);
+    if (k < 0 || (side === "source" && !inSync)) return null;
+    const start = side === "source" ? places[k]!.start : lineStarts[k]!;
+    const text = side === "source" ? places[k]!.text : asLine(drafts[k] ?? "");
+    return { side, paragraph: k, text: text.slice(r.from - start, r.to - start), at: r.from - start, left: 0, bottom: 0 };
+  };
+  const [pinSpot, setPinSpot] = useState<Selected | null>(null);
+  // The match of a clicked word goes when its card closes.
+  useEffect(() => {
+    if (pinned) return;
+    setPinSpot(null);
+    setMatch((m) => (m?.origin === "word" ? null : m));
+    setMatchState((m) => (m?.origin === "word" ? null : m));
+  }, [pinned]);
+  const entryEventsFor = (side: Side): EntryEvents => ({
+    onHover: (h) => {
+      cardSide.current = side;
+      entryEvents.onHover?.(h);
+    },
+    onPin: (source, place, range) => {
+      cardSide.current = side;
+      entryEvents.onPin?.(source, place, range);
+      const spot = spotOf(side, range);
+      setPinSpot(spot);
+      ++matchToken.current;
+      setMatch(null);
+      setMatchState(null);
+      if (!spot) return;
+      // The other text has nothing to show yet: said, so the click is not taken for doing nothing.
+      if (!showKnown(spot, "word")) setMatchState({ side: otherOf(side), what: "none", origin: "word" });
+    },
+  });
   const entryEvents: EntryEvents = {
     onHover: (h) => {
       clearPeekTimer();
       // While words are selected, a card would cover the buttons next to them.
       if (h && sel) return;
-      if (h) peekTimer.current = setTimeout(() => setPeek(h), peek ? 0 : PEEK_DELAY);
+      const side = cardSide.current;
+      if (h) peekTimer.current = setTimeout(() => setPeek({ ...h, side }), peek ? 0 : PEEK_DELAY);
       else peekTimer.current = setTimeout(() => setPeek(null), PEEK_LINGER);
     },
     onPin: (source, place) => {
       clearPeekTimer();
       setPeek(null);
       setLinePop(null);
-      setPinned({ source, place });
+      setPinned({ source, place, side: cardSide.current });
     },
   };
   useEffect(() => clearPeekTimer, []);
@@ -672,11 +774,17 @@ export function Workspace({
     }
   };
 
-  // Next to a selection in the source: the button to add it to the glossary (a short selection that is not a word of it yet), and the one to find its match.
+  /** From the card of a clicked word: ask the model where it is in the other text (the underlines may not know, or be wrong). */
+  const pinFind = (() => {
+    const s = pinSpot;
+    if (!s || !model || asLine(drafts[s.paragraph] ?? "").trim() === "") return null;
+    const shown = match?.origin === "word";
+    return { label: shown ? "Ask the model instead" : `Find in the ${otherOf(s.side)} with the model`, disabled: working !== null, run: () => askMatch(s, "word") };
+  })();
+  const paneOf = (side: Side | null | undefined): HTMLElement | null => (side === "source" ? sourcePane.current : side === "translation" ? translationPane.current : null);
+  // Under a selection in the source: adding it to the glossary (a short selection that is not a word of it yet), and finding its match.
   const addable = selected !== null && !words.some((n) => n.source === selected.text);
   const selectAt = sel?.side === "source" ? sel : null;
-  /** The buttons go just under the end of the selection, kept inside the window. */
-  const barAt = (at: { left: number; bottom: number }) => ({ left: Math.max(4, Math.min(at.left, window.innerWidth - 260)), top: at.bottom + 6 });
 
   return (
     <div className="guided">
@@ -690,9 +798,6 @@ export function Workspace({
           </Button>
           <Button size="2" variant="ghost" color="gray" onClick={() => void find()} disabled={working !== null || !model || unread === 0} title={unread === 0 ? "Every paragraph has been read for names and terms. A changed or new paragraph is read again by itself." : `Ask the model for the names and terms of the ${unread} paragraphs not read yet, and what kind each is`}>
             {working === "find" ? "Reading…" : "Find names"}
-          </Button>
-          <Button size="2" variant="ghost" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions: English names, genders and who says each line">
-            Suggest from the translation
           </Button>
         </Flex>
         <Flex align="center" gap="2">
@@ -714,7 +819,7 @@ export function Workspace({
       )}
 
       <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
-        <section className="guided-pane">
+        <section className="guided-pane" ref={sourcePane}>
           <h3>Source{matchNote("source")}</h3>
           {looking !== null && (
             <Flex align="center" justify="between" gap="2" px="3" py="1" className="source-find">
@@ -737,10 +842,20 @@ export function Workspace({
               </Flex>
             </Flex>
           )}
-          {(addable || matchButton("source")) && (selectAt ?? selected) && (
-            <Flex direction="column" gap="0" className="select-bar" role="menu" aria-label="What to do with the selection" style={barAt(selectAt ?? selected!)}>
+          {menuOpen && (addable || matchButton("source")) && (selectAt ?? selected) && (
+            <SelectionMenu at={(selectAt ?? selected)!} within={sourcePane.current} onClose={() => setMenuOpen(false)}>
               {addable && (
-                <Button className="select-add" size="2" variant="ghost" color="gray" onMouseDown={(e) => e.preventDefault()} onClick={() => void addSelected()}>
+                <Button
+                  className="select-add"
+                  size="2"
+                  variant="ghost"
+                  color="gray"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void addSelected();
+                  }}
+                >
                   <PlusIcon />
                   <span>Add</span>
                   <span className="select-add-word">{selected.text}</span>
@@ -748,7 +863,7 @@ export function Workspace({
                 </Button>
               )}
               {matchButton("source")}
-            </Flex>
+            </SelectionMenu>
           )}
           {noteEdit && (
             <form
@@ -796,13 +911,13 @@ export function Workspace({
             </form>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} {...(speech ? { speech } : {})} onLine={openLine} entries={entryEvents} onRange={onSourceRange} match={match?.side === "source" ? match.range : null} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} {...(speech ? { speech } : {})} onLine={openLine} entries={entryEventsFor("source")} onRange={onSourceRange} match={match?.side === "source" ? match.range : null} />
           </div>
         </section>
 
         <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the translation" onPointerDown={beginDrag(0, 1)} />
 
-        <section className="guided-pane">
+        <section className="guided-pane" ref={translationPane}>
           <h3>Translation{matchNote("translation")}</h3>
           {!work ? (
             <div className="guided-body">
@@ -833,10 +948,10 @@ export function Workspace({
                   </Flex>
                 </Flex>
               )}
-              {sel?.side === "translation" && matchButton("translation") && (
-                <Flex direction="column" gap="0" className="select-bar" role="menu" aria-label="What to do with the selection" style={barAt(sel)}>
+              {menuOpen && sel?.side === "translation" && matchButton("translation") && (
+                <SelectionMenu at={sel} within={translationPane.current} onClose={() => setMenuOpen(false)}>
                   {matchButton("translation")}
-                </Flex>
+                </SelectionMenu>
               )}
               <div className="source-pane-editor">
                 <TranslationEditor
@@ -849,7 +964,7 @@ export function Workspace({
                   reveal={revealTranslation}
                   issues={paragraphs.map((p) => p.issue)}
                   underlines={translationUnderlines}
-                  entries={entryEvents}
+                  entries={entryEventsFor("translation")}
                   onRange={onTranslationRange}
                   match={match?.side === "translation" ? match.range : null}
                 />
@@ -866,17 +981,17 @@ export function Workspace({
       </div>
 
       {peekWord && peek && (
-        <Floating place={peek.place} pinned={false} onClose={() => setPeek(null)} onEnter={clearPeekTimer} onLeave={() => entryEvents.onHover?.(null)} label={`About ${peekWord.source}`}>
+        <Floating place={peek.place} within={paneOf(peek.side)} pinned={false} onClose={() => setPeek(null)} onEnter={clearPeekTimer} onLeave={() => entryEvents.onHover?.(null)} label={`About ${peekWord.source}`}>
           <WordPeek word={peekWord} kindLabel={kindLabel(peekWord.kind)} places={placesOf(peekWord).length} />
         </Floating>
       )}
       {pinnedWord && pinned && (
-        <Floating place={pinned.place} pinned onClose={() => setPinned(null)} label={`Change ${pinnedWord.source}`}>
-          <WordEdit word={pinnedWord} kindLabel={kindLabel(pinnedWord.kind)} places={placesOf(pinnedWord).length} classes={classes} topics={linkTargets} actions={actionsFor(pinnedWord)} onClose={() => setPinned(null)} />
+        <Floating place={pinned.place} within={paneOf(pinned.side)} pinned onClose={() => setPinned(null)} label={`Change ${pinnedWord.source}`}>
+          <WordEdit word={pinnedWord} kindLabel={kindLabel(pinnedWord.kind)} places={placesOf(pinnedWord).length} classes={classes} topics={linkTargets} actions={actionsFor(pinnedWord)} onClose={() => setPinned(null)} {...(pinFind ? { find: pinFind } : {})} />
         </Floating>
       )}
       {linePop && lines[linePop.line] && (
-        <Floating place={linePop.place} pinned onClose={() => setLinePop(null)} label={`Who says line ${linePop.line + 1}`}>
+        <Floating place={linePop.place} within={sourcePane.current} pinned onClose={() => setLinePop(null)} label={`Who says line ${linePop.line + 1}`}>
           <LineEdit
             line={lines[linePop.line]!}
             index={linePop.line}

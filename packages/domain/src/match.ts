@@ -82,21 +82,28 @@ export function tooMuch(span: Span, otherLength: number, selected: number, ownLe
   return otherLength > 0 && ownLength > 0 && (span.end - span.start) / otherLength >= 0.8 && selected / ownLength < 0.5;
 }
 
-/** Where some words are written in a text, nearest to `near` (0 to 1) when they are written more than once; null when they are not. */
-export function spanOf(words: string, text: string, near = 0): Span | null {
+/** Every place some words are written in a text: as written, else without quotation marks, a last full stop or a note in brackets. */
+function spansOf(words: string, text: string): Span[] {
   const line = words.trim();
-  if (line === "" || /^none\b/i.test(line)) return null;
+  if (line === "" || /^none\b/i.test(line)) return [];
   // As written, then without the quotation marks a model may put around it, then without a last full stop, then without a note in
   // brackets after it (回復魔法 (kaifuku mahou)).
   const bare = line.replace(EDGES, "");
   const tries = [line, bare, bare.replace(/[.。,、;:!?！？]+$/, ""), line.replace(/\s*[(（][^()（）]*[)）]\s*$/, "").replace(EDGES, "").replace(/[.。,、;:!?！？]+$/, "")].filter((t, i, all) => t !== "" && all.indexOf(t) === i);
   for (const t of tries) {
     const found = placesOf(text, t);
-    if (found.length === 0) continue;
-    const length = Math.max(1, text.length);
-    return found.reduce((best, s) => (Math.abs(s.start / length - near) < Math.abs(best.start / length - near) ? s : best));
+    if (found.length > 0) return found;
   }
-  return null;
+  return [];
+}
+
+/** Of several places, the one at about the same point of the text as `near` (0 to 1). */
+const nearest = (found: Span[], length: number, near: number): Span | null =>
+  found.length === 0 ? null : found.reduce((best, s) => (Math.abs(s.start / Math.max(1, length) - near) < Math.abs(best.start / Math.max(1, length) - near) ? s : best));
+
+/** Where some words are written in a text, nearest to `near` (0 to 1) when they are written more than once; null when they are not. */
+export function spanOf(words: string, text: string, near = 0): Span | null {
+  return nearest(spansOf(words, text), text.length, near);
 }
 
 const JAPANESE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
@@ -141,12 +148,24 @@ export function nearestWords(meaning: string, text: string): Span | null {
  * Where a reply's answer is written in the other text, or null when it is not (or the reply is NONE): the meaning as the text writes
  * it, else the part copied when it is not much longer than the meaning (a small model copies a whole clause), else the words nearest
  * the meaning, else the part. `near` is where the selection stands in its own paragraph, from 0 to 1.
+ *
+ * With `own` (the selection's paragraph, and where in it the selection stands), a selection written more than once is told apart: the
+ * second ノア is the second "Noah" when the other text writes it as many times. When it writes it fewer times (the second time it says
+ * "him"), "Noah" cannot say which ノア it is, and the meaning is not used: the part is, or nothing.
  */
-export function matchedSpan(reply: string, text: string, near = 0): Span | null {
+export function matchedSpan(reply: string, text: string, near = 0, own?: { text: string; selected: string; at: number }): Span | null {
   const { meaning, part } = readAnswer(reply);
-  const byMeaning = spanOf(meaning, text, near);
-  if (byMeaning) return byMeaning;
+  const ours = own ? placesOf(own.text, own.selected) : [];
+  const nth = own ? ours.findIndex((p) => p.start === own.at) : -1;
+  const byMeaningAll = spansOf(meaning, text);
+  let unsure = false;
+  if (byMeaningAll.length > 0) {
+    if (ours.length > 1 && nth >= 0 && byMeaningAll.length === ours.length) return byMeaningAll[nth]!;
+    if (ours.length > 1 && nth >= 0 && byMeaningAll.length < ours.length) unsure = true;
+    else return nearest(byMeaningAll, text.length, near);
+  }
   const byPart = spanOf(part, text, near);
   if (byPart && (meaning === "" || byPart.end - byPart.start <= Math.max(12, 3 * meaning.length))) return byPart;
+  if (unsure) return byPart;
   return (meaning !== "" && !/^none\b/i.test(meaning) ? nearestWords(meaning, text) : null) ?? byPart;
 }
