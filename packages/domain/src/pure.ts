@@ -14,3 +14,4 @@ export * from "./paragraphs.js";
 export * from "./suggest.js";
 export * from "./marks.js";
 export * from "./find.js";
+export * from "./match.js";

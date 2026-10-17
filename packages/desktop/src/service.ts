@@ -30,6 +30,10 @@ import {
   type NameKind,
   findQuestion,
   foundWords,
+  matchQuestion,
+  matchedSpan,
+  type MatchSide,
+  type Span,
   kindWord,
   passagesOf,
   entriesFromLegacy,
@@ -1098,6 +1102,39 @@ export class WorkspaceService {
   }
 
   /**
+   * Which words of the other text stand for the words selected in a paragraph of the source or of its translation: where the other text
+   * writes what the model copies from it, or null when the model finds nothing it says (or copies words the text does not have).
+   * The texts are given as they are in the window, so a translation being edited is matched as it is.
+   */
+  async workMatch(input: ModelInput & { side: MatchSide; selected: string; at: number; source: string; translation: string }): Promise<Span | null> {
+    const selected = input.selected.trim();
+    if (selected === "" || input.source.trim() === "" || input.translation.trim() === "") return null;
+    const q = matchQuestion({ side: input.side, selected, source: input.source, translation: input.translation, from: input.sourceLanguage, to: input.targetLanguage });
+    const other = input.side === "source" ? input.translation : input.source;
+    // Room for the words copied: about as many as were selected, and a few more.
+    const room = Math.min(256, 32 + 2 * estimateTokens(selected) + Math.ceil(estimateTokens(other) / 2));
+    if (estimateTokens(q.system) + estimateTokens(q.user) + room + DEFAULTS.messageOverheadTokens > input.contextLimit) throw new UserError("too_long", "The paragraph is too long for the model's context.");
+    const abort = this.beginSideRequest();
+    const mine = input.side === "source" ? input.source : input.translation;
+    const near = mine.length === 0 ? 0 : input.at / mine.length;
+    const ask = (messages: { role: "system" | "user" | "assistant"; content: string }[]) =>
+      this.askModel({ purpose: "Matching a selection to the other text", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature: 0, messages, practiceReply: () => "NONE", allowEmpty: true }, abort);
+    try {
+      const first: { role: "system" | "user" | "assistant"; content: string }[] = [{ role: "system", content: q.system }, { role: "user", content: q.user }];
+      const reply = await ask(first);
+      if (reply === null) return null;
+      const span = matchedSpan(reply, other, near);
+      // A small model may give back words of the text the selection is in: told so, it is asked once more.
+      if (span || matchedSpan(reply, mine) === null) return span;
+      const language = (input.side === "source" ? input.targetLanguage : input.sourceLanguage).toUpperCase();
+      const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `Those words are not in the ${language} text. Reply with the ${language} words only, copied from the ${language} text.` }]);
+      return again === null ? null : matchedSpan(again, other, near);
+    } finally {
+      this.analysisAbort = null;
+    }
+  }
+
+  /**
    * Reads the source with the model for the names and terms the dictionary did not find (a name it does not know, a skill, a slang word)
    * and for what kind each is, a passage at a time, only the paragraphs it has not read yet. A word it finds that is written in the passage
    * joins the words of the text as a suggestion (a draft with no English name); the kind of a draft word is changed unless the user chose it.
@@ -1356,7 +1393,7 @@ export class WorkspaceService {
 
   /** One request to a model, answered in full. Returns null if the user stopped it. */
   private async askModel(
-    ask: { purpose: string; backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
+    ask: { purpose: string; backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user" | "assistant"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
     abort: AbortController,
   ): Promise<string | null> {
     const started = Date.now();
@@ -1385,7 +1422,7 @@ export class WorkspaceService {
   }
 
   private async askModelOnce(
-    ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
+    ask: { backend: Backend; modelId: string; maxOutputTokens: number; messages: { role: "system" | "user" | "assistant"; content: string }[]; practiceReply: () => string; temperature?: number; allowEmpty?: boolean },
     abort: AbortController,
   ): Promise<string | null> {
     let reply = "";

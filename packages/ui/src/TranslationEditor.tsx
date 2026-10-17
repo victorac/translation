@@ -3,7 +3,7 @@ import { search, searchKeymap } from "@codemirror/search";
 import { EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, type DecorationSet } from "@codemirror/view";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, entryEvents, setCurrent, setUnderlines, underlineField, type EntryEvents, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, matchField, setCurrent, setUnderlines, showMatch, underlineField, type EntryEvents, type Match, type Underline } from "./editorShared";
 
 /** A translation is one line of the editor: a line break the model left in it shows as a space. */
 export const asLine = (translation: string): string => translation.replace(/\s*\n\s*/g, " ");
@@ -78,14 +78,18 @@ export interface TranslationEditorProps {
   underlines: readonly Underline[];
   /** The pointer on the words of the glossary. */
   entries?: EntryEvents;
+  /** What is selected (where it starts and ends), or nothing. */
+  onRange?: (range: Match | null) => void;
+  /** The words that stand for what is selected in the source. */
+  match?: Match | null;
 }
 
 /** The translation as one editor, one line for each paragraph of the source, numbered like it. */
-export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, reveal, issues, underlines, entries }: TranslationEditorProps) {
+export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, reveal, issues, underlines, entries, onRange, match }: TranslationEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const handlers = useRef({ onEdit, onLeave, onCursor });
-  handlers.current = { onEdit, onLeave, onCursor };
+  const handlers = useRef({ onEdit, onLeave, onCursor, onRange });
+  handlers.current = { onEdit, onLeave, onCursor, onRange };
   const entriesRef = useRef<EntryEvents>(entries ?? {});
   entriesRef.current = entries ?? {};
   const shown = lines.map(asLine);
@@ -120,6 +124,7 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
       currentField,
       issuesField,
       underlineField,
+      matchField,
       entryEvents(entriesRef),
       editorTheme,
       EditorView.updateListener.of((u) => {
@@ -129,6 +134,10 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
             for (let n = u.state.doc.lineAt(fromB).number; n <= u.state.doc.lineAt(toB).number; n++) touched.add(n);
           });
           for (const n of touched) handlers.current.onEdit(n - 1, u.state.doc.line(n).text);
+        }
+        if (u.docChanged || u.selectionSet) {
+          const { from, to } = u.state.selection.main;
+          handlers.current.onRange?.(from === to ? null : { from, to });
         }
         const here = u.view.hasFocus ? u.state.doc.lineAt(u.state.selection.main.head).number - 1 : null;
         if (here !== at) {
@@ -177,6 +186,7 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
   useEffect(() => {
     view.current?.dispatch({ effects: setIssues.of(issues) });
   }, [issuesKey, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => showMatch(view.current, match ?? null), [match?.from, match?.to]);
   const underlinesKey = JSON.stringify(underlines);
   useEffect(() => {
     view.current?.dispatch({ effects: setUnderlines.of(underlines) });

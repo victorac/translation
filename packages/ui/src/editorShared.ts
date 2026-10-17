@@ -185,3 +185,29 @@ export function speakerEvents(onLine: { current: ((line: number, place: Place) =
     },
   });
 }
+
+/** The words of this text that stand for what is selected in the other one: highlighted, and brought into view. */
+export interface Match {
+  from: number;
+  to: number;
+}
+export const setMatch = StateEffect.define<Match | null>();
+export const matchField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (!e.is(setMatch)) continue;
+      const m = e.value;
+      return m && m.from < m.to && m.to <= tr.state.doc.length ? Decoration.set([Decoration.mark({ class: "cm-match" }).range(m.from, m.to)]) : Decoration.none;
+    }
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** Shows a match in an editor (or takes it away), bringing it into view without moving the selection. */
+export function showMatch(view: EditorView | null, match: Match | null): void {
+  if (!view) return;
+  const ok = match && match.to <= view.state.doc.length;
+  view.dispatch({ effects: ok ? [setMatch.of(match), EditorView.scrollIntoView(match.from, { y: "nearest", yMargin: 32 })] : [setMatch.of(null)] });
+}

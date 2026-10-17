@@ -895,6 +895,31 @@ describe("translating a document", () => {
     expect(bodies(lm).at(-2)!.messages[1]!.content).toContain("clearly different");
   });
 
+  it("finds the words of the other text that stand for a selection, both ways, only where that text has them", async () => {
+    let reply = "you're fired";
+    const lm = await fakeLmStudio({ answer: () => reply });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    const texts = { source: "「ノア、お前は今日でクビだ」", translation: "\u201cNoah, you're fired as of today.\u201d" };
+    expect(await service.workMatch({ ...model, ...texts, side: "source", selected: "クビだ", at: 10 })).toEqual({ start: 7, end: 19 });
+    expect(bodies(lm)[0]!.messages[1]!.content).toContain("「クビだ」");
+    reply = "クビ";
+    expect(await service.workMatch({ ...model, ...texts, side: "translation", selected: "fired", at: 14 })).toEqual({ start: 10, end: 12 });
+    reply = "dismissed";
+    expect(await service.workMatch({ ...model, ...texts, side: "source", selected: "クビだ", at: 10 })).toBeNull();
+    // Words of the selection's own text are not a match: the model is told so and asked once more.
+    let asked = 0;
+    reply = "";
+    const lm2 = await fakeLmStudio({ answer: () => (++asked === 1 ? "you're fired" : "クビ") });
+    provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
+    expect(await service.workMatch({ ...model, ...texts, side: "translation", selected: "fired", at: 14 })).toEqual({ start: 10, end: 12 });
+    expect(bodies(lm2)[1]!.messages.map((m) => m.content).slice(-2)).toEqual(["you're fired", "Those words are not in the JAPANESE text. Reply with the JAPANESE words only, copied from the JAPANESE text."]);
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    // Nothing to match against: the model is not asked.
+    expect(await service.workMatch({ ...model, source: texts.source, translation: "", side: "source", selected: "クビだ", at: 10 })).toBeNull();
+    expect(bodies(lm)).toHaveLength(3);
+  });
+
   it("reads the source with the model for the names and terms the dictionary missed, once a paragraph, and keeps the user's choices", async () => {
     let reply = "水瀬灯 | person\n灯籠祭 | term\n星詠み | skill\n山田太郎 | person";
     const lm = await fakeLmStudio({ answer: (_system, user) => (user.includes("word | kind") ? reply : "NONE") });

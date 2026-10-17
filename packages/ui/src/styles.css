@@ -316,3 +316,7 @@ details > summary { cursor: pointer; }
 .drawer-text { padding: 1rem 1.25rem; }
 .text-glossary { max-width: 48rem; }
 .card .tree > li::before { display: none; }
+
+/* The words of one text that stand for what is selected in the other. */
+.cm-match { background: color-mix(in srgb, var(--accent-9) 28%, transparent); border-radius: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-9) 55%, transparent); }
+.match-status { font-weight: 400; margin-left: 0.5rem; color: var(--muted); font-style: italic; }

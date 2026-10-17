@@ -7,7 +7,7 @@ import { api } from "./api";
 import type { Activity } from "./Toolbar";
 import { SourceEditor, type Hit, type NoteMark } from "./SourceEditor";
 import { TranslationEditor, asLine } from "./TranslationEditor";
-import type { EntryEvents, Place, Speech, Underline } from "./editorShared";
+import type { EntryEvents, Match, Place, Speech, Underline } from "./editorShared";
 import type { ClassInfo, TopicRef, WordActions } from "./NameRow";
 import { Floating, LineEdit, WordEdit, WordPeek } from "./Cards";
 import { KnowledgeDrawer } from "./KnowledgeDrawer";
@@ -457,6 +457,85 @@ export function Workspace({
     });
   }, [drafts, work?.words]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- a selection in one text, and the words of the other text that stand for it ----
+  /** Where each line of the translation starts in its editor. */
+  const lineStarts = useMemo(() => {
+    let at = 0;
+    return drafts.map((d) => {
+      const start = at;
+      at += asLine(d).length + 1;
+      return start;
+    });
+  }, [drafts]);
+  type Side = "source" | "translation";
+  const [sel, setSel] = useState<{ side: Side; paragraph: number; text: string; at: number } | null>(null);
+  const [match, setMatch] = useState<{ side: Side; range: Match } | null>(null);
+  const [matchState, setMatchState] = useState<{ side: Side; what: "asking" | "none" } | null>(null);
+  const matchCache = useRef(new Map<string, { start: number; end: number } | null>());
+  const matchToken = useRef(0);
+  const onSourceRange = (r: Match | null) => {
+    const k = r && inSync ? places.findIndex((p) => p.start <= r.from && r.to <= p.end) : -1;
+    const p = places[k];
+    setSel(r && p && asLine(drafts[k] ?? "").trim() !== "" ? { side: "source", paragraph: k, text: p.text.slice(r.from - p.start, r.to - p.start), at: r.from - p.start } : null);
+  };
+  const onTranslationRange = (r: Match | null) => {
+    const k = r ? lineStarts.findIndex((start, i) => start <= r.from && r.to <= start + asLine(drafts[i] ?? "").length) : -1;
+    setSel(r && k >= 0 && paragraphs[k] ? { side: "translation", paragraph: k, text: asLine(drafts[k]!).slice(r.from - lineStarts[k]!, r.to - lineStarts[k]!), at: r.from - lineStarts[k]! } : null);
+  };
+  /** A span of a paragraph of one text, as a range of its editor. */
+  const rangeIn = (side: Side, k: number, span: { start: number; end: number }): Match | null => {
+    const start = side === "source" ? places[k]?.start : lineStarts[k];
+    return start === undefined ? null : { from: start + span.start, to: start + span.end };
+  };
+  /** A glossary word selected: where it stands in the other text is known from its underlines, without asking. */
+  const knownMatch = (s: NonNullable<typeof sel>): Match | null => {
+    const other: Side = s.side === "source" ? "translation" : "source";
+    const mine = s.side === "source" ? (sourceUnderlines ?? []) : translationUnderlines;
+    const start = s.side === "source" ? places[s.paragraph]!.start : lineStarts[s.paragraph]!;
+    const picked = mine.find((u) => u.from === start + s.at && u.to === start + s.at + s.text.length);
+    if (!picked) return null;
+    const theirs = (other === "source" ? (sourceUnderlines ?? []) : translationUnderlines).filter((u) => u.source === picked.source);
+    const lo = other === "source" ? places[s.paragraph]!.start : lineStarts[s.paragraph]!;
+    const hi = other === "source" ? places[s.paragraph]!.end : lo + asLine(drafts[s.paragraph] ?? "").length;
+    const inIt = theirs.filter((u) => lo <= u.from && u.to <= hi);
+    return inIt[0] ? { from: inIt[0].from, to: inIt[0].to } : null;
+  };
+  // A moment after the selection settles, its match is found: from the underlines, from what was asked before, or from the model.
+  useEffect(() => {
+    const token = ++matchToken.current;
+    setMatch(null);
+    setMatchState(null);
+    const s = sel;
+    if (!s || s.text.trim() === "") return;
+    const other: Side = s.side === "source" ? "translation" : "source";
+    const timer = setTimeout(() => {
+      const known = knownMatch(s);
+      if (known) return setMatch({ side: other, range: known });
+      const source = paragraphs[s.paragraph]?.text ?? "";
+      const translation = asLine(drafts[s.paragraph] ?? "");
+      const key = [s.side, source, translation, s.text, s.at].join("\u0000");
+      const show = (span: { start: number; end: number } | null) => {
+        const range = span ? rangeIn(other, s.paragraph, span) : null;
+        if (range) setMatch({ side: other, range });
+        else setMatchState({ side: other, what: "none" });
+      };
+      if (matchCache.current.has(key)) return show(matchCache.current.get(key)!);
+      if (!model || working !== null) return;
+      setMatchState({ side: other, what: "asking" });
+      void api.invoke("work.match", { ...modelInput(), side: s.side, selected: s.text, at: s.at, source, translation }).then((r) => {
+        if (token !== matchToken.current) return; // the selection changed meanwhile
+        setMatchState(null);
+        if (r.ok) {
+          matchCache.current.set(key, r.value);
+          show(r.value);
+        } else if (r.error.code !== "busy") log("warning", `Could not match the selection: ${r.error.message}`);
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [sel?.side, sel?.paragraph, sel?.text, sel?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const matchNote = (side: Side) =>
+    matchState?.side === side ? <span className="match-status">{matchState.what === "asking" ? "finding the matching words…" : "no matching words found"}</span> : null;
+
   /** What can be done to a word, from its card or its row in the glossary of the text. */
   const actionsFor = (n: Word): WordActions => ({
     onLocate: () => {
@@ -606,7 +685,7 @@ export function Workspace({
 
       <div className="guided-cols" ref={box} style={{ gridTemplateColumns: columns }} onPointerMove={moveDrag} onPointerUp={endDrag}>
         <section className="guided-pane">
-          <h3>Source</h3>
+          <h3>Source{matchNote("source")}</h3>
           {looking !== null && (
             <Flex align="center" justify="between" gap="2" px="3" py="1" className="source-find">
               <Text size="2" weight="bold">
@@ -681,14 +760,14 @@ export function Workspace({
             </form>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} {...(speech ? { speech } : {})} onLine={openLine} entries={entryEvents} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} {...(speech ? { speech } : {})} onLine={openLine} entries={entryEvents} onRange={onSourceRange} match={match?.side === "source" ? match.range : null} />
           </div>
         </section>
 
         <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the translation" onPointerDown={beginDrag(0, 1)} />
 
         <section className="guided-pane">
-          <h3>Translation</h3>
+          <h3>Translation{matchNote("translation")}</h3>
           {!work ? (
             <div className="guided-body">
               <Text as="p" size="2" color="gray">
@@ -730,6 +809,8 @@ export function Workspace({
                   issues={paragraphs.map((p) => p.issue)}
                   underlines={translationUnderlines}
                   entries={entryEvents}
+                  onRange={onTranslationRange}
+                  match={match?.side === "translation" ? match.range : null}
                 />
               </div>
               {work.error && (

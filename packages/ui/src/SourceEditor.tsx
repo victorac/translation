@@ -4,7 +4,7 @@ import { EditorState, StateEffect, StateField, type Extension, type Text } from 
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, placeholder as placeholderExt, type DecorationSet } from "@codemirror/view";
 import { normalizeSource } from "@ltw/domain/pure";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, entryEvents, setCurrent, setSpeech, setUnderlines, speakerEvents, speechField, underlineField, type EntryEvents, type Place, type Speech, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, matchField, setCurrent, setSpeech, setUnderlines, showMatch, speakerEvents, speechField, underlineField, type EntryEvents, type Match, type Place, type Speech, type Underline } from "./editorShared";
 
 /** Places in the text to point out (where a word or a line stands), the current one drawn stronger. */
 export interface Hit {
@@ -109,13 +109,17 @@ export interface SourceEditorProps {
   onLine?: (line: number, place: Place) => void;
   /** The pointer on the words of the glossary. */
   entries?: EntryEvents;
+  /** What is selected (where it starts and ends), or nothing. */
+  onRange?: (range: Match | null) => void;
+  /** The words that stand for what is selected in the translation. */
+  match?: Match | null;
 }
 
 /** The longest selection that can be a word of a glossary. */
 const LONGEST_WORD = 40;
 
 /** The source text as an editor, with the number of each paragraph in the margin. The numbers are not part of the text. */
-export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote, underlines, speech, onLine, entries }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote, underlines, speech, onLine, entries, onRange, match }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -128,6 +132,8 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
   onNoteRef.current = onNote;
   const onLineRef = useRef(onLine);
   onLineRef.current = onLine;
+  const onRangeRef = useRef(onRange);
+  onRangeRef.current = onRange;
   const entriesRef = useRef<EntryEvents>(entries ?? {});
   entriesRef.current = entries ?? {};
   const latest = useRef({ value });
@@ -163,6 +169,7 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
       notesField,
       underlineField,
       speechField,
+      matchField,
       entryEvents(entriesRef),
       speakerEvents(onLineRef),
       editorTheme,
@@ -184,6 +191,7 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
           const text = from === to || to - from > LONGEST_WORD ? "" : u.state.sliceDoc(from, to);
           const at = text.trim() === "" || text.includes("\n") ? null : u.view.coordsAtPos(to);
           onSelectRef.current?.(at ? { text: text.trim(), left: at.left, bottom: at.bottom } : null);
+          onRangeRef.current?.(from === to ? null : { from, to });
         }
         // Where the user put the cursor (not where typing moved it).
         if (!u.docChanged && u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);
@@ -239,6 +247,8 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
   useEffect(() => {
     if (underlines) view.current?.dispatch({ effects: setUnderlines.of(underlines) });
   }, [underlinesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => showMatch(view.current, match ?? null), [match?.from, match?.to]);
 
   const speechKey = speech ? JSON.stringify(speech) : null;
   useEffect(() => {

@@ -35,7 +35,7 @@ export interface PromptRecord {
   purpose: string;
   modelId: string;
   temperature: number;
-  messages: { role: "system" | "user"; content: string }[];
+  messages: { role: "system" | "user" | "assistant"; content: string }[];
   reply: string | null;
   error: string | null;
   /** How long the model took, in milliseconds. */
@@ -184,6 +184,8 @@ export interface CommandMap {
   "work.suggest": ModelInput & { only?: string[] };
   /** Reads the paragraphs of the source not read yet for names and terms, and the kind of each. */
   "work.find": ModelInput;
+  /** The words of the other text that stand for words selected in a paragraph of the source (or of its translation), at `at` in it. */
+  "work.match": ModelInput & { side: "source" | "translation"; selected: string; at: number; source: string; translation: string };
   "work.setSuggestion": { source: string; key: string; value: string };
   /** Asks the dictionary how a word is read, and suggests that as its English name. */
   "work.lookup": { source: string };
@@ -216,7 +218,7 @@ export interface CommandMap {
 export type CommandName = keyof CommandMap;
 
 /** What each command answers with. Commands that change the workspace answer with its new snapshot. */
-export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.setSpeakerSuggestion" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.find" | "work.setSuggestion" | "work.lookup" | "prompts.list" | "prompts.clear" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.setNote" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
+export type SnapshotCommand = Exclude<CommandName, "notes.cancel" | "work.get" | "work.sync" | "work.setSpeaker" | "work.setSpeakerSuggestion" | "work.addWord" | "work.removeWord" | "work.undoRemove" | "work.setAttribute" | "work.setKind" | "work.setEnglish" | "work.setHint" | "work.setUse" | "work.translate" | "work.suggest" | "work.find" | "work.match" | "work.setSuggestion" | "work.lookup" | "prompts.list" | "prompts.clear" | "work.acceptSuggestion" | "work.dismissSuggestion" | "work.acceptSpeaker" | "work.setPart" | "work.setNote" | "work.retranslate" | "knowledge.files" | "knowledge.file" | "knowledge.setFile" | "knowledge.create" | "knowledge.delete" | "knowledge.deleteMany" | "knowledge.edit" | "knowledge.resolve" | "knowledge.list" | "knowledge.confirm" | "provider.get" | "provider.save" | "provider.test">;
 export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "notes.cancel": { canceled: boolean };
   "work.get": Work | null;
@@ -234,6 +236,7 @@ export type CommandResultMap = { [C in SnapshotCommand]: WorkspaceSnapshot } & {
   "work.translate": Work;
   "work.suggest": Work;
   "work.find": Work;
+  "work.match": { start: number; end: number } | null;
   "work.setSuggestion": Work;
   "work.lookup": Work;
   "prompts.list": PromptRecord[];
