@@ -13,11 +13,12 @@ export interface EntryMark {
   /** The source of the word, which says which entry it is. */
   source: string;
   kind: string;
-  status: "fixed" | "suggested";
+  /** An ignored word is still marked in the source (faintly), so it can be found and used again. */
+  status: "fixed" | "suggested" | "ignored";
 }
 
 /** Fixed when the user (or the knowledge base) gave the English name; otherwise what is known of it is a suggestion. */
-export const wordStatus = (w: Word): EntryMark["status"] => (w.english.trim() !== "" ? "fixed" : "suggested");
+export const wordStatus = (w: Word): EntryMark["status"] => (w.use === false ? "ignored" : w.english.trim() !== "" ? "fixed" : "suggested");
 
 /** The English name to look for in the translation: the fixed one, or else the suggested one. */
 export const englishOf = (w: Word): string => (w.english.trim() !== "" ? w.english.trim() : (w.suggestions?.["english"]?.[0] ?? "").trim());
@@ -29,11 +30,13 @@ function apart(marks: EntryMark[]): EntryMark[] {
   return marks.filter((m) => (m.start >= lastEnd ? ((lastEnd = m.end), true) : false));
 }
 
-/** Where each word in use stands in the source. A short name inside a longer word of the glossary (灯 in 灯籠祭) is not marked there. */
+/**
+ * Where each word stands in the source, the ignored ones too. A short name inside a longer word of the glossary (灯 in 灯籠祭) is not
+ * marked there.
+ */
 export function sourceMarks(text: string, words: readonly Word[]): EntryMark[] {
-  const used = words.filter((w) => w.use !== false);
-  const sources = used.flatMap((w) => [w.source, ...w.aliases]);
-  return apart(used.flatMap((w) => occurrencesOf(text, [w.source, ...w.aliases], sources).map((r) => ({ ...r, source: w.source, kind: w.kind, status: wordStatus(w) }))));
+  const sources = words.flatMap((w) => [w.source, ...w.aliases]);
+  return apart(words.flatMap((w) => occurrencesOf(text, [w.source, ...w.aliases], sources).map((r) => ({ ...r, source: w.source, kind: w.kind, status: wordStatus(w) }))));
 }
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -1,27 +1,33 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ShuffleIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
-import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { englishOf, normalizeSource, occurrencesOf, paragraphsOf, sourceMarks, translationMarks, wordStatus } from "@ltw/domain/pure";
+import { ArrowDownIcon, ArrowUpIcon, ShuffleIcon, Cross2Icon, ReloadIcon } from "@radix-ui/react-icons";
+import { Button, Callout, Flex, IconButton, Text, TextArea } from "@radix-ui/themes";
+import { englishOf, normalizeSource, occurrencesOf, paragraphsOf, sourceMarks, translationMarks } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
 import { SourceEditor, type Hit, type NoteMark } from "./SourceEditor";
 import { TranslationEditor, asLine } from "./TranslationEditor";
-import type { Underline } from "./editorShared";
-import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
+import type { EntryEvents, Place, Speech, Underline } from "./editorShared";
+import type { ClassInfo, TopicRef, WordActions } from "./NameRow";
+import { Floating, LineEdit, WordEdit, WordPeek } from "./Cards";
+import { KnowledgeDrawer } from "./KnowledgeDrawer";
+import { TextGlossary } from "./TextGlossary";
 import { Pick } from "./Pick";
 import { useLog } from "./Log";
 import { useToast } from "./Toast";
 import type { SetupState } from "./setup";
 
-const WIDTHS_KEY = "ltw.workspace.widths.v3";
-const MIN = 0.1;
-const DEFAULT_WIDTHS = [0.36, 0.32, 0.32];
+const WIDTHS_KEY = "ltw.workspace.widths.v4";
+const MIN = 0.15;
+const DEFAULT_WIDTHS = [0.5, 0.5];
+/** How long the pointer rests on a word before its card shows, and how long the card stays once the pointer has left. */
+const PEEK_DELAY = 250;
+const PEEK_LINGER = 200;
 
 const loadWidths = (): number[] => {
   try {
     const v = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? "null") as unknown;
-    if (Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && x >= MIN)) return v as number[];
+    if (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "number" && x >= MIN)) return v as number[];
   } catch {
     /* storage may be unavailable */
   }
@@ -29,8 +35,9 @@ const loadWidths = (): number[] => {
 };
 
 /**
- * The workspace: the source text, which is edited here and numbered by paragraph; what was read from the whole text (its glossary words
- * and who says each line of speech); and the translation, one box for each paragraph. The knowledge base opens as a drawer over it.
+ * The workspace: the source text, which is edited here and numbered by paragraph, and its translation, a line for each paragraph. The
+ * words of the glossary are underlined in both, with a card to read and change each; who says each line of speech is written before it
+ * in the source. The knowledge base, with the glossary of the text, opens as a drawer over it.
  */
 export function Workspace({
   setup,
@@ -39,6 +46,8 @@ export function Workspace({
   onText,
   editorKey,
   knowledgeRev,
+  knowledgeCounts,
+  kb,
   onKb,
   onActivity,
 }: {
@@ -49,7 +58,10 @@ export function Workspace({
   /** Changes when another document or project is opened, so the editor starts over. */
   editorKey: string;
   knowledgeRev: number;
-  /** Asks for the knowledge base to open, on a topic. */
+  knowledgeCounts: { terms: number; notes: number; suggested: number };
+  /** Whether the knowledge base is open, and on which topic. */
+  kb: { open: boolean; request: { id: string; n: number } | null };
+  /** Asks for the knowledge base to open (on a topic) or close. */
   onKb: (kb: { open: boolean; request: { id: string; n: number } | null }) => void;
   /** What the model is doing for the user right now, in words; null when it is idle. */
   onActivity: (what: Activity | null) => void;
@@ -67,24 +79,22 @@ export function Workspace({
   draftsRef.current = drafts;
   // The paragraph being worked on: the one the cursor is in, in the source or in the translation.
   const [cur, setCur] = useState<number | null>(null);
-  const [newTerm, setNewTerm] = useState("");
   const [widths, setWidths] = useState<number[]>(loadWidths);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [focus, setFocus] = useState<string | null>(null);
-  const [lineFocus, setLineFocus] = useState<number | null>(null);
-  // The words whose details are open. It belongs here, not to each row, so a word that moves to another group keeps its place.
-  const [opened, setOpened] = useState<Set<string>>(new Set());
   const [hit, setHit] = useState(0);
-  const [showIgnored, setShowIgnored] = useState(false);
+  /** The word whose card shows while the pointer rests on it, the word whose card is pinned to change it, and the line of speech whose speaker is being chosen. */
+  const [peek, setPeek] = useState<{ source: string; place: Place } | null>(null);
+  const [pinned, setPinned] = useState<{ source: string; place: Place } | null>(null);
+  const [linePop, setLinePop] = useState<{ line: number; place: Place } | null>(null);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Words selected in the source: the button to add them to the glossary shows beside them. */
   const [selected, setSelected] = useState<{ text: string; left: number; bottom: number } | null>(null);
   /** The note being written for a paragraph, in a box next to its number. */
   const [noteEdit, setNoteEdit] = useState<{ paragraph: number; left: number; bottom: number; draft: string } | null>(null);
   const toast = useToast();
   const { log } = useLog();
-  const [filter, setFilter] = useState("");
   const [topics, setTopics] = useState<TopicRef[]>([]);
-  const lineItems = useRef<(HTMLLIElement | null)[]>([]);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
 
@@ -116,8 +126,9 @@ export function Workspace({
     setDrafts([]);
     setCur(null);
     setFocus(null);
-    setLineFocus(null);
-    setOpened(new Set());
+    setPeek(null);
+    setPinned(null);
+    setLinePop(null);
     setError(null);
   }, [editorKey]);
   // No text, no work to show.
@@ -189,43 +200,22 @@ export function Workspace({
     ...topics.filter((t) => t.category === "character" && !words.some((n) => n.source === t.source)),
   ];
 
-  // The word or line being looked at: where it stands in the text, for the source pane.
+  // The word being looked at: where it stands in the text, for the source pane.
   const focused = words.find((n) => n.source === focus) ?? null;
-  const lineHit = lineFocus !== null ? lineRanges[lineFocus] : null;
-  const hits = lineFocus !== null ? (lineHit ? [lineHit] : []) : focused && work ? occurrencesOf(work.source, [focused.source, ...focused.aliases], sources) : [];
+  const hits = focused && work ? occurrencesOf(work.source, [focused.source, ...focused.aliases], sources) : [];
   const current = hits.length > 0 ? ((hit % hits.length) + hits.length) % hits.length : 0;
-  const looking = lineFocus !== null ? `Line ${lineFocus + 1}` : (focused?.source ?? null);
+  const looking = focused?.source ?? null;
   const look = (source: string) => {
-    setLineFocus(null);
-    setFocus((f) => (f === source ? null : source));
+    setFocus(source);
     setHit(0);
   };
-  const toggleDetails = (source: string) =>
-    setOpened((o) => {
-      const next = new Set(o);
-      if (!next.delete(source)) next.add(source);
-      return next;
-    });
-  const lookAtLine = (i: number) => {
-    setFocus(null);
-    setLineFocus((f) => (f === i ? null : i));
-    setHit(0);
-  };
-  const stopLooking = () => {
-    setFocus(null);
-    setLineFocus(null);
-  };
+  const stopLooking = () => setFocus(null);
 
-  // The words of the glossary, found by the app: grouped by kind in the order of the classes file, in the order they appear in the text, and narrowed by the search.
-  const q = filter.trim().toLocaleLowerCase();
   const kindLabel = (kind: string): string => classes.find((c) => c.name === kind)?.label ?? kind;
   // What a link can point to: the topics of the knowledge base, and the words of the text that are not in it yet.
   const linkTargets: TopicRef[] = [...topics, ...words.filter((n) => n.draft && !topics.some((t) => t.source === n.source)).map((n) => ({ source: n.source, english: n.english, category: n.kind }))];
-  const shownNames = words.filter((n) => n.use !== false).filter((n) => q === "" || [n.source, n.english, kindLabel(n.kind), ...n.aliases].some((s) => s.toLocaleLowerCase().includes(q)));
-  const firstAt = (n: Word): number => occurrencesOf(work?.source ?? "", [n.source, ...n.aliases], sources)[0]?.start ?? Number.MAX_SAFE_INTEGER;
-  const kinds = [...new Set([...classes.map((c) => c.name), ...shownNames.map((n) => n.kind)])];
-  const groups = kinds.map((kind) => ({ kind, names: shownNames.filter((n) => n.kind === kind).sort((a, b) => firstAt(a) - firstAt(b)) })).filter((g) => g.names.length > 0);
-  const ignoredNames = words.filter((n) => n.use === false);
+  const placesOf = (n: Word) => occurrencesOf(work?.source ?? "", [n.source, ...n.aliases], sources);
+  const firstAt = (n: Word): number => placesOf(n)[0]?.start ?? Number.MAX_SAFE_INTEGER;
   const label = (p: { source: string; english: string }): string => (p.english.trim() !== "" ? `${p.english.trim()} (${p.source})` : p.source);
 
   const update = (run: () => Promise<{ ok: true; value: Work } | { ok: false; error: { message: string } }>) => void call(run).then((w) => w && setWork(w));
@@ -262,7 +252,7 @@ export function Workspace({
     const w = await call(() => api.invoke("work.removeWord", { source: word.source }));
     if (!w) return;
     setWork(w);
-    setOpened((o) => new Set([...o].filter((x) => x !== word.source)));
+    if (pinned?.source === word.source) setPinned(null);
     if (focus === word.source) stopLooking();
     toast({
       text: `Removed ${word.source} from the glossary.`,
@@ -273,27 +263,24 @@ export function Workspace({
     });
   };
 
-  /** Adds the selected words to the glossary and puts the cursor in the English name of the new row, ready to write it. */
+  /** Adds the selected words to the glossary and pins the card of the new word next to them, ready to write its English name. */
   const addSelected = async () => {
-    const word = selected?.text;
-    if (!word) return;
+    if (!selected) return;
+    const { text: word, left, bottom } = selected;
     setSelected(null);
     const w = await call(() => api.invoke("work.addWord", { source: word }));
     if (!w) return;
     setWork(w);
-    const label = `English name of ${word}`;
-    setTimeout(() => (Array.from(document.querySelectorAll("input")).find((i) => i.getAttribute("aria-label") === label) as HTMLInputElement | undefined)?.focus(), 50);
+    const found = w.words.find((n) => n.source === word || n.aliases.includes(word));
+    if (found) setPinned({ source: found.source, place: { left, top: bottom - 20, bottom } });
   };
 
-  const addTerm = async () => {
-    const word = newTerm.trim();
-    if (word === "") return;
+  /** Adds a word typed in the glossary of the text. */
+  const addWord = async (word: string): Promise<boolean> => {
     const w = await call(() => api.invoke("work.addWord", { source: word }));
-    if (!w) return;
-    setNewTerm("");
+    if (!w) return false;
     setWork(w);
-    const found = w.words.find((n) => n.source === word || n.aliases.includes(word));
-    if (found?.id) onKb({ open: true, request: { id: found.id, n: Date.now() } });
+    return true;
   };
 
   // ---- translating ----
@@ -408,11 +395,6 @@ export function Workspace({
     });
     goTo(index, "source");
   };
-  // The lines of speech of the paragraph being worked on are brought into view.
-  useEffect(() => {
-    const at = (work?.lines ?? []).findIndex((l) => l.paragraph === cur);
-    if (at >= 0) lineItems.current[at]?.scrollIntoView({ block: "nearest" });
-  }, [cur]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const noteMarks: NoteMark[] = inSync ? paragraphs.flatMap((p, k) => (p.note && places[k] ? [{ paragraph: k, at: places[k]!.start, text: p.note }] : [])) : [];
   const openNote = (paragraph: number, place: { left: number; bottom: number }) => {
@@ -427,23 +409,90 @@ export function Workspace({
   };
 
   // ---- the words of the glossary, underlined where they stand in the source and in the translation ----
-  const titleOf = (n: Word): string => {
-    const english = englishOf(n);
-    const name = english === "" ? "no English name yet" : wordStatus(n) === "fixed" ? english : `${english}, suggested`;
-    return `${n.source} · ${kindLabel(n.kind)} · ${name}`;
-  };
-  const underline = (n: Word | undefined, from: number, to: number, kind: string, status: Underline["status"]): Underline[] => (n ? [{ from, to, kind, status, title: titleOf(n) }] : []);
-  const byName = new Map(words.map((n) => [n.source, n]));
-  const sourceUnderlines = useMemo(() => (inSync && work ? sourceMarks(work.source, words).flatMap((m) => underline(byName.get(m.source), m.start, m.end, m.kind, m.status)) : undefined), [inSync, work, classes]); // eslint-disable-line react-hooks/exhaustive-deps
-  const translationUnderlines = useMemo(() => {
+  const sourceUnderlines: Underline[] | undefined = useMemo(() => (inSync && work ? sourceMarks(work.source, words).map((m) => ({ from: m.start, to: m.end, source: m.source, kind: m.kind, status: m.status })) : undefined), [inSync, work]); // eslint-disable-line react-hooks/exhaustive-deps
+  const translationUnderlines: Underline[] = useMemo(() => {
     let at = 0;
     return drafts.flatMap((d) => {
       const line = asLine(d);
       const start = at;
       at += line.length + 1;
-      return translationMarks(line, words).flatMap((m) => underline(byName.get(m.source), start + m.start, start + m.end, m.kind, m.status));
+      return translationMarks(line, words).map((m) => ({ from: start + m.start, to: start + m.end, source: m.source, kind: m.kind, status: m.status }));
     });
-  }, [drafts, work?.words, classes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [drafts, work?.words]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** What can be done to a word, from its card or its row in the glossary of the text. */
+  const actionsFor = (n: Word): WordActions => ({
+    onLocate: () => {
+      look(n.source);
+      setPinned(null);
+      if (kb.open) onKb({ open: false, request: null });
+    },
+    onUse: (use) => update(() => api.invoke("work.setUse", { source: n.source, use })),
+    onOpen: () => {
+      setPinned(null);
+      if (n.id) onKb({ open: true, request: { id: n.id, n: Date.now() } });
+    },
+    onRemove: () => void removeWord(n),
+    canSuggest: readable(n),
+    onSuggest: () => void suggest([n.source]),
+    onLookup: () => update(() => api.invoke("work.lookup", { source: n.source })),
+    onEnglish: (english) => update(() => api.invoke("work.setEnglish", { source: n.source, english })),
+    onSuggestEnglish: (value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value })),
+    onLoosen: () => void loosen(n),
+    onHint: (hint) => update(() => api.invoke("work.setHint", { source: n.source, hint })),
+    onKind: (kind) => update(() => changeKind(n.source, kind)),
+    onAttribute: (key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values })),
+    onAcceptSuggestion: (key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key })),
+    onDismissSuggestion: (key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key })),
+  });
+
+  // ---- the cards: one shows while the pointer rests on a word, and a click pins it to change the word ----
+  const clearPeekTimer = () => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    peekTimer.current = null;
+  };
+  const entryEvents: EntryEvents = {
+    onHover: (h) => {
+      clearPeekTimer();
+      if (h) peekTimer.current = setTimeout(() => setPeek(h), peek ? 0 : PEEK_DELAY);
+      else peekTimer.current = setTimeout(() => setPeek(null), PEEK_LINGER);
+    },
+    onPin: (source, place) => {
+      clearPeekTimer();
+      setPeek(null);
+      setLinePop(null);
+      setPinned({ source, place });
+    },
+  };
+  useEffect(() => clearPeekTimer, []);
+  const peekWord = peek && peek.source !== pinned?.source ? byName(peek.source) : undefined;
+  const pinnedWord = pinned ? byName(pinned.source) : undefined;
+  function byName(source: string): Word | undefined {
+    return words.find((n) => n.source === source);
+  }
+
+  // ---- who says each line: written before it in the source, in the colour of the speaker ----
+  /** A speaker by their English name (a suggested one too), or as the text writes them. */
+  const speakerName = (source: string): string => {
+    const w = byName(source);
+    const english = w ? englishOf(w) : (topics.find((t) => t.source === source)?.english.trim() ?? "");
+    return english !== "" ? english : source;
+  };
+  const lines = work?.lines ?? [];
+  const speakers = [...new Set(lines.map((l) => l.speaker ?? l.suggested ?? "").filter((x) => x !== ""))];
+  const speech: Speech[] | undefined = inSync
+    ? lines.flatMap((l, i) => {
+        const r = lineRanges[i];
+        if (!r) return [];
+        const who = l.speaker ?? l.suggested ?? "";
+        return [{ from: r.start, to: r.end, line: i, speaker: who === "" ? "" : speakerName(who), status: l.speaker !== null ? "fixed" : who !== "" ? "suggested" : "unknown", color: who === "" ? 0 : (speakers.indexOf(who) % 6) + 1 } as Speech];
+      })
+    : undefined;
+  const openLine = (line: number, place: Place) => {
+    setPinned(null);
+    setPeek(null);
+    setLinePop({ line, place });
+  };
 
   const currentRange = inSync && cur !== null && places[cur] ? { from: places[cur]!.start, to: places[cur]!.end } : null;
   const editorHits: Hit[] = inSync ? hits.map((h, i) => ({ from: h.start, to: h.end, current: i === current })) : [];
@@ -480,8 +529,6 @@ export function Workspace({
     }
   };
 
-  const lines = work?.lines ?? [];
-
   return (
     <div className="guided">
       <Flex align="center" justify="between" gap="3" wrap="wrap" px="3" py="2" className="guided-bar">
@@ -491,6 +538,12 @@ export function Workspace({
           </Text>
           <Button size="2" onClick={() => void translate()} disabled={working !== null || !model || paragraphs.length === 0}>
             {working === "translate" ? "Translating…" : "Translate"}
+          </Button>
+          <Button size="2" variant="soft" color="gray" onClick={() => onKb({ open: true, request: null })} disabled={!work} title="The names and terms of this text, in the knowledge base">
+            Glossary · {words.filter((n) => n.use !== false).length}
+          </Button>
+          <Button size="2" variant="ghost" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions: English names, genders and who says each line">
+            Suggest from the translation
           </Button>
         </Flex>
         <Flex align="center" gap="2">
@@ -588,188 +641,11 @@ export function Workspace({
             </form>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} {...(speech ? { speech } : {})} onLine={openLine} entries={entryEvents} />
           </div>
         </section>
 
-        <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the reading" onPointerDown={beginDrag(0, 1)} />
-
-        <section className="guided-pane">
-          <h3>What was read</h3>
-          {!work ? (
-            <div className="guided-body">
-              <Text as="p" size="2" color="gray">
-                Paste or type the source text on the left. The words in it and who says each line show here.
-              </Text>
-            </div>
-          ) : (
-            <>
-              <div className="guided-scroll">
-                <Heading as="h4" size="2" mb="2">
-                  Glossary of the text{" "}
-                  <Text size="1" color="gray" weight="regular">
-                    {words.length}
-                  </Text>
-                </Heading>
-                {words.length === 0 && (
-                  <Text as="p" size="1" color="gray">
-                    Nothing from the glossary found in the text. Add a word from the text below.
-                  </Text>
-                )}
-                {words.length > 0 && (
-                  <TextField.Root size="2" mb="2" type="search" aria-label="Search the glossary" placeholder="Search this glossary" value={filter} onChange={(e) => setFilter(e.target.value)}>
-                    <TextField.Slot>
-                      <MagnifyingGlassIcon />
-                    </TextField.Slot>
-                  </TextField.Root>
-                )}
-                {words.length > 0 && groups.length === 0 && (
-                  <Text as="p" size="1" color="gray">
-                    Nothing matches.
-                  </Text>
-                )}
-                {groups.map((g) => (
-                  <section key={g.kind} className="glossary-group">
-                    <Text as="div" size="1" weight="bold" color="gray" mt="3" mb="1" className="group-title">
-                      {kindLabel(g.kind)} · {g.names.length}
-                    </Text>
-                    <ul className="guided-glossary">
-                      {g.names.map((n) => (
-                        <NameRow
-                          key={n.source}
-                          name={n}
-                          classes={classes}
-                          topics={linkTargets}
-                          expanded={opened.has(n.source)}
-                          focused={focus === n.source}
-                          onToggle={() => toggleDetails(n.source)}
-                          onLocate={() => look(n.source)}
-                          onRemove={() => void removeWord(n)}
-                          onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
-                          onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
-                          onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
-                          onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
-                          onLoosen={() => void loosen(n)}
-                          onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
-                          onKind={(kind) => update(() => changeKind(n.source, kind))}
-                          onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
-                          canSuggest={readable(n)}
-                          onSuggest={() => void suggest([n.source])}
-                          onLookup={() => update(() => api.invoke("work.lookup", { source: n.source }))}
-                          onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
-                          onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
-                        />
-                      ))}
-                    </ul>
-                  </section>
-                ))}
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void addTerm();
-                  }}
-                >
-                  <Flex gap="2" mt="2">
-                    <TextField.Root size="2" style={{ flex: 1 }} aria-label="Add a word from the text to the glossary" value={newTerm} placeholder="Add a word from the text" onChange={(e) => setNewTerm(e.target.value)} />
-                    <Button size="2" variant="soft" type="submit" disabled={newTerm.trim() === ""}>
-                      Add
-                    </Button>
-                  </Flex>
-                </form>
-                {ignoredNames.length > 0 && (
-                  <section className="glossary-group">
-                    <Button variant="ghost" color="gray" size="1" mt="3" onClick={() => setShowIgnored((v) => !v)} aria-expanded={showIgnored}>
-                      {showIgnored ? <ChevronDownIcon /> : <ChevronRightIcon />} Ignored · {ignoredNames.length}
-                    </Button>
-                    {showIgnored && (
-                      <ul className="guided-glossary">
-                        {ignoredNames.map((n) => (
-                          <NameRow
-                            key={n.source}
-                            name={n}
-                            classes={classes}
-                            topics={linkTargets}
-                            expanded={false}
-                            focused={false}
-                            onToggle={() => undefined}
-                            onLocate={() => look(n.source)}
-                            onUse={(use) => update(() => api.invoke("work.setUse", { source: n.source, use }))}
-                            onOpen={() => n.id && onKb({ open: true, request: { id: n.id, n: Date.now() } })}
-                            onRemove={() => void removeWord(n)}
-                            onEnglish={(english) => update(() => api.invoke("work.setEnglish", { source: n.source, english }))}
-                          onSuggestEnglish={(value) => update(() => api.invoke("work.setSuggestion", { source: n.source, key: "english", value }))}
-                          onLoosen={() => void loosen(n)}
-                            onHint={(hint) => update(() => api.invoke("work.setHint", { source: n.source, hint }))}
-                            onKind={(kind) => update(() => changeKind(n.source, kind))}
-                            onAttribute={(key, values) => update(() => api.invoke("work.setAttribute", { source: n.source, key, values }))}
-                            canSuggest={readable(n)}
-                            onSuggest={() => void suggest([n.source])}
-                          onLookup={() => update(() => api.invoke("work.lookup", { source: n.source }))}
-                            onAcceptSuggestion={(key) => update(() => api.invoke("work.acceptSuggestion", { source: n.source, key }))}
-                            onDismissSuggestion={(key) => update(() => api.invoke("work.dismissSuggestion", { source: n.source, key }))}
-                          />
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                )}
-
-                <Heading as="h4" size="2" mt="5" mb="2">
-                  Who says each line{" "}
-                  <Text size="1" color="gray" weight="regular">
-                    {lines.length}
-                  </Text>
-                </Heading>
-                {lines.length === 0 && (
-                  <Text as="p" size="1" color="gray">
-                    There are no lines of speech in the text.
-                  </Text>
-                )}
-                <ul className="guided-lines">
-                  {lines.map((l, i) => (
-                    <li key={i} ref={(el) => void (lineItems.current[i] = el)} className={l.paragraph === cur ? "line-current" : undefined}>
-                      <Button variant={lineFocus === i ? "soft" : "ghost"} color={lineFocus === i ? "indigo" : "gray"} size="1" onClick={() => lookAtLine(i)} aria-pressed={lineFocus === i} title={`Paragraph ${l.paragraph + 1}. Show where it is in the text: ${l.text}`} className="line-text">
-                        <Text truncate size="2">
-                          {l.text}
-                        </Text>
-                      </Button>
-                      <Flex align="center" gap="1" className="speaker">
-                        <Pick
-                          size="1"
-                          label={`Speaker of line ${i + 1}`}
-                          value={l.speaker ?? l.suggested ?? ""}
-                          options={[{ value: "", label: "not known" }, ...people.map((p) => ({ value: p.source, label: label(p) }))]}
-                          // A speaker that is fixed stays fixed when it is changed; otherwise what is chosen is a suggestion until it is fixed.
-                          onChange={(v) => update(() => (l.speaker !== null ? api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }) : api.invoke("work.setSpeakerSuggestion", { line: i, speaker: v === "" ? null : v })))}
-                        />
-                        {(l.speaker !== null || l.suggested) && (
-                          <Button
-                            size="1"
-                            variant="soft"
-                            color={l.speaker !== null ? "green" : "amber"}
-                            className="english-state"
-                            onClick={() => update(() => (l.speaker === null ? api.invoke("work.acceptSpeaker", { line: i }) : loosenSpeaker(i, l.speaker!)))}
-                            aria-label={l.speaker === null ? `Make the speaker of line ${i + 1} fixed` : `Make the speaker of line ${i + 1} a suggestion again`}
-                            title={l.speaker === null ? "Suggested: shown here, not told to the model. Click to fix it: the model is told who says the line." : "Fixed: the model is told who says the line. Click to make it a suggestion again."}
-                          >
-                            {l.speaker === null ? "suggested" : "fixed"}
-                          </Button>
-                        )}
-                      </Flex>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <Flex gap="2" wrap="wrap" p="3" className="guided-foot">
-                <Button variant="soft" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions">
-                  Suggest from the translation
-                </Button>
-              </Flex>
-            </>
-          )}
-        </section>
-
-        <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the reading and the translation" onPointerDown={beginDrag(1, 2)} />
+        <div className="guided-handle" role="separator" aria-orientation="vertical" aria-label="Resize the source and the translation" onPointerDown={beginDrag(0, 1)} />
 
         <section className="guided-pane">
           <h3>Translation</h3>
@@ -813,6 +689,7 @@ export function Workspace({
                   reveal={revealTranslation}
                   issues={paragraphs.map((p) => p.issue)}
                   underlines={translationUnderlines}
+                  entries={entryEvents}
                 />
               </div>
               {work.error && (
@@ -825,6 +702,54 @@ export function Workspace({
         </section>
 
       </div>
+
+      {peekWord && peek && (
+        <Floating place={peek.place} pinned={false} onClose={() => setPeek(null)} onEnter={clearPeekTimer} onLeave={() => entryEvents.onHover?.(null)} label={`About ${peekWord.source}`}>
+          <WordPeek word={peekWord} kindLabel={kindLabel(peekWord.kind)} places={placesOf(peekWord).length} />
+        </Floating>
+      )}
+      {pinnedWord && pinned && (
+        <Floating place={pinned.place} pinned onClose={() => setPinned(null)} label={`Change ${pinnedWord.source}`}>
+          <WordEdit word={pinnedWord} kindLabel={kindLabel(pinnedWord.kind)} places={placesOf(pinnedWord).length} classes={classes} topics={linkTargets} actions={actionsFor(pinnedWord)} onClose={() => setPinned(null)} />
+        </Floating>
+      )}
+      {linePop && lines[linePop.line] && (
+        <Floating place={linePop.place} pinned onClose={() => setLinePop(null)} label={`Who says line ${linePop.line + 1}`}>
+          <LineEdit
+            line={lines[linePop.line]!}
+            index={linePop.line}
+            people={people.map((p) => ({ value: p.source, label: label(p) }))}
+            // A speaker that is fixed stays fixed when it is changed; otherwise what is chosen is a suggestion until it is fixed.
+            onSpeaker={(v) => {
+              const i = linePop.line;
+              const l = lines[i]!;
+              update(() => (l.speaker !== null ? api.invoke("work.setSpeaker", { line: i, speaker: v === "" ? null : v }) : api.invoke("work.setSpeakerSuggestion", { line: i, speaker: v === "" ? null : v })));
+            }}
+            onFix={() => {
+              const i = linePop.line;
+              const l = lines[i]!;
+              update(() => (l.speaker === null ? api.invoke("work.acceptSpeaker", { line: i }) : loosenSpeaker(i, l.speaker!)));
+            }}
+            onClose={() => setLinePop(null)}
+          />
+        </Floating>
+      )}
+
+      <KnowledgeDrawer
+        open={kb.open}
+        request={kb.request}
+        rev={knowledgeRev}
+        counts={knowledgeCounts}
+        onClose={() => onKb({ open: false, request: null })}
+        {...(work
+          ? {
+              inText: {
+                count: words.length,
+                content: <TextGlossary words={words} classes={classes} topics={linkTargets} kindLabel={kindLabel} firstAt={firstAt} focus={focus} actionsFor={actionsFor} onAdd={addWord} />,
+              },
+            }
+          : {})}
+      />
     </div>
   );
 }

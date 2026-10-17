@@ -1,5 +1,5 @@
 import { StateEffect, StateField, type Range } from "@codemirror/state";
-import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
+import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 
 /** The look of the source and the translation editors, which read alike: the same type, line height and margin. */
 export const editorTheme = EditorView.theme({
@@ -44,14 +44,14 @@ export const currentField = StateField.define<DecorationSet>({
 export interface Underline {
   from: number;
   to: number;
+  /** The source of the word: which entry it is. */
+  source: string;
   kind: string;
-  status: "fixed" | "suggested";
-  /** What shows when the pointer rests on it. */
-  title: string;
+  status: "fixed" | "suggested" | "ignored";
 }
 
 /** A kind of topic as part of a class name: a kind the user made up may have any letters in it. */
-const kindClass = (kind: string): string => `cm-entry-k-${kind.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-")}`;
+export const kindClass = (kind: string): string => `cm-entry-k-${kind.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-")}`;
 
 export const setUnderlines = StateEffect.define<readonly Underline[]>();
 export const underlineField = StateField.define<DecorationSet>({
@@ -62,7 +62,7 @@ export const underlineField = StateField.define<DecorationSet>({
       const length = tr.state.doc.length;
       const marks = e.value
         .filter((u) => u.from < u.to && u.to <= length)
-        .map((u) => Decoration.mark({ class: `cm-entry ${kindClass(u.kind)} cm-entry-${u.status}`, attributes: { title: u.title } }).range(u.from, u.to));
+        .map((u) => Decoration.mark({ class: `cm-entry ${kindClass(u.kind)} cm-entry-${u.status}`, attributes: { "data-source": u.source } }).range(u.from, u.to));
       return Decoration.set(marks, true);
     }
     // While the text is being typed the underlines move with it, until they are worked out again.
@@ -70,3 +70,111 @@ export const underlineField = StateField.define<DecorationSet>({
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+/** Where the pointer is, in window coordinates: what a card is put next to. */
+export interface Place {
+  left: number;
+  top: number;
+  bottom: number;
+}
+const placeOf = (el: Element): Place => {
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, bottom: r.bottom };
+};
+
+/** What the pointer does on the words of the glossary in an editor: rests on one (or leaves it), or clicks one. */
+export interface EntryEvents {
+  onHover?: (hover: { source: string; place: Place } | null) => void;
+  onPin?: (source: string, place: Place) => void;
+}
+
+export function entryEvents(events: { current: EntryEvents }) {
+  return EditorView.domEventHandlers({
+    mouseover: (event) => {
+      const el = (event.target as HTMLElement).closest<HTMLElement>(".cm-entry");
+      events.current.onHover?.(el?.dataset["source"] ? { source: el.dataset["source"], place: placeOf(el) } : null);
+      return false;
+    },
+    mouseleave: () => {
+      events.current.onHover?.(null);
+      return false;
+    },
+    // A click on a word (not the end of a selection) pins its card; the cursor goes there as well.
+    click: (event, view) => {
+      const el = (event.target as HTMLElement).closest<HTMLElement>(".cm-entry");
+      if (!el?.dataset["source"] || !view.state.selection.main.empty) return false;
+      events.current.onPin?.(el.dataset["source"], placeOf(el));
+      return false;
+    },
+  });
+}
+
+/** A line of speech in the source, and who says it: tinted in the colour of its speaker, with their name before it. */
+export interface Speech {
+  from: number;
+  to: number;
+  /** Which line of speech it is (index from 0). */
+  line: number;
+  /** Who says it, as shown; empty when not known. */
+  speaker: string;
+  status: "fixed" | "suggested" | "unknown";
+  /** One of a few colours, the same for each line of one speaker. */
+  color: number;
+}
+
+class SpeakerWidget extends WidgetType {
+  constructor(readonly speech: Speech) {
+    super();
+  }
+  eq(other: SpeakerWidget): boolean {
+    const a = this.speech;
+    const b = other.speech;
+    return a.line === b.line && a.speaker === b.speaker && a.status === b.status && a.color === b.color;
+  }
+  toDOM(): HTMLElement {
+    const s = this.speech;
+    const el = document.createElement("span");
+    el.className = `cm-speaker cm-speaker-${s.status} cm-speech-c${s.color}`;
+    el.dataset["line"] = String(s.line);
+    el.textContent = s.speaker === "" ? "who?" : s.speaker;
+    el.title = s.status === "unknown" ? "Who says this line? Click to choose." : s.status === "suggested" ? `Said by ${s.speaker}, suggested. Click to change it or fix it.` : `Said by ${s.speaker}. Click to change it.`;
+    return el;
+  }
+  ignoreEvent(): boolean {
+    // The editor passes the click on, to open the choice of speaker.
+    return false;
+  }
+}
+
+export const setSpeech = StateEffect.define<readonly Speech[]>();
+export const speechField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (!e.is(setSpeech)) continue;
+      const length = tr.state.doc.length;
+      const marks = e.value
+        .filter((s) => s.from < s.to && s.to <= length)
+        .flatMap((s) => [
+          Decoration.widget({ widget: new SpeakerWidget(s), side: -1 }).range(s.from),
+          Decoration.mark({ class: `cm-speech cm-speech-${s.status} cm-speech-c${s.color}` }).range(s.from, s.to),
+        ]);
+      return Decoration.set(marks, true);
+    }
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** A click on the name before a line of speech: the place to open the choice of who says it. */
+export function speakerEvents(onLine: { current: ((line: number, place: Place) => void) | undefined }) {
+  return EditorView.domEventHandlers({
+    mousedown: (event) => {
+      const el = (event.target as HTMLElement).closest<HTMLElement>(".cm-speaker");
+      if (!el || !onLine.current) return false;
+      onLine.current(Number(el.dataset["line"]), placeOf(el));
+      event.preventDefault();
+      return true;
+    },
+  });
+}

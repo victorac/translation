@@ -21,8 +21,10 @@ describe("marking the words of the glossary", () => {
     ]);
   });
 
-  it("leaves out an ignored word", () => {
-    expect(sourceMarks("山田が来た。", [word("山田", "Yamada", { use: false })])).toEqual([]);
+  it("marks an ignored word as ignored in the source, and not at all in the translation", () => {
+    const words = [word("山田", "Yamada", { use: false })];
+    expect(sourceMarks("山田が来た。", words)).toEqual([{ start: 0, end: 2, source: "山田", kind: "character", status: "ignored" }]);
+    expect(translationMarks("Yamada came.", words)).toEqual([]);
   });
 
   it("finds the English name in any case, as a whole word, the longer name first", () => {

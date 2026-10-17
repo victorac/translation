@@ -193,42 +193,9 @@ export function Details({
   );
 }
 
-/**
- * One word of the text, on one line: the word (click it to see where it stands in the text), its English name, which is written right
- * there (a suggestion shows in grey, Enter accepts it and Escape drops it), and a menu. The arrow opens the details: the type, a note,
- * and the attributes that have a value; the others are added from "Add detail".
- */
-export function NameRow({
-  name,
-  classes,
-  topics,
-  expanded,
-  focused,
-  onToggle,
-  onLocate,
-  onUse,
-  onOpen,
-  onRemove,
-  canSuggest,
-  onSuggest,
-  onLookup,
-  onEnglish,
-  onSuggestEnglish,
-  onLoosen,
-  onHint,
-  onKind,
-  onAttribute,
-  onAcceptSuggestion,
-  onDismissSuggestion,
-}: {
-  name: Word;
-  classes: ClassInfo[];
-  topics: TopicRef[];
-  expanded: boolean;
-  focused: boolean;
-  /** The arrow was clicked: the details open or close. */
-  onToggle: () => void;
-  /** The word was clicked: it is shown in the source. */
+/** What can be done to a word of the text, from its row in the glossary or from its card in the text. */
+export interface WordActions {
+  /** The word is shown in the source. */
   onLocate: () => void;
   onUse: (use: boolean) => void;
   onOpen: () => void;
@@ -249,83 +216,124 @@ export function NameRow({
   onAttribute: (key: string, values: string[]) => void;
   onAcceptSuggestion: (key: string) => void;
   onDismissSuggestion: (key: string) => void;
-}) {
-  const def = classes.find((c) => c.name === name.kind);
-  const attrs = name.attrs ?? {};
-  const suggestions = name.suggestions ?? {};
-  const suggestedEnglish = name.english.trim() === "" ? (suggestions["english"]?.[0] ?? "") : "";
+}
+
+/** Whether the English name of a word is fixed, only suggested, or not there at all. */
+export const englishState = (name: Word): "fixed" | "suggested" | null => (name.english.trim() !== "" ? "fixed" : (name.suggestions?.["english"]?.[0] ?? "") !== "" ? "suggested" : null);
+
+/**
+ * The English name of a word, written right there (a suggestion shows in grey), and whether it is fixed or a suggestion, which a click
+ * turns around.
+ */
+export function EnglishField({ name, actions }: { name: Word; actions: Pick<WordActions, "onEnglish" | "onSuggestEnglish" | "onAcceptSuggestion" | "onLoosen"> }) {
+  const state = englishState(name);
+  const suggestedEnglish = name.english.trim() === "" ? (name.suggestions?.["english"]?.[0] ?? "") : "";
+  return (
+    <Flex align="center" gap="1" className="name-english">
+      <TextBox
+        className={state === "suggested" ? "english-suggested" : state === null && !name.hint ? "english-missing" : ""}
+        value={name.english.trim() !== "" ? name.english : suggestedEnglish}
+        label={`English name of ${name.source}`}
+        placeholder={name.hint ? `note: ${name.hint}` : "English name"}
+        // A name that is fixed stays fixed when it is changed; otherwise what is written is a suggestion until it is fixed.
+        onSave={(v) => (state === "fixed" ? actions.onEnglish(v) : actions.onSuggestEnglish(v))}
+      />
+      {state !== null && (
+        <Button
+          size="1"
+          variant="soft"
+          color={state === "fixed" ? "green" : "amber"}
+          className="english-state"
+          onClick={() => (state === "suggested" ? actions.onAcceptSuggestion("english") : actions.onLoosen())}
+          aria-label={state === "suggested" ? `Make the English name of ${name.source} fixed` : `Make the English name of ${name.source} a suggestion again`}
+          title={state === "suggested" ? "Suggested: told to the model as a hint it may not follow. Click to fix it: the model must write exactly this." : "Fixed: the model must write exactly this. Click to make it a suggestion again."}
+        >
+          {state === "suggested" ? "suggested" : "fixed"}
+        </Button>
+      )}
+    </Flex>
+  );
+}
+
+/** The menu of a word: what is done to it less often than writing its name. */
+export function WordMenu({ name, actions }: { name: Word; actions: WordActions }) {
   const used = name.use !== false;
-  const state: "fixed" | "suggested" | null = name.english.trim() !== "" ? "fixed" : suggestedEnglish !== "" ? "suggested" : null;
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        <IconButton variant="ghost" size="1" color="gray" aria-label={`More about ${name.source}`}>
+          <DotsHorizontalIcon />
+        </IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content size="1" align="end">
+        <DropdownMenu.Item disabled={!actions.canSuggest} onSelect={actions.onSuggest}>
+          {actions.canSuggest ? "Suggest from the translation" : "Suggest from the translation (translate a paragraph with it first)"}
+        </DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={actions.onLookup}>Look up the dictionary spelling</DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={() => actions.onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
+        {!name.draft && <DropdownMenu.Item onSelect={actions.onOpen}>Open in the knowledge base</DropdownMenu.Item>}
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item color="red" onSelect={actions.onRemove}>
+          Remove from the glossary
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  );
+}
+
+/**
+ * One word of the text, on one line: the word (click it to see where it stands in the text), its English name, and a menu. The arrow
+ * opens the details: the type, a note, and the attributes that have a value; the others are added from "Add detail".
+ */
+export function NameRow({
+  name,
+  classes,
+  topics,
+  expanded,
+  focused,
+  onToggle,
+  actions,
+}: {
+  name: Word;
+  classes: ClassInfo[];
+  topics: TopicRef[];
+  expanded: boolean;
+  focused: boolean;
+  /** The arrow was clicked: the details open or close. */
+  onToggle: () => void;
+  actions: WordActions;
+}) {
+  const used = name.use !== false;
   return (
     <li className={used ? "name-item" : "name-item ignored"}>
       <Flex align="center" gap="1" className="glossary-head">
         <IconButton variant="ghost" size="1" color="gray" onClick={onToggle} aria-expanded={expanded} aria-label={`${expanded ? "Hide" : "Show"} the details of ${name.source}`} title="Details">
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </IconButton>
-        <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={onLocate} aria-pressed={focused} title="Show where it appears in the text" className="glossary-source">
+        <Button variant={focused ? "soft" : "ghost"} color={focused ? "indigo" : "gray"} size="1" onClick={actions.onLocate} aria-pressed={focused} title="Show where it appears in the text" className="glossary-source">
           <Text weight="bold" size="2" truncate>
             {name.source}
           </Text>
         </Button>
         {used ? (
-          <Flex align="center" gap="1" className="name-english">
-            <TextBox
-              className={state === "suggested" ? "english-suggested" : state === null && !name.hint ? "english-missing" : ""}
-              value={name.english.trim() !== "" ? name.english : suggestedEnglish}
-              label={`English name of ${name.source}`}
-              placeholder={name.hint ? `note: ${name.hint}` : "English name"}
-              // A name that is fixed stays fixed when it is changed; otherwise what is written is a suggestion until it is fixed.
-              onSave={(v) => (state === "fixed" ? onEnglish(v) : onSuggestEnglish(v))}
-            />
-            {state !== null && (
-              <Button
-                size="1"
-                variant="soft"
-                color={state === "fixed" ? "green" : "amber"}
-                className="english-state"
-                onClick={() => (state === "suggested" ? onAcceptSuggestion("english") : onLoosen())}
-                aria-label={state === "suggested" ? `Make the English name of ${name.source} fixed` : `Make the English name of ${name.source} a suggestion again`}
-                title={state === "suggested" ? "Suggested: told to the model as a hint it may not follow. Click to fix it: the model must write exactly this." : "Fixed: the model must write exactly this. Click to make it a suggestion again."}
-              >
-                {state === "suggested" ? "suggested" : "fixed"}
-              </Button>
-            )}
-          </Flex>
+          <EnglishField name={name} actions={actions} />
         ) : (
           <Text size="2" color="gray" className="name-english" truncate>
             ignored in this text
           </Text>
         )}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            <IconButton variant="ghost" size="1" color="gray" aria-label={`More about ${name.source}`}>
-              <DotsHorizontalIcon />
-            </IconButton>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content size="1" align="end">
-            <DropdownMenu.Item disabled={!canSuggest} onSelect={onSuggest}>
-              {canSuggest ? "Suggest from the translation" : "Suggest from the translation (translate a paragraph with it first)"}
-            </DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={onLookup}>Look up the dictionary spelling</DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={() => onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
-            {!name.draft && <DropdownMenu.Item onSelect={onOpen}>Open in the knowledge base</DropdownMenu.Item>}
-            <DropdownMenu.Separator />
-            <DropdownMenu.Item color="red" onSelect={onRemove}>
-              Remove from the glossary
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
+        <WordMenu name={name} actions={actions} />
       </Flex>
       {expanded && (
         <Details
-          subject={{ source: name.source, kind: name.kind, hint: name.hint ?? "", attrs, suggestions }}
+          subject={{ source: name.source, kind: name.kind, hint: name.hint ?? "", attrs: name.attrs ?? {}, suggestions: name.suggestions ?? {} }}
           classes={classes}
           topics={topics}
-          onKind={onKind}
-          onHint={onHint}
-          onAttribute={onAttribute}
-          onAcceptSuggestion={onAcceptSuggestion}
-          onDismissSuggestion={onDismissSuggestion}
+          onKind={actions.onKind}
+          onHint={actions.onHint}
+          onAttribute={actions.onAttribute}
+          onAcceptSuggestion={actions.onAcceptSuggestion}
+          onDismissSuggestion={actions.onDismissSuggestion}
         />
       )}
     </li>

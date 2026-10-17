@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Cross2Icon, MagnifyingGlassIcon, PlusIcon } from "@radix-ui/react-icons";
-import { Badge, Button, Checkbox, Flex, Heading, IconButton, Text, TextField } from "@radix-ui/themes";
+import { Badge, Button, Checkbox, Flex, Heading, IconButton, SegmentedControl, Text, TextField } from "@radix-ui/themes";
 import type { KnowledgeEntry, KnowledgeFiles as FileList } from "@ltw/domain";
 import { api } from "./api";
 import { Details, TextBox, type ClassInfo, type TopicRef } from "./NameRow";
@@ -36,6 +36,7 @@ export function KnowledgeDrawer({
   request,
   rev,
   counts,
+  inText,
   onClose,
 }: {
   open: boolean;
@@ -43,6 +44,8 @@ export function KnowledgeDrawer({
   request: { id: string; n: number } | null;
   rev: number;
   counts: { terms: number; notes: number; suggested: number };
+  /** The glossary of the open text, shown instead of the topics when chosen: how many words it has, and the list. */
+  inText?: { count: number; content: ReactNode };
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -77,6 +80,8 @@ export function KnowledgeDrawer({
   const dragging = useRef(false);
   const panel = useRef<HTMLElement>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // The words of the open text, or every topic of the knowledge base. A topic asked for by another part of the app is shown among all.
+  const [view, setView] = useState<"text" | "all">("text");
   const [loaded, setLoaded] = useState<{ problems: Problem[]; backlinks: { id: string; title: string }[] } | null>(null);
   const [typed, setTyped] = useState("");
   const [resolved, setResolved] = useState<Record<string, string | null>>({});
@@ -109,8 +114,10 @@ export function KnowledgeDrawer({
     if (request) {
       setActive(request.id);
       setAsText(false);
+      setView("all");
     }
   }, [request?.id, request?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  const showing = inText ? view : "all";
 
   const classes: ClassInfo[] = list?.classes ?? [];
   const files = (list?.files ?? []).filter((f) => f.kind !== "classes");
@@ -241,17 +248,24 @@ export function KnowledgeDrawer({
               {counts.suggested > 0 && ` · ${counts.suggested} to check`}
             </Text>
           </Flex>
+          {inText && (
+            <SegmentedControl.Root size="1" value={showing} onValueChange={(v) => setView(v as "text" | "all")} aria-label="What the knowledge base shows">
+              <SegmentedControl.Item value="text">This text · {inText.count}</SegmentedControl.Item>
+              <SegmentedControl.Item value="all">All topics · {counts.terms}</SegmentedControl.Item>
+            </SegmentedControl.Root>
+          )}
           <Flex align="center" gap="2">
-            {counts.suggested > 0 && (
+            {showing === "all" && counts.suggested > 0 && (
               <Button size="1" variant="soft" onClick={() => confirmIds(files.filter((f) => f.suggested).map((f) => f.id))} title="Confirm every topic that is still only suggested">
                 Confirm all to check
               </Button>
             )}
             <Button
               size="1"
-              variant={active === "classes" ? "soft" : "ghost"}
+              variant={showing === "all" && active === "classes" ? "soft" : "ghost"}
               color="gray"
               onClick={() => {
+                setView("all");
                 setActive("classes");
                 setAsText(true);
               }}
@@ -265,6 +279,9 @@ export function KnowledgeDrawer({
           </Flex>
         </Flex>
 
+        {showing === "text" && inText ? (
+          <div className="drawer-scroll drawer-text">{inText.content}</div>
+        ) : (
         <div className="drawer-body">
           <Flex direction="column" className="drawer-list">
             <Flex direction="column" gap="2" p="3">
@@ -548,6 +565,7 @@ export function KnowledgeDrawer({
             )}
           </Flex>
         </div>
+        )}
       </aside>
     </div>
   );

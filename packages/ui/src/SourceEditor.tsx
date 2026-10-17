@@ -4,7 +4,7 @@ import { EditorState, StateEffect, StateField, type Extension, type Text } from 
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, placeholder as placeholderExt, type DecorationSet } from "@codemirror/view";
 import { normalizeSource } from "@ltw/domain/pure";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, setCurrent, setUnderlines, underlineField, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, setCurrent, setSpeech, setUnderlines, speakerEvents, speechField, underlineField, type EntryEvents, type Place, type Speech, type Underline } from "./editorShared";
 
 /** Places in the text to point out (where a word or a line stands), the current one drawn stronger. */
 export interface Hit {
@@ -103,13 +103,19 @@ export interface SourceEditorProps {
   onNote?: (paragraph: number, place: { left: number; bottom: number }) => void;
   /** The words of the glossary where they stand. Left out while the text is being typed: the ones there move with the text. */
   underlines?: readonly Underline[];
+  /** The lines of speech and who says each. Left out while the text is being typed, like the underlines. */
+  speech?: readonly Speech[];
+  /** The name before a line of speech was clicked. */
+  onLine?: (line: number, place: Place) => void;
+  /** The pointer on the words of the glossary. */
+  entries?: EntryEvents;
 }
 
 /** The longest selection that can be a word of a glossary. */
 const LONGEST_WORD = 40;
 
 /** The source text as an editor, with the number of each paragraph in the margin. The numbers are not part of the text. */
-export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote, underlines }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote, underlines, speech, onLine, entries }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -120,6 +126,10 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
   onSelectRef.current = onSelect;
   const onNoteRef = useRef(onNote);
   onNoteRef.current = onNote;
+  const onLineRef = useRef(onLine);
+  onLineRef.current = onLine;
+  const entriesRef = useRef<EntryEvents>(entries ?? {});
+  entriesRef.current = entries ?? {};
   const latest = useRef({ value });
   latest.current = { value };
 
@@ -152,6 +162,9 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
       currentField,
       notesField,
       underlineField,
+      speechField,
+      entryEvents(entriesRef),
+      speakerEvents(onLineRef),
       editorTheme,
       EditorView.domEventHandlers({
         scroll: () => void onSelectRef.current?.(null),
@@ -226,6 +239,11 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
   useEffect(() => {
     if (underlines) view.current?.dispatch({ effects: setUnderlines.of(underlines) });
   }, [underlinesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const speechKey = speech ? JSON.stringify(speech) : null;
+  useEffect(() => {
+    if (speech) view.current?.dispatch({ effects: setSpeech.of(speech) });
+  }, [speechKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div className="source-editor" ref={host} />;
 }

@@ -5,7 +5,6 @@ import { LogDock, useLog } from "./Log";
 import { Rail } from "./Rail";
 import { SettingsDrawer, type SettingsTab } from "./SettingsDrawer";
 import { Toolbar, type Activity } from "./Toolbar";
-import { KnowledgeDrawer } from "./KnowledgeDrawer";
 import { Workspace } from "./Workspace";
 import { api } from "./api";
 import { loadSetup, saveSetup, settingsOf, withSettings, type SetupState } from "./setup";
@@ -24,7 +23,7 @@ function Banner({ color, children, actions }: { color: "amber" | "red" | "blue";
   );
 }
 
-/** One screen: the left panel, the workspace (source, what was read, translation), and the settings beside it when open. */
+/** One screen: the left panel, the workspace (source and translation, with the knowledge base as a drawer), and the settings beside it when open. */
 export function App() {
   const { snapshot: snap, error, clearError, send } = useWorkspace();
   const log = useLog();
@@ -213,6 +212,8 @@ export function App() {
               onText={onText}
               editorKey={`${snap.epoch}:${snap.activeDocumentId}`}
               knowledgeRev={snap.knowledge.rev}
+              knowledgeCounts={snap.knowledge}
+              kb={kb}
               onKb={setKb}
               onActivity={setActivity}
             />
@@ -227,8 +228,6 @@ export function App() {
       </div>
 
       <LogDock />
-
-      <KnowledgeDrawer open={kb.open} request={kb.request} rev={snap?.knowledge.rev ?? 0} counts={snap?.knowledge ?? { terms: 0, notes: 0, suggested: 0 }} onClose={() => setKb({ open: false, request: null })} />
 
       {exporting && <ExportDialog title={project?.title ?? "translation"} onClose={() => setExporting(false)} />}
     </div>

@@ -3,7 +3,7 @@ import { search, searchKeymap } from "@codemirror/search";
 import { EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, type DecorationSet } from "@codemirror/view";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, setCurrent, setUnderlines, underlineField, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, setCurrent, setUnderlines, underlineField, type EntryEvents, type Underline } from "./editorShared";
 
 /** A translation is one line of the editor: a line break the model left in it shows as a space. */
 export const asLine = (translation: string): string => translation.replace(/\s*\n\s*/g, " ");
@@ -76,14 +76,18 @@ export interface TranslationEditorProps {
   /** What is wrong with each paragraph's translation, if anything. */
   issues: readonly (string | null | undefined)[];
   underlines: readonly Underline[];
+  /** The pointer on the words of the glossary. */
+  entries?: EntryEvents;
 }
 
 /** The translation as one editor, one line for each paragraph of the source, numbered like it. */
-export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, reveal, issues, underlines }: TranslationEditorProps) {
+export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, reveal, issues, underlines, entries }: TranslationEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const handlers = useRef({ onEdit, onLeave, onCursor });
   handlers.current = { onEdit, onLeave, onCursor };
+  const entriesRef = useRef<EntryEvents>(entries ?? {});
+  entriesRef.current = entries ?? {};
   const shown = lines.map(asLine);
   const latest = useRef(shown);
   latest.current = shown;
@@ -116,6 +120,7 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
       currentField,
       issuesField,
       underlineField,
+      entryEvents(entriesRef),
       editorTheme,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && u.transactions.some((t) => t.isUserEvent("input") || t.isUserEvent("delete") || t.isUserEvent("undo") || t.isUserEvent("redo") || t.isUserEvent("move"))) {

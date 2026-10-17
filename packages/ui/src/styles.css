@@ -144,12 +144,10 @@ details > summary { cursor: pointer; }
 .guided-pane h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
 .guided-body { flex: 1; min-height: 0; overflow: auto; padding: 0.75rem; }
 
-.guided-lines { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 
 .guided-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); }
 .guided-scroll h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
 
-.guided-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 
 .guided-glossary { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 
@@ -178,9 +176,6 @@ details > summary { cursor: pointer; }
 /* Spacing and overflow of the reading pane: nothing touches the edge, and long text is cut with an ellipsis inside its own box. */
 .guided-scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 0.75rem 1rem 0.75rem 0.9rem; display: flex; flex-direction: column; }
 .guided-scroll > * { min-width: 0; }
-.guided-lines li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 0.5rem; align-items: center; }
-.guided-lines li.line-current { box-shadow: inset 3px 0 0 var(--accent); padding-left: 0.4rem; }
-.guided-lines .line-text { justify-content: flex-start; min-width: 0; max-width: 100%; overflow: hidden; }
 .tree { margin-right: 0.25rem; }
 .tree > li { grid-template-columns: 5rem minmax(0, 1fr); }
 .glossary-head { min-width: 0; }
@@ -276,3 +271,39 @@ details > summary { cursor: pointer; }
 .cm-entry-k-term { --entry: var(--crimson-9); }
 /* What the translation says is wrong with a paragraph, under it. */
 .cm-issue { font-size: 0.8rem; color: var(--amber-11); padding: 0 0.25rem 0.3rem; }
+.cm-entry { cursor: pointer; }
+.cm-entry-ignored { text-decoration-style: dashed; text-decoration-thickness: 1px; text-decoration-color: var(--gray-8); }
+
+/* A line of speech: tinted in the colour of whoever says it, with their name before it (a click on the name chooses them). */
+.cm-speech-c0 { --speech: var(--gray-9); }
+.cm-speech-c1 { --speech: var(--cyan-9); }
+.cm-speech-c2 { --speech: var(--pink-9); }
+.cm-speech-c3 { --speech: var(--amber-9); }
+.cm-speech-c4 { --speech: var(--jade-9); }
+.cm-speech-c5 { --speech: var(--purple-9); }
+.cm-speech-c6 { --speech: var(--tomato-9); }
+.cm-speech { background: color-mix(in srgb, var(--speech) 9%, transparent); border-radius: 3px; }
+.cm-speech-unknown { background: none; }
+.cm-speaker { display: inline-block; margin-right: 0.3em; padding: 0 0.35em; border-radius: 4px; font-size: 0.7rem; line-height: 1.5; vertical-align: 0.15em; cursor: pointer; user-select: none; color: var(--speech); border: 1px solid color-mix(in srgb, var(--speech) 55%, transparent); }
+.cm-speaker:hover { background: color-mix(in srgb, var(--speech) 15%, transparent); }
+.cm-speaker-suggested { font-style: italic; border-style: dashed; }
+.cm-speaker-unknown { color: var(--muted); border-style: dashed; border-color: var(--gray-7); }
+
+/* The card of a word, or of a line of speech, next to it in the text. */
+.card { position: fixed; z-index: 60; width: 22rem; max-width: calc(100vw - 16px); max-height: min(32rem, calc(100vh - 16px)); overflow-y: auto; padding: 0.75rem 0.85rem; border-radius: var(--radius-3); background: var(--color-panel-solid); border: 1px solid var(--gray-6); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28); }
+.card:not(.card-pinned) { pointer-events: auto; }
+.card-source { overflow-wrap: anywhere; }
+.card-kind { box-shadow: inset 0 -2px 0 var(--entry, var(--gray-8)); }
+.card-english .name-english { width: 100%; }
+.card-english .rt-TextFieldRoot { flex: 1; min-width: 0; }
+.card-line { overflow-wrap: anywhere; }
+.card-attrs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; font-size: 0.8rem; }
+.card-attrs > div { display: contents; }
+.card-attrs dt { color: var(--muted); }
+.card-attrs dd { margin: 0; overflow-wrap: anywhere; }
+.card .tree { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.3rem; }
+
+/* The glossary of the text, in the drawer. */
+.drawer-text { padding: 1rem 1.25rem; }
+.text-glossary { max-width: 48rem; }
+.card .tree > li::before { display: none; }
