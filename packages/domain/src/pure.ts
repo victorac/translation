@@ -12,3 +12,4 @@ export * from "./work.js";
 export { estimateTokens } from "./tokens.js";
 export * from "./paragraphs.js";
 export * from "./suggest.js";
+export * from "./marks.js";

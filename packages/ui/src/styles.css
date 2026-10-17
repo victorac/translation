@@ -147,18 +147,6 @@ details > summary { cursor: pointer; }
 .guided-lines { list-style: none; margin: 0 0 0.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
 
 .guided-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); }
-.guided-parts { flex: 1; min-height: 0; overflow: auto; padding: 0.5rem 0.75rem 1rem 0; }
-.part { display: flex; align-items: flex-start; gap: 0.25rem; margin-bottom: 0.9rem; border-left: 3px solid transparent; }
-.part-focus { border-left-color: var(--accent); }
-.part-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.part-n { flex: none; width: 2.4rem; padding: 0.15rem 0.4rem 0 0; text-align: right; font-size: 0.75rem; font-variant-numeric: tabular-nums; }
-/* The translation reads like the source: no box, the same type and line height; the box only shows where the cursor is. */
-.part-text.rt-TextAreaRoot { background: none; box-shadow: none; min-height: 0; }
-.part-text textarea { field-sizing: content; min-height: 1.7em; resize: none; font-size: 1.03rem; line-height: 1.7; padding: 0 0.25rem; }
-.part-text.rt-TextAreaRoot:focus-within { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.part .rt-IconButton { opacity: 0; transition: opacity 0.12s; }
-.part:hover .rt-IconButton, .part:focus-within .rt-IconButton { opacity: 1; }
-
 .guided-scroll h4 { margin: 0.9rem 0 0.35rem; font-size: 0.85em; color: var(--muted); }
 
 .guided-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
@@ -277,3 +265,14 @@ details > summary { cursor: pointer; }
 .prompt-body { padding: 0 0.75rem 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
 .prompt-body > div { width: 100%; }
 .prompt-body pre { margin: 0.1rem 0 0; padding: 0.4rem 0.5rem; background: var(--gray-3); border-radius: var(--radius-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78rem; }
+
+/* The words of the glossary in the source and in the translation: a colour for each kind, a solid line when the English name is fixed and a dotted one while it is a suggestion. */
+.cm-entry { text-decoration-line: underline; text-decoration-thickness: 2px; text-underline-offset: 0.28em; text-decoration-skip-ink: none; text-decoration-color: var(--entry, var(--gray-9)); }
+.cm-entry-suggested { text-decoration-style: dotted; }
+.cm-entry-k-character { --entry: var(--blue-9); }
+.cm-entry-k-family { --entry: var(--violet-9); }
+.cm-entry-k-place { --entry: var(--grass-9); }
+.cm-entry-k-organization { --entry: var(--orange-9); }
+.cm-entry-k-term { --entry: var(--crimson-9); }
+/* What the translation says is wrong with a paragraph, under it. */
+.cm-issue { font-size: 0.8rem; color: var(--amber-11); padding: 0 0.25rem 0.3rem; }

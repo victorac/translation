@@ -1,9 +1,10 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap } from "@codemirror/search";
-import { EditorState, StateEffect, StateField, type Extension, type Range, type Text } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, placeholder as placeholderExt, type DecorationSet } from "@codemirror/view";
 import { normalizeSource } from "@ltw/domain/pure";
 import { useEffect, useRef } from "react";
+import { currentField, editorTheme, setCurrent, setUnderlines, underlineField, type Underline } from "./editorShared";
 
 /** Places in the text to point out (where a word or a line stands), the current one drawn stronger. */
 export interface Hit {
@@ -18,26 +19,6 @@ const hitField = StateField.define<DecorationSet>({
   update(value, tr) {
     for (const e of tr.effects) if (e.is(setHits)) return Decoration.set(e.value.map((h) => Decoration.mark({ class: h.current ? "cm-hit cm-hit-current" : "cm-hit" }).range(h.from, h.to)), true);
     return tr.docChanged ? Decoration.none : value; // positions mean nothing once the text moves
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
-/** The paragraph being worked on: its lines get a bar at their left. */
-const setCurrent = StateEffect.define<{ from: number; to: number } | null>();
-const currentField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(value, tr) {
-    for (const e of tr.effects) {
-      if (!e.is(setCurrent)) continue;
-      if (!e.value) return Decoration.none;
-      const doc = tr.state.doc;
-      const first = doc.lineAt(Math.min(e.value.from, doc.length)).number;
-      const last = doc.lineAt(Math.min(Math.max(e.value.from, e.value.to - 1), doc.length)).number;
-      const lines: Range<Decoration>[] = [];
-      for (let n = first; n <= last; n++) lines.push(Decoration.line({ class: "cm-blk-current" }).range(doc.line(n).from));
-      return Decoration.set(lines, true);
-    }
-    return tr.docChanged ? value.map(tr.changes) : value;
   },
   provide: (f) => EditorView.decorations.from(f),
 });
@@ -88,24 +69,6 @@ const notesField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-const theme = EditorView.theme({
-  "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "1.03rem" },
-  "&.cm-focused": { outline: "2px solid var(--focus)", outlineOffset: "-2px" },
-  ".cm-scroller": { fontFamily: "inherit", lineHeight: "1.7", overflow: "auto" },
-  ".cm-content": { padding: "0.5rem 1rem 1rem", caretColor: "var(--text)" },
-  ".cm-line": { padding: "0 0.25rem" },
-  ".cm-cursor": { borderLeftColor: "var(--text)" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
-  ".cm-placeholder": { color: "var(--muted)" },
-  ".cm-hit": { backgroundColor: "color-mix(in srgb, var(--warn) 14%, transparent)" },
-  ".cm-hit-current": { backgroundColor: "color-mix(in srgb, var(--accent) 12%, transparent)", boxShadow: "inset 0 -2px 0 var(--accent)" },
-  ".cm-blk-current": { boxShadow: "inset 3px 0 0 var(--accent)" },
-  ".cm-gutters": { backgroundColor: "transparent", border: "none", color: "var(--muted)", fontSize: "0.75rem" },
-  ".cm-lineNumbers .cm-gutterElement": { padding: "0 0.4rem 0 0.6rem", minWidth: "2.4rem", textAlign: "right", cursor: "pointer" },
-  ".cm-lineNumbers .cm-gutterElement:hover": { color: "var(--accent)" },
-  ".cm-note": { fontSize: "0.8rem", color: "var(--accent)", padding: "0.15rem 0.25rem", margin: "0.35rem 0 0.1rem", borderTop: "1px dashed color-mix(in srgb, var(--accent) 45%, transparent)", cursor: "pointer", fontStyle: "italic" },
-});
-
 /** The number of the paragraph each line starts (a paragraph is a line with something on it), for the margin; empty lines have none. */
 const paragraphNumbers = new WeakMap<Text, Int32Array>();
 function paragraphNumber(line: number, doc: Text): string {
@@ -138,13 +101,15 @@ export interface SourceEditorProps {
   notes?: readonly NoteMark[];
   /** A paragraph's number or its note was clicked (index from 0, and where to put a box, in window coordinates). */
   onNote?: (paragraph: number, place: { left: number; bottom: number }) => void;
+  /** The words of the glossary where they stand. Left out while the text is being typed: the ones there move with the text. */
+  underlines?: readonly Underline[];
 }
 
 /** The longest selection that can be a word of a glossary. */
 const LONGEST_WORD = 40;
 
 /** The source text as an editor, with the number of each paragraph in the margin. The numbers are not part of the text. */
-export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, placeholder, hits, current, onCursor, reveal, onSelect, notes, onNote, underlines }: SourceEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -186,7 +151,8 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
       hitField,
       currentField,
       notesField,
-      theme,
+      underlineField,
+      editorTheme,
       EditorView.domEventHandlers({
         scroll: () => void onSelectRef.current?.(null),
         mousedown: (event) => {
@@ -255,6 +221,11 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
   useEffect(() => {
     view.current?.dispatch({ effects: setNotes.of(notes ?? []) });
   }, [notesKey, value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const underlinesKey = underlines ? JSON.stringify(underlines) : null;
+  useEffect(() => {
+    if (underlines) view.current?.dispatch({ effects: setUnderlines.of(underlines) });
+  }, [underlinesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div className="source-editor" ref={host} />;
 }

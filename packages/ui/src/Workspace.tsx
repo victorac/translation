@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ShuffleIcon, ChevronRightIcon, Cross2Icon, MagnifyingGlassIcon, ReloadIcon } from "@radix-ui/react-icons";
 import { Button, Callout, Flex, Heading, IconButton, Text, TextArea, TextField } from "@radix-ui/themes";
-import { normalizeSource, occurrencesOf, paragraphsOf } from "@ltw/domain/pure";
+import { englishOf, normalizeSource, occurrencesOf, paragraphsOf, sourceMarks, translationMarks, wordStatus } from "@ltw/domain/pure";
 import type { Word, Work } from "@ltw/domain";
 import { api } from "./api";
 import type { Activity } from "./Toolbar";
 import { SourceEditor, type Hit, type NoteMark } from "./SourceEditor";
+import { TranslationEditor, asLine } from "./TranslationEditor";
+import type { Underline } from "./editorShared";
 import { NameRow, type ClassInfo, type TopicRef } from "./NameRow";
 import { Pick } from "./Pick";
 import { useLog } from "./Log";
@@ -60,6 +62,9 @@ export function Workspace({
   const [modelName, setModelName] = useState(setup.models[0]?.name ?? "");
   // What is in the box of each paragraph of the translation while it is being edited.
   const [drafts, setDrafts] = useState<string[]>([]);
+  // The same, for saving a paragraph the moment the cursor leaves it, before the page has drawn the last keystroke.
+  const draftsRef = useRef<string[]>([]);
+  draftsRef.current = drafts;
   // The paragraph being worked on: the one the cursor is in, in the source or in the translation.
   const [cur, setCur] = useState<number | null>(null);
   const [newTerm, setNewTerm] = useState("");
@@ -79,7 +84,6 @@ export function Workspace({
   const { log } = useLog();
   const [filter, setFilter] = useState("");
   const [topics, setTopics] = useState<TopicRef[]>([]);
-  const boxes = useRef<(HTMLDivElement | null)[]>([]);
   const lineItems = useRef<(HTMLLIElement | null)[]>([]);
 
   const model = setup.models.find((m) => m.name === modelName) ?? setup.models[0] ?? null;
@@ -377,17 +381,24 @@ export function Workspace({
 
   /** The user's own text for one paragraph is kept when they leave its box. */
   const saveDraft = async (paragraph: number) => {
-    if (!work || (drafts[paragraph] ?? "") === (paragraphs[paragraph]?.translation ?? "")) return;
-    const w = await call(() => api.invoke("work.setPart", { paragraph, text: drafts[paragraph] ?? "" }));
+    const text = draftsRef.current[paragraph] ?? "";
+    if (!work || text === asLine(paragraphs[paragraph]?.translation ?? "")) return;
+    const w = await call(() => api.invoke("work.setPart", { paragraph, text }));
     if (w) setWork(w);
   };
 
   // ---- the cursor: a paragraph in the source and its translation go together ----
   const [reveal, setReveal] = useState<{ at: number; n: number } | null>(null);
+  const [revealTranslation, setRevealTranslation] = useState<{ paragraph: number; n: number } | null>(null);
   const goTo = (k: number, from: "source" | "translation") => {
     setCur(k);
     if (from === "translation" && places[k]) setReveal({ at: places[k]!.start, n: Date.now() });
-    if (from === "source") boxes.current[k]?.scrollIntoView({ block: "nearest" });
+    if (from === "source") setRevealTranslation({ paragraph: k, n: Date.now() });
+  };
+  const editDraft = (paragraph: number, text: string) => {
+    const next = draftsRef.current.map((t, i) => (i === paragraph ? text : t));
+    draftsRef.current = next;
+    setDrafts(next);
   };
   const cursorAt = (position: number) => {
     if (!inSync || places.length === 0) return;
@@ -414,6 +425,25 @@ export function Workspace({
     if (w) setWork(w);
     setNoteEdit(null);
   };
+
+  // ---- the words of the glossary, underlined where they stand in the source and in the translation ----
+  const titleOf = (n: Word): string => {
+    const english = englishOf(n);
+    const name = english === "" ? "no English name yet" : wordStatus(n) === "fixed" ? english : `${english}, suggested`;
+    return `${n.source} · ${kindLabel(n.kind)} · ${name}`;
+  };
+  const underline = (n: Word | undefined, from: number, to: number, kind: string, status: Underline["status"]): Underline[] => (n ? [{ from, to, kind, status, title: titleOf(n) }] : []);
+  const byName = new Map(words.map((n) => [n.source, n]));
+  const sourceUnderlines = useMemo(() => (inSync && work ? sourceMarks(work.source, words).flatMap((m) => underline(byName.get(m.source), m.start, m.end, m.kind, m.status)) : undefined), [inSync, work, classes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const translationUnderlines = useMemo(() => {
+    let at = 0;
+    return drafts.flatMap((d) => {
+      const line = asLine(d);
+      const start = at;
+      at += line.length + 1;
+      return translationMarks(line, words).flatMap((m) => underline(byName.get(m.source), start + m.start, start + m.end, m.kind, m.status));
+    });
+  }, [drafts, work?.words, classes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentRange = inSync && cur !== null && places[cur] ? { from: places[cur]!.start, to: places[cur]!.end } : null;
   const editorHits: Hit[] = inSync ? hits.map((h, i) => ({ from: h.start, to: h.end, current: i === current })) : [];
@@ -558,7 +588,7 @@ export function Workspace({
             </form>
           )}
           <div className="source-pane-editor">
-            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} />
+            <SourceEditor key={editorKey} value={text} onChange={onText} placeholder="Paste or type the source text here." hits={editorHits} current={currentRange} onCursor={cursorAt} reveal={reveal} onSelect={setSelected} notes={noteMarks} {...(inSync ? { onNote: openNote } : {})} {...(sourceUnderlines ? { underlines: sourceUnderlines } : {})} />
           </div>
         </section>
 
@@ -757,40 +787,33 @@ export function Workspace({
             </div>
           ) : (
             <>
-              <div className="guided-parts">
-                {paragraphs.map((p, k) => (
-                  <div key={k} ref={(el) => void (boxes.current[k] = el)} className={cur === k ? "part part-focus" : "part"}>
-                    <Text size="1" color="gray" className="part-n" aria-hidden>
-                      {k + 1}
-                    </Text>
-                    <div className="part-body">
-                      <TextArea
-                        className="part-text"
-                        variant="soft"
-                        aria-label={`Translation of paragraph ${k + 1}`}
-                        placeholder="…"
-                        value={drafts[k] ?? ""}
-                        onFocus={() => goTo(k, "translation")}
-                        onChange={(e) => setDrafts((d) => d.map((t, i) => (i === k ? e.target.value : t)))}
-                        onBlur={() => void saveDraft(k)}
-                        spellCheck={false}
-                      />
-                      {p.issue && (
-                        <Text as="p" size="1" color="amber" role="status">
-                          {p.issue}
-                        </Text>
-                      )}
-                    </div>
-                    <Flex direction="column" gap="1">
-                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Translate paragraph ${k + 1} again`} title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslate(k)}>
-                      <ReloadIcon />
-                    </IconButton>
-                      <IconButton variant="ghost" size="1" color="gray" aria-label={`Write another version of paragraph ${k + 1}`} title="Ask for an alternative: a different translation from this one. The other paragraphs stay as they are." disabled={working !== null || !model || p.translation.trim() === ""} onClick={() => void retranslate(k, true)}>
-                        <ShuffleIcon />
-                      </IconButton>
-                    </Flex>
-                  </div>
-                ))}
+              {cur !== null && paragraphs[cur] && (
+                <Flex align="center" justify="between" gap="2" wrap="wrap" px="3" py="1" className="source-find">
+                  <Text size="1" color="gray" wrap="nowrap">
+                    Paragraph {cur + 1}
+                  </Text>
+                  <Flex gap="3" wrap="wrap">
+                    <Button variant="ghost" size="1" color="gray" title="Translate this paragraph again, with the glossary as it is now. The other paragraphs stay as they are." disabled={working !== null || !model} onClick={() => void retranslate(cur)}>
+                      <ReloadIcon /> Translate again
+                    </Button>
+                    <Button variant="ghost" size="1" color="gray" title="Ask for an alternative: a different translation from this one. The other paragraphs stay as they are." disabled={working !== null || !model || paragraphs[cur]!.translation.trim() === ""} onClick={() => void retranslate(cur, true)}>
+                      <ShuffleIcon /> Another version
+                    </Button>
+                  </Flex>
+                </Flex>
+              )}
+              <div className="source-pane-editor">
+                <TranslationEditor
+                  key={editorKey}
+                  lines={drafts}
+                  onEdit={editDraft}
+                  onLeave={(k) => void saveDraft(k)}
+                  onCursor={(k) => goTo(k, "translation")}
+                  current={cur}
+                  reveal={revealTranslation}
+                  issues={paragraphs.map((p) => p.issue)}
+                  underlines={translationUnderlines}
+                />
               </div>
               {work.error && (
                 <Text as="p" size="1" color="red" mx="3" role="status">
