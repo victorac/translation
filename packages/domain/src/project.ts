@@ -97,7 +97,7 @@ const entrySchema = z.object({
   updatedAt: iso,
 });
 
-const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.enum(["character", "family", "place", "organization", "term"]), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), suggestions: z.record(z.string().max(100), z.array(z.string().max(300)).max(5)).optional(), fromReading: z.boolean().optional(), written: z.boolean().optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional() });
+const wordSchema = z.object({ source: z.string().max(200), english: z.string().max(300), kind: z.string().min(1).max(100), aliases: z.array(z.string().max(200)).max(50), reading: z.string().max(300), known: z.boolean(), draft: z.boolean().optional(), use: z.boolean().optional(), hint: z.string().max(1000).optional(), suggestions: z.record(z.string().max(100), z.array(z.string().max(300)).max(5)).optional(), fromReading: z.boolean().optional(), written: z.boolean().optional(), attrs: z.record(z.string().max(100), z.array(z.string().max(300)).max(50)).optional(), gender: z.enum(["female", "male"]).nullable().optional(), byModel: z.boolean().optional(), kindFrom: z.enum(["model", "user"]).optional() });
 
 const workSchema = z.object({
   documentId: id,
@@ -106,6 +106,7 @@ const workSchema = z.object({
   lines: z.array(z.object({ paragraph: count, text: str, speaker: z.string().max(200).nullable(), suggested: z.string().max(200).nullable().optional() })).max(100_000),
   paragraphs: z.array(z.object({ text: str, translation: str, issue: z.string().max(5000).nullable().optional(), edited: z.boolean().optional(), note: z.string().max(2000).optional() })).max(200_000),
   error: z.string().max(5000).nullable().optional(),
+  searched: z.array(str).max(200_000).optional(),
 });
 
 /** What older projects kept for each document: its text cut into blocks. Read only, to bring the work over. */

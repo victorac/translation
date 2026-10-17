@@ -269,6 +269,15 @@ details > summary { cursor: pointer; }
 .cm-entry-k-place { --entry: var(--grass-9); }
 .cm-entry-k-organization { --entry: var(--orange-9); }
 .cm-entry-k-term { --entry: var(--crimson-9); }
+.cm-entry-k-skill { --entry: var(--cyan-9); }
+.cm-entry-k-slang { --entry: var(--yellow-9); }
+/* A kind the user made up: one of these, picked from its name (they give way to a colour of its own). */
+:where(.cm-entry-h0) { --entry: var(--teal-9); }
+:where(.cm-entry-h1) { --entry: var(--brown-9); }
+:where(.cm-entry-h2) { --entry: var(--lime-9); }
+:where(.cm-entry-h3) { --entry: var(--plum-9); }
+:where(.cm-entry-h4) { --entry: var(--sky-9); }
+:where(.cm-entry-h5) { --entry: var(--ruby-9); }
 /* What the translation says is wrong with a paragraph, under it. */
 .cm-issue { font-size: 0.8rem; color: var(--amber-11); padding: 0 0.25rem 0.3rem; }
 .cm-entry { cursor: pointer; }

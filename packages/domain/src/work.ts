@@ -21,7 +21,8 @@ import {
  * dictionary, never by guessing.
  */
 
-export type NameKind = "character" | "family" | "place" | "organization" | "term";
+/** The kind of a word: one of the classes of the knowledge base, the built-in ones or the user's own. */
+export type NameKind = "character" | "family" | "place" | "organization" | "term" | (string & {});
 
 /** A word of the text that has a translation of its own: a name, a place, a term. */
 export interface Word {
@@ -58,6 +59,10 @@ export interface Word {
   refersTo?: string | null;
   /** For a person: how the text refers to them, when it is clear. */
   gender?: Gender | null;
+  /** The model found it reading the source (the dictionary did not): kept while it stands in the text. */
+  byModel?: boolean;
+  /** Who chose its kind, when not the app's own guess: the model reading the source, or the user, whose choice the model leaves alone. */
+  kindFrom?: "model" | "user";
 }
 
 export type Gender = "female" | "male";
@@ -103,6 +108,8 @@ export interface Work {
   reading?: { done: number; total: number } | null;
   /** What the last reading of the translation could not suggest, and why, in words for the user. Never saved. */
   misses?: string[];
+  /** The paragraphs the model has read for names and terms (their text), so that only new ones are read again. */
+  searched?: string[];
 }
 
 const ORGANIZATION = /(学園|学院|学校|高校|大学|会社|協会|組合|騎士団|教団|軍|党)$/;

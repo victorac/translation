@@ -236,7 +236,7 @@ describe("topics as files", () => {
     const { id } = service.knowledgeCreate("character", "花子");
     service.knowledgeCreate("place", "学園");
     expect(service.knowledgeFiles().files.map((f) => `${f.group}:${f.title}`)).toEqual(["character:花子", "place:学園", "classes:Classes"]);
-    expect(service.knowledgeFiles().classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term"]);
+    expect(service.knowledgeFiles().classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term", "skill", "slang"]);
     expect(() => service.knowledgeCreate("character", "花子")).toThrow(/already a topic/);
     expect(service.knowledgeResolve("花子")).toEqual({ id, title: "花子" });
     expect(service.knowledgeResolve("誰か")).toEqual({ id: null, title: null });
@@ -893,6 +893,38 @@ describe("translating a document", () => {
     expect(sent.at(-1)).not.toContain("clearly different");
     await service.workRetranslate({ ...model, paragraph: 0, alternative: true });
     expect(bodies(lm).at(-2)!.messages[1]!.content).toContain("clearly different");
+  });
+
+  it("reads the source with the model for the names and terms the dictionary missed, once a paragraph, and keeps the user's choices", async () => {
+    let reply = "水瀬灯 | person\n灯籠祭 | term\n星詠み | skill\n山田太郎 | person";
+    const lm = await fakeLmStudio({ answer: (_system, user) => (user.includes("word | kind") ? reply : "NONE") });
+    const { provider, service } = setup();
+    provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
+    await sync(service, "水瀬灯は灯籠祭で《星詠み》を使った。\n\n二つ目の段落です。");
+    expect(words(service).some((n) => n.source === "水瀬灯")).toBe(false);
+    await service.workFind({ ...model });
+    // Both paragraphs are read in one passage; a word that is not in it (山田太郎) is not taken.
+    expect(bodies(lm)).toHaveLength(1);
+    expect(words(service).filter((n) => n.byModel).map((n) => [n.source, n.kind, n.draft, n.english])).toEqual([
+      ["水瀬灯", "character", true, ""],
+      ["灯籠祭", "term", true, ""],
+      ["星詠み", "skill", true, ""],
+    ]);
+    // Read paragraphs are not read again.
+    await service.workFind({ ...model });
+    expect(bodies(lm)).toHaveLength(1);
+    // The user's kind stays, what the model found stays when the text changes, and a removed word is not brought back.
+    service.workSetKind("灯籠祭", "place");
+    service.workRemoveWord("星詠み");
+    await sync(service, "水瀬灯は灯籠祭で《星詠み》を使った。\n\n二つ目の段落です。\n\n灯籠祭の夜、星詠みが光った。");
+    reply = "灯籠祭 | term\n星詠み | skill";
+    await service.workFind({ ...model });
+    expect(bodies(lm)).toHaveLength(2);
+    expect(bodies(lm)[1]!.messages[1]!.content).toContain("灯籠祭の夜");
+    expect(bodies(lm)[1]!.messages[1]!.content).not.toContain("二つ目");
+    expect(words(service).find((n) => n.source === "灯籠祭")!.kind).toBe("place");
+    expect(words(service).some((n) => n.source === "水瀬灯")).toBe(true);
+    expect(words(service).some((n) => n.source === "星詠み")).toBe(false);
   });
 
   it("lets the user write the suggestion of a word, which is told to the model like the dictionary's, is not replaced by reading the translation, and can be dropped", async () => {

@@ -5,6 +5,8 @@ import {
 } from "vitest";
 import {
   DEFAULT_CLASSES_TEXT,
+  EARLIER_CLASSES_TEXT,
+  isOldDefaultClasses,
   LEGACY_CLASSES_TEXT,
   parseClasses,
 } from "./classes.js";
@@ -70,14 +72,20 @@ describe("classes", () => {
     const old = parseClasses(LEGACY_CLASSES_TEXT).classes;
     const now = parseClasses(DEFAULT_CLASSES_TEXT).classes;
     // The same classes, and terms can now say which person they stand for.
-    expect(now.filter((c) => c.name !== "term")).toEqual(old.filter((c) => c.name !== "term"));
+    expect(now.filter((c) => old.some((o) => o.name === c.name) && c.name !== "term")).toEqual(old.filter((c) => c.name !== "term"));
     expect(now.find((c) => c.name === "term")!.attributes).toEqual([{ key: "refers to", kind: "link", target: "character" }]);
+  });
+
+  it("takes a project's unchanged classes from before skills and slang as the old default, and a changed one as the user's", () => {
+    expect(isOldDefaultClasses(EARLIER_CLASSES_TEXT)).toBe(true);
+    expect(isOldDefaultClasses(`${EARLIER_CLASSES_TEXT}\n# spell\n`)).toBe(false);
+    expect(isOldDefaultClasses(DEFAULT_CLASSES_TEXT)).toBe(false);
   });
 
   it("reads the default classes without problems", () => {
     const r = parseClasses(DEFAULT_CLASSES_TEXT);
     expect(r.problems).toEqual([]);
-    expect(r.classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term"]);
+    expect(r.classes.map((c) => c.name)).toEqual(["character", "place", "organization", "family", "term", "skill", "slang"]);
     expect(r.classes[0]!.attributes[0]).toEqual({ key: "gender", kind: "choice", choices: ["male", "female", "other", "unknown"] });
     expect(r.classes[0]!.attributes.find((a) => a.key === "member of")).toEqual({ key: "member of", kind: "links", target: "organization" });
   });

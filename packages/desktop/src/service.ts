@@ -28,6 +28,10 @@ import {
   type KnownWord,
   type ModelInput,
   type NameKind,
+  findQuestion,
+  foundWords,
+  kindWord,
+  passagesOf,
   entriesFromLegacy,
   applyFile,
   backlinksOf,
@@ -520,7 +524,7 @@ export class WorkspaceService {
     for (const e of glossaryHits(w.source, terms)) {
       if (!w.words.some((n) => n.source === e.source)) w.words.push({ source: e.source, english: e.target, kind: "term", aliases: [], reading: "", known: e.status === "confirmed", draft: false });
     }
-    const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
+    const kinds = this.kindNames();
     w.words = w.words.flatMap((n) => {
       const e = terms.find((t) => t.source === n.source);
       if (e) {
@@ -548,9 +552,14 @@ export class WorkspaceService {
     this.notify("state");
   }
 
+  /** The kinds a word can be: the classes of the knowledge base. */
+  private kindNames(): string[] {
+    return parseClasses(this.classesText).classes.map((c) => c.name);
+  }
+
   /** The words of the glossary, and the draft words of the work so far (still not in the knowledge base), as reading starts from them. */
   private knownWords(): KnownWord[] {
-    const kinds: NameKind[] = ["character", "family", "place", "organization", "term"];
+    const kinds = this.kindNames();
     const terms = this.knowledge.all().filter((e) => e.kind === "term");
     // A topic that refers to a person (山田 for 山田太郎) is one of that person's names, so the rules that look for who speaks or is spoken to see it.
     const nicknames = (e: KnowledgeEntry) => terms.filter((t) => t.id !== e.id && (t.attrs["refers to"] ?? []).some((r) => r === e.source)).map((t) => t.source);
@@ -610,6 +619,17 @@ export class WorkspaceService {
       const before = old?.words.find((o) => o.source === w.source)?.suggestions;
       if (before) w.suggestions = { ...(w.suggestions ?? {}), ...before };
     }
+    // What the model found reading the source stays while it is in the text, and a kind it or the user chose stays with the word.
+    for (const o of old?.words ?? []) {
+      const now = words.find((w) => w.source === o.source);
+      if (now) {
+        if (o.byModel) now.byModel = true;
+        if (o.kindFrom && now.draft) {
+          now.kind = o.kind;
+          now.kindFrom = o.kindFrom;
+        }
+      } else if (o.byModel && text.includes(o.source) && !rejected.has(o.source)) words.push(structuredClone(o));
+    }
     const carried = this.carryLines(old?.lines ?? [], text);
     const lines = labelDocument(text, words, carried.confirmed);
     this.work = {
@@ -619,6 +639,7 @@ export class WorkspaceService {
       lines: lines.map((l, i) => (l.speaker === null && carried.suggested[i] ? { ...l, suggested: carried.suggested[i]! } : l)),
       paragraphs: syncParagraphs(old?.paragraphs ?? [], text),
       error: null,
+      ...(old?.searched ? { searched: old.searched.filter((p) => text.includes(p)) } : {}),
     };
     this.knowledgeChanged();
     this.workChanged();
@@ -865,6 +886,7 @@ export class WorkspaceService {
       this.knowledgeChanged();
     } else {
       name.kind = kind as NameKind;
+      name.kindFrom = "user";
       const attrs = { ...(name.attrs ?? {}) };
       for (const k of Object.keys(attrs)) if (!target.attributes.some((a) => a.key === k)) delete attrs[k];
       name.attrs = attrs;
@@ -1073,6 +1095,67 @@ export class WorkspaceService {
         .join("");
     }
     return { text, issue };
+  }
+
+  /**
+   * Reads the source with the model for the names and terms the dictionary did not find (a name it does not know, a skill, a slang word)
+   * and for what kind each is, a passage at a time, only the paragraphs it has not read yet. A word it finds that is written in the passage
+   * joins the words of the text as a suggestion (a draft with no English name); the kind of a draft word is changed unless the user chose it.
+   * A word the user removed is not brought back.
+   */
+  async workFind(input: ModelInput): Promise<Work> {
+    const w = this.need();
+    this.workView();
+    const abort = this.beginSideRequest();
+    const kinds = this.kindNames().map((name) => ({ name, word: kindWord(name) }));
+    const classes = parseClasses(this.classesText).classes;
+    const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
+    const searched = new Set(w.searched ?? []);
+    const todo = w.paragraphs.flatMap((p, at) => (searched.has(p.text) ? [] : [{ at, text: p.text }]));
+    const passages = passagesOf(todo);
+    const findOne = async (found: { source: string; kind: string }): Promise<void> => {
+      if (rejected.has(found.source)) return;
+      const word = w.words.find((n) => n.source === found.source || n.aliases.includes(found.source));
+      if (word) {
+        // A word of the knowledge base, or one whose kind the user chose, keeps its kind.
+        if (!word.draft || word.kindFrom === "user" || word.kind === found.kind) return;
+        const wasName = (word.kind === "character" || word.kind === "family") && found.kind !== "character" && found.kind !== "family";
+        if (wasName && word.fromReading) this.dropSuggestion(word, "english");
+        word.kind = found.kind;
+        word.kindFrom = "model";
+        const keys = classes.find((c) => c.name === found.kind)?.attributes.map((a) => a.key) ?? [];
+        if (word.attrs) word.attrs = Object.fromEntries(Object.entries(word.attrs).filter(([k]) => keys.includes(k)));
+        return;
+      }
+      // No reading or English name from the dictionary: it does not know the word as a name (it reads 水瀬灯 as the common nouns 水 and 瀬),
+      // so how it would read it means nothing. The English name comes from the translation.
+      w.words.push({ source: found.source, english: "", kind: found.kind, aliases: [], reading: "", known: false, draft: true, byModel: true, kindFrom: "model", attrs: {} });
+    };
+    try {
+      w.reading = { done: 0, total: passages.length };
+      this.workChanged();
+      for (const group of passages) {
+        const passage = group.map((k) => w.paragraphs[k]!.text).join("\n");
+        const q = findQuestion(passage, kinds, input.sourceLanguage);
+        const room = Math.max(64, Math.min(input.maxOutputTokens, 512));
+        if (estimateTokens(q.system) + estimateTokens(q.user) + room + DEFAULTS.messageOverheadTokens > input.contextLimit) continue;
+        const reply = await this.askModel({ purpose: "Reading the source for names and terms", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature: 0, messages: [{ role: "system", content: q.system }, { role: "user", content: q.user }], practiceReply: () => "NONE", allowEmpty: true }, abort);
+        if (reply === null) break; // stopped: what was found so far stays
+        for (const found of foundWords(reply, passage, kinds)) await findOne(found);
+        for (const k of group) searched.add(w.paragraphs[k]!.text);
+        w.searched = [...searched];
+        w.reading = { done: w.reading.done + 1, total: passages.length };
+        this.workChanged();
+      }
+    } catch (e) {
+      w.error = e instanceof UserError ? e.message : "Reading the source failed.";
+      throw e;
+    } finally {
+      w.reading = null;
+      this.analysisAbort = null;
+      this.workChanged();
+    }
+    return this.workView();
   }
 
   /**

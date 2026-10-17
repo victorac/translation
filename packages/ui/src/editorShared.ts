@@ -50,8 +50,15 @@ export interface Underline {
   status: "fixed" | "suggested" | "ignored";
 }
 
-/** A kind of topic as part of a class name: a kind the user made up may have any letters in it. */
-export const kindClass = (kind: string): string => `cm-entry-k-${kind.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-")}`;
+/**
+ * A kind of topic as class names: its own (a kind the user made up may have any letters in it), and one of a few colours picked from its
+ * name, for a kind that has no colour of its own.
+ */
+export const kindClass = (kind: string): string => {
+  let hash = 0;
+  for (const ch of kind) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0;
+  return `cm-entry-k-${kind.toLocaleLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-")} cm-entry-h${hash % 6}`;
+};
 
 export const setUnderlines = StateEffect.define<readonly Underline[]>();
 export const underlineField = StateField.define<DecorationSet>({
