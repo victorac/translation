@@ -3,7 +3,7 @@ import { search, searchKeymap } from "@codemirror/search";
 import { EditorSelection, EditorState, StateEffect, StateField, Transaction, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, type DecorationSet } from "@codemirror/view";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, entryEvents, matchField, setCurrent, setUnderlines, showMatch, underlineField, type EntryEvents, type Match, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, matchField, selectionOf, setCurrent, setUnderlines, showMatch, underlineField, type EntryEvents, type Match, type Selection, type Underline } from "./editorShared";
 
 /** A translation is one line of the editor: a line break the model left in it shows as a space. */
 export const asLine = (translation: string): string => translation.replace(/\s*\n\s*/g, " ");
@@ -78,8 +78,8 @@ export interface TranslationEditorProps {
   underlines: readonly Underline[];
   /** The pointer on the words of the glossary. */
   entries?: EntryEvents;
-  /** What is selected (where it starts and ends), or nothing. */
-  onRange?: (range: Match | null) => void;
+  /** What is selected (where it starts and ends, and where on the screen), or nothing. */
+  onRange?: (range: Selection | null) => void;
   /** The words that stand for what is selected in the source. */
   match?: Match | null;
 }
@@ -126,6 +126,8 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
       underlineField,
       matchField,
       entryEvents(entriesRef),
+      // The button next to the selection moves with it.
+      EditorView.domEventHandlers({ scroll: (_event, v) => void handlers.current.onRange?.(selectionOf(v)) }),
       editorTheme,
       EditorView.updateListener.of((u) => {
         if (u.docChanged && u.transactions.some((t) => t.isUserEvent("input") || t.isUserEvent("delete") || t.isUserEvent("undo") || t.isUserEvent("redo") || t.isUserEvent("move"))) {
@@ -135,10 +137,7 @@ export function TranslationEditor({ lines, onEdit, onLeave, onCursor, current, r
           });
           for (const n of touched) handlers.current.onEdit(n - 1, u.state.doc.line(n).text);
         }
-        if (u.docChanged || u.selectionSet) {
-          const { from, to } = u.state.selection.main;
-          handlers.current.onRange?.(from === to ? null : { from, to });
-        }
+        if (u.docChanged || u.selectionSet) handlers.current.onRange?.(selectionOf(u.view));
         const here = u.view.hasFocus ? u.state.doc.lineAt(u.state.selection.main.head).number - 1 : null;
         if (here !== at) {
           if (at !== null) handlers.current.onLeave(at);

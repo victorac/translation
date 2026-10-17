@@ -205,6 +205,20 @@ export const matchField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/** What is selected in an editor, and where it ends on the screen (window coordinates), for a button next to it. */
+export interface Selection extends Match {
+  left: number;
+  bottom: number;
+}
+
+/** The selection of an editor as it is now, or null when nothing is selected or it is out of view. */
+export function selectionOf(view: EditorView): Selection | null {
+  const { from, to } = view.state.selection.main;
+  if (from === to) return null;
+  const at = view.coordsAtPos(to);
+  return at ? { from, to, left: at.left, bottom: at.bottom } : null;
+}
+
 /** Shows a match in an editor (or takes it away), bringing it into view without moving the selection. */
 export function showMatch(view: EditorView | null, match: Match | null): void {
   if (!view) return;

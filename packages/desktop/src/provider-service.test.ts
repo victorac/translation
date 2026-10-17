@@ -902,7 +902,7 @@ describe("translating a document", () => {
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     const texts = { source: "「ノア、お前は今日でクビだ」", translation: "\u201cNoah, you're fired as of today.\u201d" };
     expect(await service.workMatch({ ...model, ...texts, side: "source", selected: "クビだ", at: 10 })).toEqual({ start: 7, end: 19 });
-    expect(bodies(lm)[0]!.messages[1]!.content).toContain("「クビだ」");
+    expect(bodies(lm)[0]!.messages[1]!.content).toContain("「ノア、お前は今日で⟦クビだ⟧」");
     reply = "クビ";
     expect(await service.workMatch({ ...model, ...texts, side: "translation", selected: "fired", at: 14 })).toEqual({ start: 10, end: 12 });
     // Nothing the other text has: asked twice more, a little less strictly each time, and then nothing.
@@ -915,7 +915,7 @@ describe("translating a document", () => {
     const lm2 = await fakeLmStudio({ answer: () => (++asked === 1 ? "you're fired" : "クビ") });
     provider.save({ baseUrl: lm2.baseUrl, allowRemote: false });
     expect(await service.workMatch({ ...model, ...texts, side: "translation", selected: "fired", at: 14 })).toEqual({ start: 10, end: 12 });
-    expect(bodies(lm2)[1]!.messages.map((m) => m.content).slice(-2)).toEqual(["you're fired", "That is not in the JAPANESE text. Reply with the part of the JAPANESE text only, copied exactly from it."]);
+    expect(bodies(lm2)[1]!.messages.map((m) => m.content).slice(-2)).toEqual(["you're fired", "That PART is not in the JAPANESE text. Reply again in the two lines, with the PART copied exactly from the JAPANESE text."]);
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
     // Nothing to match against: the model is not asked.
     expect(await service.workMatch({ ...model, source: texts.source, translation: "", side: "source", selected: "クビだ", at: 10 })).toBeNull();

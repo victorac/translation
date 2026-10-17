@@ -1112,14 +1112,16 @@ export class WorkspaceService {
   async workMatch(input: ModelInput & { side: MatchSide; selected: string; at: number; source: string; translation: string }): Promise<Span | null> {
     const selected = input.selected.trim();
     if (selected === "" || input.source.trim() === "" || input.translation.trim() === "") return null;
-    const q = matchQuestion({ side: input.side, selected, source: input.source, translation: input.translation, from: input.sourceLanguage, to: input.targetLanguage });
+    // Where the selection stands, without the spaces selected around it.
+    const at = input.at + (input.selected.length - input.selected.trimStart().length);
+    const q = matchQuestion({ side: input.side, selected, at, source: input.source, translation: input.translation, from: input.sourceLanguage, to: input.targetLanguage });
     const other = input.side === "source" ? input.translation : input.source;
-    // Room for the words copied: about as many as were selected, and a few more.
-    const room = Math.min(256, 32 + 2 * estimateTokens(selected) + Math.ceil(estimateTokens(other) / 2));
+    // Room for the two lines of the reply: the meaning, and the part copied (about as long as the selection, and a little more).
+    const room = Math.min(320, 64 + 3 * estimateTokens(selected) + Math.ceil(estimateTokens(other) / 2));
     if (estimateTokens(q.system) + estimateTokens(q.user) + room + DEFAULTS.messageOverheadTokens > input.contextLimit) throw new UserError("too_long", "The paragraph is too long for the model's context.");
     const abort = this.beginSideRequest();
     const mine = input.side === "source" ? input.source : input.translation;
-    const near = mine.length === 0 ? 0 : input.at / mine.length;
+    const near = mine.length === 0 ? 0 : at / mine.length;
     const ask = (messages: { role: "system" | "user" | "assistant"; content: string }[], temperature: number) =>
       this.askModel({ purpose: "Matching a selection to the other text", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature, messages, practiceReply: () => "NONE", allowEmpty: true }, abort);
     const language = (input.side === "source" ? input.targetLanguage : input.sourceLanguage).toUpperCase();
@@ -1135,7 +1137,7 @@ export class WorkspaceService {
         if (span) return span;
         // A small model may give back what it was shown, from the selection's own text: told so, it is asked once more.
         if (matchedSpan(reply, mine) === null) continue;
-        const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `That is not in the ${language} text. Reply with the part of the ${language} text only, copied exactly from it.` }], temperature);
+        const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `That PART is not in the ${language} text. Reply again in the two lines, with the PART copied exactly from the ${language} text.` }], temperature);
         if (again === null) return null;
         const corrected = fits(matchedSpan(again, other, near));
         if (corrected) return corrected;

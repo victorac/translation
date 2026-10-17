@@ -4,7 +4,7 @@ import { EditorState, StateEffect, StateField, type Extension, type Text } from 
 import { Decoration, EditorView, WidgetType, keymap, lineNumbers, placeholder as placeholderExt, type DecorationSet } from "@codemirror/view";
 import { normalizeSource } from "@ltw/domain/pure";
 import { useEffect, useRef } from "react";
-import { currentField, editorTheme, entryEvents, matchField, setCurrent, setSpeech, setUnderlines, showMatch, speakerEvents, speechField, underlineField, type EntryEvents, type Match, type Place, type Speech, type Underline } from "./editorShared";
+import { currentField, editorTheme, entryEvents, matchField, selectionOf, setCurrent, setSpeech, setUnderlines, showMatch, speakerEvents, speechField, underlineField, type EntryEvents, type Match, type Place, type Selection, type Speech, type Underline } from "./editorShared";
 
 /** Places in the text to point out (where a word or a line stands), the current one drawn stronger. */
 export interface Hit {
@@ -109,8 +109,8 @@ export interface SourceEditorProps {
   onLine?: (line: number, place: Place) => void;
   /** The pointer on the words of the glossary. */
   entries?: EntryEvents;
-  /** What is selected (where it starts and ends), or nothing. */
-  onRange?: (range: Match | null) => void;
+  /** What is selected (where it starts and ends, and where on the screen), or nothing. */
+  onRange?: (range: Selection | null) => void;
   /** The words that stand for what is selected in the translation. */
   match?: Match | null;
 }
@@ -174,7 +174,11 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
       speakerEvents(onLineRef),
       editorTheme,
       EditorView.domEventHandlers({
-        scroll: () => void onSelectRef.current?.(null),
+        scroll: (_event, v) => {
+          onSelectRef.current?.(null);
+          // The button next to the selection moves with it.
+          onRangeRef.current?.(selectionOf(v));
+        },
         mousedown: (event) => {
           const note = (event.target as HTMLElement).closest<HTMLElement>(".cm-note");
           if (!note || !onNoteRef.current) return false;
@@ -191,7 +195,7 @@ export function SourceEditor({ value, onChange, placeholder, hits, current, onCu
           const text = from === to || to - from > LONGEST_WORD ? "" : u.state.sliceDoc(from, to);
           const at = text.trim() === "" || text.includes("\n") ? null : u.view.coordsAtPos(to);
           onSelectRef.current?.(at ? { text: text.trim(), left: at.left, bottom: at.bottom } : null);
-          onRangeRef.current?.(from === to ? null : { from, to });
+          onRangeRef.current?.(selectionOf(u.view));
         }
         // Where the user put the cursor (not where typing moved it).
         if (!u.docChanged && u.selectionSet && u.transactions.some((t) => t.isUserEvent("select"))) onCursorRef.current?.(u.state.selection.main.head);

@@ -25,14 +25,18 @@ export function Floating({ place, pinned, onClose, onEnter, onLeave, label, chil
     const top = below + height > window.innerHeight - 8 && place.top - height - 6 > 8 ? place.top - height - 6 : Math.max(8, Math.min(below, window.innerHeight - height - 8));
     setStyle({ left, top });
   }, [place.left, place.top, place.bottom, children]);
+  // Listened to for as long as the card is pinned, whatever is drawn meanwhile: a press in an editor draws the page again before it
+  // reaches the document, and listening again each time would miss it.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!pinned) return;
     const onDown = (e: MouseEvent) => {
       const target = e.target as Element;
       if (box.current?.contains(target) || inPopup(target)) return;
-      onClose();
+      close.current();
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && close.current();
     // Listened to from the next moment on: the press that opened the card may still be on its way up to the page, and is not a click elsewhere.
     const start = setTimeout(() => document.addEventListener("mousedown", onDown));
     document.addEventListener("keydown", onKey);
@@ -41,7 +45,7 @@ export function Floating({ place, pinned, onClose, onEnter, onLeave, label, chil
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pinned, onClose]);
+  }, [pinned]);
   return (
     <div ref={box} className={pinned ? "card card-pinned" : "card"} style={style} role={pinned ? "dialog" : "tooltip"} aria-label={label} onPointerEnter={onEnter} onPointerLeave={onLeave}>
       {children}
