@@ -214,12 +214,12 @@ export function KnowledgeDrawer({
 
   return (
     <div className="drawer-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="drawer" role="dialog" aria-label="Knowledge base" ref={panel} tabIndex={-1} style={{ width: Math.min(width, widest()) }}>
+      <aside className="drawer" role="dialog" aria-label="Glossary" ref={panel} tabIndex={-1} style={{ width: Math.min(width, widest()) }}>
         <div
           className="drawer-resize"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize the knowledge base"
+          aria-label="Resize the glossary"
           aria-valuenow={width}
           tabIndex={0}
           onPointerDown={(e) => {
@@ -241,17 +241,17 @@ export function KnowledgeDrawer({
         <Flex align="center" justify="between" gap="3" px="4" py="3" className="drawer-head">
           <Flex align="baseline" gap="2">
             <Heading as="h2" size="4">
-              Knowledge base
+              Glossary
             </Heading>
             <Text size="1" color="gray">
-              {counts.terms} {counts.terms === 1 ? "topic" : "topics"}
+              {counts.terms} {counts.terms === 1 ? "entry" : "entries"}
               {counts.suggested > 0 && ` · ${counts.suggested} to check`}
             </Text>
           </Flex>
           {inText && (
-            <SegmentedControl.Root size="1" value={showing} onValueChange={(v) => setView(v as "text" | "all")} aria-label="What the knowledge base shows">
+            <SegmentedControl.Root size="1" value={showing} onValueChange={(v) => setView(v as "text" | "all")} aria-label="What the glossary shows">
               <SegmentedControl.Item value="text">This text · {inText.count}</SegmentedControl.Item>
-              <SegmentedControl.Item value="all">All topics · {counts.terms}</SegmentedControl.Item>
+              <SegmentedControl.Item value="all">All entries · {counts.terms}</SegmentedControl.Item>
             </SegmentedControl.Root>
           )}
           <Flex align="center" gap="2">
@@ -273,7 +273,7 @@ export function KnowledgeDrawer({
             >
               Kinds of topic
             </Button>
-            <IconButton variant="ghost" color="gray" size="2" onClick={onClose} aria-label="Close the knowledge base">
+            <IconButton variant="ghost" color="gray" size="2" onClick={onClose} aria-label="Close the glossary">
               <Cross2Icon />
             </IconButton>
           </Flex>

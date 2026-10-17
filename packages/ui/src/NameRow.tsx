@@ -271,7 +271,7 @@ export function WordMenu({ name, actions }: { name: Word; actions: WordActions }
         </DropdownMenu.Item>
         <DropdownMenu.Item onSelect={actions.onLookup}>Look up the dictionary spelling</DropdownMenu.Item>
         <DropdownMenu.Item onSelect={() => actions.onUse(!used)}>{used ? "Ignore in this text" : "Use in this text"}</DropdownMenu.Item>
-        {!name.draft && <DropdownMenu.Item onSelect={actions.onOpen}>Open in the knowledge base</DropdownMenu.Item>}
+        {!name.draft && <DropdownMenu.Item onSelect={actions.onOpen}>Open in the glossary</DropdownMenu.Item>}
         <DropdownMenu.Separator />
         <DropdownMenu.Item color="red" onSelect={actions.onRemove}>
           Remove from the glossary

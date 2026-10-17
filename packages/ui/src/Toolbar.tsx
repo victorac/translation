@@ -109,8 +109,8 @@ export function Toolbar({
 
         <Flex align="center" gap="4" minWidth="0">
           {activity && <Working what={activity.what} stop={activity.stop} />}
-          <Button variant={knowledge.open ? "solid" : "soft"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the knowledge base">
-            Knowledge base
+          <Button variant={knowledge.open ? "solid" : "soft"} color="gray" aria-pressed={knowledge.open} onClick={knowledge.onToggle} title="Show or hide the glossary: the names and terms of this text, and every entry of the project">
+            Glossary
             {knowledge.count > 0 && <Badge variant="soft">{knowledge.count}</Badge>}
             {knowledge.suggested > 0 && (
               <Badge color="amber" variant="soft">

@@ -658,9 +658,6 @@ export function Workspace({
           <Button size="2" variant="ghost" color="gray" onClick={() => void find()} disabled={working !== null || !model || unread === 0} title={unread === 0 ? "Every paragraph has been read for names and terms. A changed or new paragraph is read again by itself." : `Ask the model for the names and terms of the ${unread} paragraphs not read yet, and what kind each is`}>
             {working === "find" ? "Reading…" : "Find names"}
           </Button>
-          <Button size="2" variant="soft" color="gray" onClick={() => onKb({ open: true, request: null })} disabled={!work} title="The names and terms of this text, in the knowledge base">
-            Glossary · {words.filter((n) => n.use !== false).length}
-          </Button>
           <Button size="2" variant="ghost" color="gray" onClick={() => void suggest()} disabled={working !== null || !model || done === 0} title="Ask the model to read the translation again for suggestions: English names, genders and who says each line">
             Suggest from the translation
           </Button>

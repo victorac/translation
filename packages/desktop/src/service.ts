@@ -32,6 +32,7 @@ import {
   foundWords,
   matchQuestion,
   matchedSpan,
+  tooMuch,
   type MatchSide,
   type Span,
   kindWord,
@@ -121,17 +122,19 @@ interface Doc {
 
 const newDoc = (title: string): Doc => ({ id: newId(), title, createdAt: new Date().toISOString(), draft: "" });
 
+/** A paragraph written again by the model: no longer the user's text, and its note stays. */
+function rewritten(p: WorkParagraph, translation: string, issue?: string | null): WorkParagraph {
+  return { text: p.text, translation, ...(issue !== undefined ? { issue } : {}), ...(p.note ? { note: p.note } : {}) };
+}
+
+/** How freely the model is asked to match a selection: exactly first, then a little less strictly when it found nothing. */
+const MATCH_TEMPERATURES = [0, 0.4, 0.8];
 
 /**
  * The background side of the app for one open project: its documents, the knowledge base, the settings, and for each document the
  * blocks of its text with what was read from each and the translation of each paragraph. Every window action ends up in one of
  * these methods.
  */
-/** A paragraph written again by the model: no longer the user's text, and its note stays. */
-function rewritten(p: WorkParagraph, translation: string, issue?: string | null): WorkParagraph {
-  return { text: p.text, translation, ...(issue !== undefined ? { issue } : {}), ...(p.note ? { note: p.note } : {}) };
-}
-
 export class WorkspaceService {
   private docs: Doc[] = [newDoc("Document 1")];
   private activeDocId = this.docs[0]!.id;
@@ -1117,18 +1120,27 @@ export class WorkspaceService {
     const abort = this.beginSideRequest();
     const mine = input.side === "source" ? input.source : input.translation;
     const near = mine.length === 0 ? 0 : input.at / mine.length;
-    const ask = (messages: { role: "system" | "user" | "assistant"; content: string }[]) =>
-      this.askModel({ purpose: "Matching a selection to the other text", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature: 0, messages, practiceReply: () => "NONE", allowEmpty: true }, abort);
+    const ask = (messages: { role: "system" | "user" | "assistant"; content: string }[], temperature: number) =>
+      this.askModel({ purpose: "Matching a selection to the other text", backend: input.backend, modelId: input.modelId, maxOutputTokens: room, temperature, messages, practiceReply: () => "NONE", allowEmpty: true }, abort);
+    const language = (input.side === "source" ? input.targetLanguage : input.sourceLanguage).toUpperCase();
+    const first: { role: "system" | "user" | "assistant"; content: string }[] = [{ role: "system", content: q.system }, { role: "user", content: q.user }];
+    // A match of nearly the whole paragraph for a few words is no match.
+    const fits = (span: Span | null): Span | null => (span && !tooMuch(span, other.length, selected.length, mine.length) ? span : null);
     try {
-      const first: { role: "system" | "user" | "assistant"; content: string }[] = [{ role: "system", content: q.system }, { role: "user", content: q.user }];
-      const reply = await ask(first);
-      if (reply === null) return null;
-      const span = matchedSpan(reply, other, near);
-      // A small model may give back words of the text the selection is in: told so, it is asked once more.
-      if (span || matchedSpan(reply, mine) === null) return span;
-      const language = (input.side === "source" ? input.targetLanguage : input.sourceLanguage).toUpperCase();
-      const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `Those words are not in the ${language} text. Reply with the ${language} words only, copied from the ${language} text.` }]);
-      return again === null ? null : matchedSpan(again, other, near);
+      // A model that finds nothing (or something the other text does not have) is asked again a little less strictly, a few times.
+      for (const temperature of MATCH_TEMPERATURES) {
+        const reply = await ask(first, temperature);
+        if (reply === null) return null; // stopped
+        const span = fits(matchedSpan(reply, other, near));
+        if (span) return span;
+        // A small model may give back what it was shown, from the selection's own text: told so, it is asked once more.
+        if (matchedSpan(reply, mine) === null) continue;
+        const again = await ask([...first, { role: "assistant", content: reply.trim() }, { role: "user", content: `That is not in the ${language} text. Reply with the part of the ${language} text only, copied exactly from it.` }], temperature);
+        if (again === null) return null;
+        const corrected = fits(matchedSpan(again, other, near));
+        if (corrected) return corrected;
+      }
+      return null;
     } finally {
       this.analysisAbort = null;
     }
