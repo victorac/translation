@@ -9,6 +9,7 @@ import {
   addressedIn,
   findQuotes,
   speakerByForm,
+  someoneUnnamed,
   takeTurns,
   mergeCandidates,
   patternCandidates,
@@ -119,6 +120,26 @@ describe("speakers of quotations", () => {
   });
 
   });
+
+describe("someone written by what they are", () => {
+  const people = [{ id: "ノア", label: "Noah", names: ["ノア"] }, { id: "久我蓮", label: "Ren", names: ["久我蓮", "蓮"] }];
+  const unnamed = (p: string) => someoneUnnamed(p, findQuotes(p), people);
+
+  it("is seen in the narration, not in what is said", () => {
+    expect(unnamed("受付の女性は眉を上げた。\n「どうぞ」")).toBe(true);
+    expect(unnamed("「いらっしゃい」と奥から声がした。")).toBe(true);
+    expect(unnamed("男が近づいてきた。\n「おい」")).toBe(true);
+    expect(unnamed("「受付の女性に聞いて」とノアは言った。")).toBe(false);
+  });
+
+  it("is not a role that names someone, a pronoun, or the name of a place", () => {
+    expect(unnamed("店主の久我蓮は、本の山の向こうに座っていた。\n「いらっしゃい」")).toBe(false);
+    expect(unnamed("彼女は笑った。\n「そう」")).toBe(false);
+    expect(unnamed("ノアは冒険者ギルドの扉をくぐった。\n「おはよう」")).toBe(false);
+    expect(unnamed("周りの兵士たちが振り向いた。\n「おはよう」")).toBe(false);
+    expect(unnamed("ノアと蓮は話した。\n「本当？」\n「ああ」")).toBe(false);
+  });
+});
 
 describe("taking turns", () => {
   const hanako = { id: "k", label: "Hanako", names: ["花子"] };

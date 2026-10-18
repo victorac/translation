@@ -11,6 +11,7 @@ import {
   nameFromReadings,
   romanize,
   speakerByForm,
+  someoneUnnamed,
   takeTurns,
   type Speaker,
 } from "./steps.js";
@@ -224,6 +225,9 @@ export function labelLines(passage: string, words: readonly Word[], carry: Carry
   if (speakers.length < 2 && !turn) return unlabeled.map((l, i) => ({ ...l, speaker: preset[i] ?? null }));
   // What the user already set stays, and the rules work from it.
   let who: (string | null)[] = quotes.map((q, i) => preset[i] ?? speakerByForm(passage, q, speakers, quotes));
+  // The rules below take the people named to be the only ones talking. When the narration writes someone else by what they are (the
+  // woman at the counter), a line may be theirs: only what the narration says beside a line is used, and the others stay unknown.
+  if (someoneUnnamed(passage, quotes, speakers)) return quotes.map((q, i) => ({ text: q.text, speaker: who[i] ?? null, start: q.start }));
   // A line that names one of two people as spoken to is said by the other.
   quotes.forEach((q, i) => {
     if (who[i] !== null || speakers.length !== 2) return;

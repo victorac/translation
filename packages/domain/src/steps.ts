@@ -224,6 +224,35 @@ export function speakerByForm(passage: string, quote: Quote, speakers: readonly 
   return null;
 }
 
+/** People the narration may write by what they are rather than by name. */
+// Not 冒険者 or 誰か: in a story of adventurers they are the crowd around, or someone long ago, far more often than one who speaks.
+const ROLES = ["女性", "男性", "受付", "店主", "店員", "主人", "女将", "老人", "老婆", "少女", "少年", "青年", "子供", "子ども", "男の子", "女の子", "兵士", "衛兵", "門番", "騎士", "商人", "客", "神官", "司祭"];
+
+/**
+ * Whether the narration of a passage (what is outside its lines of speech) writes someone by what they are, not by a name of `speakers`:
+ * the woman at the counter (受付の女性), a voice from the back (奥から声がした), a man (男が). Then the people named are not the only ones
+ * who may be talking. A role followed by a name (店主の久我蓮, the shopkeeper Kuga Ren) is that person, and does not count; nor does a
+ * crowd (兵士たち), which does not speak as one.
+ */
+export function someoneUnnamed(passage: string, quotes: readonly Quote[], speakers: readonly Speaker[]): boolean {
+  let narration = passage;
+  for (const q of quotes) narration = narration.slice(0, q.start) + " ".repeat(q.end - q.start) + narration.slice(q.end);
+  const names = speakers.flatMap((s) => s.names).filter((n) => n !== "");
+  const named = (at: number): boolean => names.some((n) => narration.startsWith(`の${n}`, at) || narration.startsWith(n, at));
+  for (const role of ROLES) {
+    for (let i = narration.indexOf(role); i >= 0; i = narration.indexOf(role, i + 1)) {
+      // A crowd, part of a name, or the role of someone named.
+      if (/^(?:たち|達|ら)/.test(narration.slice(i + role.length))) continue;
+      if (names.some((n) => n.includes(role) && narration.slice(Math.max(0, i - n.length), i + n.length).includes(n))) continue;
+      if (named(i + role.length)) continue;
+      return true;
+    }
+  }
+  // A man or a woman, written on their own (not 彼女, 男性, 女の子), and a voice heard with no one named.
+  if (/(?<![\p{Script=Han}彼])[男女](?![\p{Script=Han}の])/u.test(narration)) return true;
+  return /声(?:が|だけが)(?:した|聞こえ|響)/.test(narration);
+}
+
 /**
  * With two people talking, lines that each stand on a line of their own are said by the two in turn. From the lines whose speaker
  * is known, the neighbours that are not known are filled in, unless the person it would give is the one named as spoken to in that line.

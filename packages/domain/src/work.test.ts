@@ -87,6 +87,13 @@ describe("who says each line", () => {
     expect(lines.map((l) => l.text)).toEqual(["「遅いですよ」", "「ごめん」", "「いいえ」"]);
   });
 
+  it("does not give the lines of someone unnamed to the two people named", () => {
+    const two: Word[] = [word("ノア", "Noah"), word("白石凛", "Rin", { aliases: ["凛"] })];
+    // The woman at the counter talks with Noah, and Rin comes in later: taking turns would give her lines to Rin.
+    const text = "受付の女性は眉を上げた。\n\n「付与魔術師の方ですか？」\n\n「ああ」とノアは言った。\n\n「でしたら、いいお話があります」\n\n凛が顔を上げた。";
+    expect(labelDocument(text, two).map((l) => l.suggested)).toEqual([null, "ノア", null]);
+  });
+
   it("leaves the lines unlabeled when fewer than two people are known", () => {
     expect(labelDocument("「やあ」\n「うん」", []).map((l) => l.suggested)).toEqual([null, null]);
   });

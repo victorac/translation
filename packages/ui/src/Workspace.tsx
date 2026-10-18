@@ -303,11 +303,10 @@ export function Workspace({
   const done = paragraphs.filter((p) => p.translation.trim() !== "").length;
 
   // ---- reading the source with the model, for the names and terms the dictionary missed ----
+  // Only when asked for (Find names): done on its own at every change, a small model added words that were not names and gave them the
+  // wrong kind, more often than it found a name the dictionary missed.
   const unread = paragraphs.filter((p) => !(work?.searched ?? []).includes(p.text)).length;
-  /** The text the last reading on its own failed for: it is not tried again by itself until the text changes. */
-  const findFailed = useRef<string | null>(null);
-  const [findRetry, setFindRetry] = useState(0);
-  const find = async (auto = false) => {
+  const find = async () => {
     if (!work || !model) return;
     setWorking("find");
     const what = "Reading the source for names and terms";
@@ -323,24 +322,12 @@ export function Workspace({
     clearInterval(poll);
     if (r.ok) setWork(r.value);
     else {
-      // The model was busy with something else (a match, say): tried again a moment later, not counted as a failure.
-      if (auto && r.error.code === "busy") setTimeout(() => setFindRetry((n) => n + 1), 3000);
-      // Done on its own, a failure (no model server running, say) is only logged; asked for, it is shown.
-      else if (auto) {
-        findFailed.current = work.source;
-        log("warning", `Could not read the source for names and terms: ${r.error.message}`);
-      } else setError(r.error.message);
+      setError(r.error.message);
       void api.invoke("work.get").then((g) => g.ok && g.value && setWork(g.value));
     }
     setActivity(null);
     setWorking(null);
   };
-  // A moment after the text settles, the paragraphs not read yet are read, unless the model is busy.
-  useEffect(() => {
-    if (!work || !model || working !== null || unread === 0 || findFailed.current === work.source) return;
-    const timer = setTimeout(() => void find(true), 1500);
-    return () => clearTimeout(timer);
-  }, [work?.source, unread, model?.name, working, findRetry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Translates every paragraph, one after the other, writing again the ones that already have a translation. A single paragraph is written again with its own button. */
   const translate = async () => {
@@ -796,7 +783,7 @@ export function Workspace({
           <Button size="2" onClick={() => void translate()} disabled={working !== null || !model || paragraphs.length === 0}>
             {working === "translate" ? "Translating…" : "Translate"}
           </Button>
-          <Button size="2" variant="ghost" color="gray" onClick={() => void find()} disabled={working !== null || !model || unread === 0} title={unread === 0 ? "Every paragraph has been read for names and terms. A changed or new paragraph is read again by itself." : `Ask the model for the names and terms of the ${unread} paragraphs not read yet, and what kind each is`}>
+          <Button size="2" variant="ghost" color="gray" onClick={() => void find()} disabled={working !== null || !model || unread === 0} title={unread === 0 ? "Every paragraph has been read for names and terms. A changed or new paragraph can be read with this button." : `Ask the model for the names and terms of the ${unread} paragraphs not read yet, and what kind each is. What it finds are suggestions: check them.`}>
             {working === "find" ? "Reading…" : "Find names"}
           </Button>
         </Flex>
