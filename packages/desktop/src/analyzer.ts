@@ -10,11 +10,13 @@ import {
 import {
   mergeCandidates,
   nameRuns,
+  ordinaryWords,
   parseNameTable,
-  patternCandidates,
+  patternSources,
   pickReading,
   properNounRuns,
   splitName,
+  type NameKind,
   type NameTable,
   type WordToken,
 } from "@ltw/domain";
@@ -72,14 +74,40 @@ function loadNames(): Promise<NameTable | null> {
 
 /**
  * Candidate names in a passage, found without a model: proper nouns the analyzer knows, names that give themselves away, and a surname
- * followed by a given name of the names table that the analyzer cut into common words (水瀬灯).
+ * followed by a given name of the names table that the analyzer cut into common words (水瀬灯). A word before an honorific, or a
+ * katakana word that comes back, is left out when it is only everyday words to the analyzer (付与魔術師さん, the enchanter; テーブル),
+ * unless the names table has it as a name.
  */
 export async function findCandidateNames(text: string): Promise<string[]> {
+  return (await findNames(text)).candidates;
+}
+
+/**
+ * The candidate names of a passage (see {@link findCandidateNames}), and the kind of those whose kind is known: a person, a place or an
+ * organization by the general dictionary's tag on every word of it, or a person of the names table.
+ */
+export async function findNames(text: string): Promise<{ candidates: string[]; kinds: Record<string, NameKind> }> {
   const [tokenizer, names] = await Promise.all([load(), loadNames()]);
   const tokens = tokenizer ? (tokenizer.tokenize(text) as WordToken[]) : [];
   const analyzed = properNounRuns(tokens);
   const people = names ? nameRuns(tokens, names).map((n) => n.name) : [];
-  return mergeCandidates(text, analyzed, people, patternCandidates(text));
+  const found = patternSources(text);
+  const named = (word: string): boolean => !tokenizer || !ordinaryWords(tokenizer.tokenize(word) as WordToken[]) || (names !== null && splitName(word, names) !== null);
+  const candidates = mergeCandidates(text, analyzed, people, found.addressed.filter(named), found.ending, found.dotted, found.quoted, found.repeated.filter(named));
+  const TAGS: Record<string, NameKind> = { 人名: "character", 地域: "place", 組織: "organization" };
+  const kinds: Record<string, NameKind> = {};
+  for (const word of candidates) {
+    if (people.includes(word)) {
+      kinds[word] = "character";
+      continue;
+    }
+    // Every word of it tagged alike (ノア a person; 久我 and 蓮 a person; バルト a place).
+    const t = tokenizer ? (tokenizer.tokenize(word) as WordToken[]) : [];
+    const tags = new Set(t.map((x) => (x.details[1] === "固有名詞" ? (x.details[2] ?? "") : "")));
+    const tag = tags.size === 1 ? TAGS[[...tags][0]!] : undefined;
+    if (tag) kinds[word] = tag;
+  }
+  return { candidates, kinds };
 }
 
 /**

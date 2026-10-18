@@ -205,6 +205,18 @@ export interface ReadInput {
   candidates: readonly string[];
   readings: Readonly<Record<string, readonly string[]>>;
   glossary: readonly KnownWord[];
+  /** What kind some candidates are known to be: by the general dictionary's tag, the names table, or how the text uses them. */
+  kinds?: Readonly<Record<string, NameKind>>;
+}
+
+/**
+ * Whether the text uses a word as a person: someone calls to them at the start of a line (「セラ、黙ってろ」), they are named just after a
+ * line as the one who says it (「…」とセラは言った), they shout, say, answer or ask (バルトが叫んだ), or they are written with an honorific
+ * (セラさん). This wins over the general dictionary's tag: バルト is a place to it (the Baltic), a man in the story.
+ */
+export function usedAsPerson(text: string, word: string): boolean {
+  const w = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`「${w}[、！!？?]|」と${w}(?:は|が|も)|${w}(?:は|が|も)(?:叫|言っ|言う|答え|尋ね|呟|囁|頷|笑っ)|${w}(?:さん|くん|ちゃん|様|さま|殿)`).test(text);
 }
 
 /** The conversation going on at the end of the part before: its last line was said by `before`, and `other` is the one they were talking with. */
@@ -308,7 +320,7 @@ export function readWords(input: ReadInput): Word[] {
   for (const c of rest) {
     if (taken(c)) continue;
     if (names.some((n) => n.source.length > c.length && n.source.includes(c) && passage.split(n.source).join("").indexOf(c) < 0)) continue;
-    const kind = guessKindIn(passage, c);
+    const kind = usedAsPerson(passage, c) ? "character" : (input.kinds?.[c] ?? guessKindIn(passage, c));
     const reading = input.readings[c];
     // What the dictionary reads it as is a suggestion, not the name.
     const guess = englishFor(kind, reading, c);

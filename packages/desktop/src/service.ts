@@ -82,7 +82,7 @@ import {
 /** How many of the requests sent to the model are kept for the prompt log. */
 const KEPT_PROMPTS = 50;
 import {
-  findCandidateNames,
+  findNames,
   readNames,
 } from "./analyzer.js";
 import {
@@ -609,12 +609,13 @@ export class WorkspaceService {
     const glossary = this.knownWords();
     // A word the user deleted from the glossary is not offered again.
     const rejected = new Set(this.knowledge.rejected().flatMap((e) => [e.source, ...e.aliases]));
-    const candidates = (await findCandidateNames(text)).filter((c) => !rejected.has(c));
+    const found = await findNames(text);
+    const candidates = found.candidates.filter((c) => !rejected.has(c));
     const readings = await readNames([...new Set([...candidates, ...glossary.map((g) => g.source)])]);
     this.useDocument(input.documentId);
     if (token !== this.readings) return this.work ? this.workView() : null; // the text changed again while it was being read
     const old = this.work;
-    const words = readWords({ text, candidates, readings, glossary });
+    const words = readWords({ text, candidates, readings, glossary, kinds: found.kinds });
     for (const w of words) if (old?.words.find((o) => o.source === w.source)?.use === false) w.use = false;
     // Given names found alone became aliases of a known person: keep that in the glossary too.
     for (const n of words.filter((x) => x.known && x.aliases.length > 0)) {

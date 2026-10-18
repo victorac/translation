@@ -13,6 +13,7 @@ import {
   notesFor,
   occurrencesOf,
   readWords,
+  usedAsPerson,
   readingLetters,
   suggestionsFor,
   syncParagraphs,
@@ -283,5 +284,19 @@ describe("suggested names", () => {
       word("ジェーン・ドウ", "", { suggestions: { english: ["Jane Doe"] }, fromReading: true, written: true }),
     ];
     expect(suggestionsFor(words, "山田太郎とジョン・スミスとジェーン・ドウ。").map((s) => s.source)).toEqual(["山田太郎", "ジェーン・ドウ"]);
+  });
+});
+
+describe("a word the text uses as a person", () => {
+  it("is called to, named after a line, says something, or has an honorific", () => {
+    expect(usedAsPerson("「セラ、黙ってろ」", "セラ")).toBe(true);
+    expect(usedAsPerson("「待って」とガルドは言った。", "ガルド")).toBe(true);
+    expect(usedAsPerson("盾役のバルトが叫んだ。", "バルト")).toBe(true);
+    expect(usedAsPerson("蓮さん、本が届いた。", "蓮")).toBe(true);
+  });
+
+  it("is not a word only named in passing", () => {
+    expect(usedAsPerson("バルトの海を見た。", "バルト")).toBe(false);
+    expect(usedAsPerson("ギルドに入った。", "ギルド")).toBe(false);
   });
 });

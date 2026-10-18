@@ -93,22 +93,41 @@ export function properNounRuns(tokens: readonly WordToken[]): string[] {
   return runs;
 }
 
+/**
+ * Names that the way they are written gives away, by how: before an honorific (`addressed`), ending like a family, school or place
+ * (`ending`), a foreign name with a middle dot (`dotted`), set in 『…』 (`quoted`), or a katakana word that comes back (`repeated`). The
+ * first and the last also catch everyday words (付与魔術師さん, the enchanter; テーブル, a table): see {@link ordinaryWords}.
+ */
+export function patternSources(text: string): { addressed: string[]; ending: string[]; dotted: string[]; quoted: string[]; repeated: string[] } {
+  const honorific = new RegExp(`([${KANJI_KATAKANA}]{1,8})(?:${HONORIFICS.join("|")})`, "g");
+  const addressed = [...text.matchAll(honorific)].map((m) => m[1]!);
+  const kinds = new RegExp(`[${KANJI_KATAKANA}]{1,8}(?:学園|学院|高校|学校|大学|家|一族|組|会社|商会|団|城|村|町|王国|帝国|島)`, "g");
+  const ending = [...text.matchAll(kinds)].map((m) => m[0]);
+  // A name from another language written in katakana, its parts set apart by a middle dot (ジョン・スミス).
+  const dotted = [...text.matchAll(/[\u30A1-\u30FA\u30FC]{2,}(?:・[\u30A1-\u30FA\u30FC]{2,})+/g)].map((m) => m[0]);
+  // What is set in 『…』 inside a sentence is a name or a term of the story: it is named or called so. A 『…』 that is a line of its own is speech.
+  const quoted = [...text.matchAll(/『([^』\n]{2,12})』/g)].filter((m) => !isLineOfSpeech(text, m.index!, m[0].length)).map((m) => m[1]!);
+  // A katakana word that comes back is a term of the story. Of two letters too (セラ): the everyday ones (ドア) are left out where the
+  // general dictionary is at hand.
+  const counts = new Map<string, number>();
+  for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{2,}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+  const repeated = [...counts].filter(([, n]) => n >= 2).map(([word]) => word);
+  return { addressed, ending, dotted, quoted, repeated };
+}
+
 /** Names that the way they are written gives away: before an honorific, or ending like a family, school or place. */
 export function patternCandidates(text: string): string[] {
-  const out: string[] = [];
-  const honorific = new RegExp(`([${KANJI_KATAKANA}]{1,8})(?:${HONORIFICS.join("|")})`, "g");
-  for (const m of text.matchAll(honorific)) out.push(m[1]!);
-  const kinds = new RegExp(`[${KANJI_KATAKANA}]{1,8}(?:学園|学院|高校|学校|大学|家|一族|組|会社|商会|団|城|村|町|王国|帝国|島)`, "g");
-  for (const m of text.matchAll(kinds)) out.push(m[0]);
-  // A name from another language written in katakana, its parts set apart by a middle dot (ジョン・スミス).
-  for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{2,}(?:・[\u30A1-\u30FA\u30FC]{2,})+/g)) out.push(m[0]);
-  // What is set in 『…』 inside a sentence is a name or a term of the story: it is named or called so. A 『…』 that is a line of its own is speech.
-  for (const m of text.matchAll(/『([^』\n]{2,12})』/g)) if (!isLineOfSpeech(text, m.index!, m[0].length)) out.push(m[1]!);
-  // A katakana word that comes back is a term of the story.
-  const counts = new Map<string, number>();
-  for (const m of text.matchAll(/[\u30A1-\u30FA\u30FC]{3,}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
-  for (const [word, n] of counts) if (n >= 2) out.push(word);
-  return out;
+  const s = patternSources(text);
+  return [...s.addressed, ...s.ending, ...s.dotted, ...s.quoted, ...s.repeated];
+}
+
+/**
+ * Whether a word is made only of words the general dictionary knows as everyday nouns (テーブル; 付与 魔術 師, the enchanter; 店長), and
+ * none it knows as a name or does not know at all (ノア is a name to it, ガルド it does not know). Such a word before さん is someone
+ * called by their job, and such a katakana word, a loanword of every day: neither is a name of the story. `tokens` are the word's own.
+ */
+export function ordinaryWords(tokens: readonly WordToken[]): boolean {
+  return tokens.length > 0 && tokens.every((t) => t.details[0] === "名詞" && t.details[1] !== "固有名詞" && t.details.length > 2);
 }
 
 const STOP = new Set(["彼", "彼女", "私", "僕", "ぼく", "俺", "お前", "あなた", "自分", "みんな", "誰", "何", "ここ", "そこ", "あそこ", "今日", "明日", "昨日", "先生", "先輩"]);
