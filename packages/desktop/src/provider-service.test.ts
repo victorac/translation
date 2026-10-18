@@ -765,7 +765,7 @@ describe("translating a document", () => {
     expect(service.knowledgeList({ kind: "term" }).entries.find((e) => e.source === "鈴木花子")).toMatchObject({ target: "Hanako Suzuki", status: "confirmed" });
   });
 
-  it("suggests who says each line, and a speaker is only told to the model once the user has confirmed it", async () => {
+  it("suggests who says each line, told to the model as likely until the user confirms it", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
@@ -776,7 +776,9 @@ describe("translating a document", () => {
     expect(lines().map((l) => l.speaker)).toEqual([null, null, null, null]);
     service.workSetEnglish("花子", "Hanako");
     await service.workTranslate({ ...model });
-    expect(bodies(lm)[0]!.messages[1]!.content).not.toContain("is said by"); // nothing is confirmed yet
+    // Nothing is confirmed yet: the suggestion is told as likely, in the translation's name.
+    expect(bodies(lm)[0]!.messages[1]!.content).not.toContain("is said by");
+    expect(bodies(lm)[0]!.messages[1]!.content).toContain("The line 「遅いですよ」 is probably said by Hanako.");
 
     // The user confirms one, and sets another.
     service.workAcceptSpeaker(0);
@@ -788,10 +790,11 @@ describe("translating a document", () => {
     service.workSetSpeaker(3, "佐藤");
     expect(lines()[3]!.speaker).toBe("佐藤");
     expect(words(service).some((n) => n.source === "佐藤")).toBe(true);
-    // Only what is confirmed is sent with the paragraph.
+    // What is confirmed is sent as it is, and what is suggested as likely.
     await service.workTranslate({ ...model, redo: true });
     expect(bodies(lm).at(-4)!.messages[1]!.content).toContain("The line 「遅いですよ」 is said by Hanako.");
     expect(bodies(lm).at(-3)!.messages[1]!.content).not.toContain("is said by");
+    expect(bodies(lm).at(-3)!.messages[1]!.content).toContain("The line 「ごめん」 is probably said by Taro."); // the name the dictionary suggests
   });
 
   it("tells the model the dictionary's names as suggestions, and the names the user confirmed as the names to use", async () => {
@@ -841,7 +844,7 @@ describe("translating a document", () => {
     await expect(service.workLookup("ポーション")).rejects.toThrow(/no kanji/);
   });
 
-  it("keeps a speaker the user suggested apart from one that is fixed: only a fixed one is told to the model", async () => {
+  it("keeps a speaker the user suggested apart from one that is fixed: a fixed one is told as it is, a suggested one as likely", async () => {
     const lm = await fakeLmStudio();
     const { provider, service } = setup();
     provider.save({ baseUrl: lm.baseUrl, allowRemote: false });
@@ -852,6 +855,7 @@ describe("translating a document", () => {
     expect(service.workGet()!.lines[0]).toMatchObject({ speaker: null, suggested: "太郎" });
     await service.workTranslate({ ...model });
     expect(bodies(lm).map((b) => b.messages[1]!.content).join("\n")).not.toContain("is said by");
+    expect(bodies(lm).map((b) => b.messages[1]!.content).join("\n")).toContain("The line 「おはよう」 is probably said by Taro.");
     // Fixed, it is told; made a suggestion again, it is not (as the window does it: unset the speaker, then suggest it).
     service.workAcceptSpeaker(0);
     expect(service.workGet()!.lines[0]).toMatchObject({ speaker: "太郎", suggested: null });

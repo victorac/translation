@@ -115,11 +115,15 @@ describe("what is sent with a paragraph", () => {
   const text = "ぼくは待った。\n「遅いですよ」と花子は言った。\n「ごめん」と山田太郎は言った。";
   const lines = labelDocument(text, words, ["花子", null]);
 
-  it("states who says the lines of the paragraph, as the user confirmed it, and the gender of the people it names, in the translation's names", () => {
+  it("states who says the lines of the paragraph and the gender of the people it names, in the translation's names; what is only suggested as likely", () => {
     expect(notesFor(words, lines, { index: 1, text: "「遅いですよ」と花子は言った。" })).toEqual(["Hanako is a woman or girl (she/her).", "The line 「遅いですよ」 is said by Hanako."]);
     expect(notesFor(words, lines, { index: 0, text: "ぼくは待った。" })).toEqual([]);
-    // A speaker that is only suggested is not told to the model.
-    expect(notesFor(words, lines, { index: 2, text: "「ごめん」と山田太郎は言った。" })).toEqual([]);
+    // A speaker that is only suggested is told as likely.
+    expect(notesFor(words, lines, { index: 2, text: "「ごめん」と山田太郎は言った。" })).toEqual(["The line 「ごめん」 is probably said by Taro."]);
+    // So is a gender only suggested; and a name only suggested is used, else the name as the text writes it.
+    const suggested: Word[] = [word("山田太郎", "", { suggestions: { english: ["Taro Yamada"], gender: ["male"] } }), word("花子", "", { gender: "female" })];
+    expect(notesFor(suggested, lines, { index: 2, text: "「ごめん」と山田太郎は言った。" })).toEqual(["Taro Yamada is probably a man or boy (he/him).", "The line 「ごめん」 is probably said by Taro Yamada."]);
+    expect(notesFor(suggested, lines, { index: 1, text: "「遅いですよ」と花子は言った。" })).toEqual(["花子 is a woman or girl (she/her).", "The line 「遅いですよ」 is said by 花子."]);
   });
 
   it("sends only words that have an English form, or a note", () => {

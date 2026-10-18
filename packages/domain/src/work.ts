@@ -348,20 +348,33 @@ export function noteAt(paragraphs: readonly WorkParagraph[], index: number): str
 }
 
 /**
- * The notes sent with a paragraph: the user's note in effect there, the gender of the people it names, and who says the lines in it,
- * as the user confirmed them.
+ * The notes sent with a paragraph: the user's note in effect there, the gender of the people it names, and who says the lines in it.
+ * What the user fixed is said as it is; what is only suggested (by the rules, or by the model reading the translation) is said as
+ * likely, as a suggested name is: the model gets it as a hint it may weigh against the text, not as a rule. People are named as the
+ * translation names them, fixed or suggested, or else as the text writes them.
  */
 export function notesFor(words: readonly Word[], lines: readonly WorkLine[], paragraph: { index: number; text: string }, paragraphs: readonly WorkParagraph[] = []): string[] {
-  const english = (source: string): string => words.find((n) => n.source === source)?.english || source;
+  const nameOf = (n: Word): string => n.english.trim() || n.suggestions?.["english"]?.[0]?.trim() || n.source;
+  const english = (source: string): string => {
+    const n = words.find((w) => w.source === source);
+    return n ? nameOf(n) : source;
+  };
   const notes: string[] = [];
   const note = noteAt(paragraphs, paragraph.index);
   if (note) notes.push(note);
   for (const n of words) {
-    if (n.use === false || n.kind !== "character" || !n.gender || !n.english) continue;
-    if (!occurrencesOf(paragraph.text, namesOf(n), words.map((w) => w.source)).length) continue;
-    notes.push(n.gender === "female" ? `${n.english} is a woman or girl (she/her).` : `${n.english} is a man or boy (he/him).`);
+    if (n.use === false || n.kind !== "character") continue;
+    const suggested = n.suggestions?.["gender"]?.[0];
+    const gender = n.gender ?? (suggested === "female" || suggested === "male" ? suggested : null);
+    if (!gender || !occurrencesOf(paragraph.text, namesOf(n), words.map((w) => w.source)).length) continue;
+    const sure = n.gender ? "is" : "is probably";
+    notes.push(gender === "female" ? `${nameOf(n)} ${sure} a woman or girl (she/her).` : `${nameOf(n)} ${sure} a man or boy (he/him).`);
   }
-  for (const l of lines) if (l.speaker && l.paragraph === paragraph.index) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
+  for (const l of lines) {
+    if (l.paragraph !== paragraph.index) continue;
+    if (l.speaker) notes.push(`The line ${shorten(l.text, 16)} is said by ${english(l.speaker)}.`);
+    else if (l.suggested) notes.push(`The line ${shorten(l.text, 16)} is probably said by ${english(l.suggested)}.`);
+  }
   return notes;
 }
 
